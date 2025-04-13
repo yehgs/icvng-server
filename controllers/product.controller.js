@@ -147,9 +147,16 @@ export const getCategoryStructureController = async (request, response) => {
             }).lean();
 
             // Extract unique brand IDs from products
-            const brandIds = [
-              ...new Set(products.flatMap((product) => product.brand)),
-            ];
+            const brandIds = [];
+            products.forEach((product) => {
+              if (Array.isArray(product.brand)) {
+                product.brand.forEach((brandId) => {
+                  if (brandId && !brandIds.includes(brandId.toString())) {
+                    brandIds.push(brandId.toString());
+                  }
+                });
+              }
+            });
 
             // Fetch brand details
             const subcategoryBrands = await BrandModel.find({
@@ -165,17 +172,35 @@ export const getCategoryStructureController = async (request, response) => {
           })
         );
 
-        // Get brands directly related to category through products (not through subcategories)
-        // These are products that belong to the category but don't have a subcategory
-        const productsInCategory = await ProductModel.find({
+        // // Get brands directly related to category through products (not through subcategories)
+        // // These are products that belong to the category but don't have a subcategory
+        // const productsInCategory = await ProductModel.find({
+        //   category: category._id,
+        //   subCategory: { $exists: false },
+        // }).lean();
+
+        // // Extract unique brand IDs from these products
+        // const categoryBrandIds = [
+        //   ...new Set(productsInCategory.flatMap((product) => product.brand)),
+        // ];
+
+        // THIS IS THE IMPORTANT PART - Get brands directly related to this category
+        // Find all products that belong to this category, regardless of subcategory
+        const allCategoryProducts = await ProductModel.find({
           category: category._id,
-          subCategory: { $exists: false },
         }).lean();
 
-        // Extract unique brand IDs from these products
-        const categoryBrandIds = [
-          ...new Set(productsInCategory.flatMap((product) => product.brand)),
-        ];
+        // If there are no subcategories, we need to gather all brands from products in this category
+        const categoryBrandIds = [];
+        allCategoryProducts.forEach((product) => {
+          if (Array.isArray(product.brand)) {
+            product.brand.forEach((brandId) => {
+              if (brandId && !categoryBrandIds.includes(brandId.toString())) {
+                categoryBrandIds.push(brandId.toString());
+              }
+            });
+          }
+        });
 
         // Fetch brand details
         const categoryBrands = await BrandModel.find({
