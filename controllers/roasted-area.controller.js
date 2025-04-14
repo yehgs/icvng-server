@@ -1,4 +1,4 @@
-import CoffeeRoastAreaModel from '../models/coffee-roast-area.model.js';
+import CoffeeRoastAreaModel from '../models/roasted-area.model.js';
 import generateSlug from '../utils/generateSlug.js';
 
 export const addCoffeeRoastAreaController = async (req, res) => {

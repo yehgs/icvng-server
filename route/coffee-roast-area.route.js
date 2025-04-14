@@ -5,7 +5,7 @@ import {
   getCoffeeRoastAreasController,
   updateCoffeeRoastAreaController,
   deleteCoffeeRoastAreaController,
-} from '../controllers/coffee-roast-area.controller.js';
+} from '../controllers/roasted-area.controller.js';
 
 const coffeeRoastAreaRouter = Router();
 
