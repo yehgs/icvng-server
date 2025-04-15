@@ -123,6 +123,53 @@ export const createProductController = async (request, response) => {
   }
 };
 
+//header ajax search
+export const searchProductController = async (request, response) => {
+  try {
+    const { q, limit = 5 } = request.query;
+
+    if (!q) {
+      return response.status(400).json({
+        message: 'Search query is required',
+        error: true,
+        success: false,
+      });
+    }
+
+    // Create the search query
+    const searchQuery = {
+      $or: [
+        { name: { $regex: q, $options: 'i' } },
+        { description: { $regex: q, $options: 'i' } },
+        { shortDescription: { $regex: q, $options: 'i' } },
+      ],
+    };
+
+    // Fetch products with populated fields
+    const products = await ProductModel.find(searchQuery)
+      .populate('brand', 'name')
+      .populate('category', 'name')
+      .populate('compatibleSystem', 'name')
+      .sort({ averageRating: -1 })
+      .limit(parseInt(limit))
+      .lean();
+
+    return response.json({
+      message: 'Products found',
+      data: products,
+      error: false,
+      success: true,
+      count: products.length,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
 // In product.controller.js
 export const getCategoryStructureController = async (request, response) => {
   try {

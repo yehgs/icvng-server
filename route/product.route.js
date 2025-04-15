@@ -2,6 +2,7 @@ import { Router } from 'express';
 import auth from '../middleware/auth.js';
 import {
   createProductController,
+  searchProductController,
   getCategoryStructureController,
   deleteProductDetails,
   getProductByCategory,
@@ -29,6 +30,7 @@ productRouter.post('/create', auth, admin, createProductController);
 
 // Get products
 // In product routes
+productRouter.get('/search', searchProductController);
 productRouter.get('/category-structure', getCategoryStructureController);
 productRouter.post('/get', getProductController);
 productRouter.post('/get-product-by-category', getProductByCategory);
