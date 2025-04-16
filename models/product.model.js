@@ -52,6 +52,7 @@ const productSchema = new mongoose.Schema(
         '100% Robusta',
         'Arabica/Robusta Blend (70/30)',
         'Arabica/Robusta Blend (80/20)',
+        'Arabica/Robusta Blend (40/60)',
         'Single Origin Arabica',
         'Estate Blend',
         'House Blend',
