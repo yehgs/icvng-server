@@ -34,7 +34,14 @@ const productSchema = new mongoose.Schema(
     },
     productType: {
       type: String,
-      enum: ['COFFEE', 'MACHINE', 'ACCESSORIES', 'COFFEE_BEANS', 'TEA'],
+      enum: [
+        'COFFEE',
+        'MACHINE',
+        'ACCESSORIES',
+        'COFFEE_BEANS',
+        'TEA',
+        'DRINKS',
+      ],
     },
     roastLevel: {
       type: String,
@@ -71,6 +78,10 @@ const productSchema = new mongoose.Schema(
       required: false,
     },
     aromaticProfile: {
+      type: String,
+      required: false,
+    },
+    alcoholLevel: {
       type: String,
       required: false,
     },
