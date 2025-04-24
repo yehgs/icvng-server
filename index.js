@@ -22,13 +22,11 @@ import coffeeRoastAreaRouter from './route/coffee-roast-area.route.js';
 import sliderRouter from './route/slider.route.js';
 
 const app = express();
-
-const allowedOrigins = [process.env.FRONTEND_URL, process.env.ADMIN_URL];
 app.use(
   cors({
     credentials: true,
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || origin === process.env.FRONTEND_URL) {
         callback(null, true);
       } else {
         callback(new Error('Not allowed by CORS'));
