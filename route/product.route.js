@@ -7,19 +7,11 @@ import {
   deleteProductDetails,
   getProductByCategory,
   getProductByCategoryAndSubCategory,
+  getProductByBrand,
   getProductController,
   getProductDetails,
   searchProduct,
   updateProductDetails,
-  getProductByBrand,
-  getProductByCategoryAndBrand,
-  getProductBySubCategoryAndBrand,
-  getProductByAttributes,
-  advancedFilterProducts,
-  getProductByRoastLevel,
-  getProductByProducer,
-  updateProductRating,
-  getMegaMenuData,
 } from '../controllers/product.controller.js';
 import { admin } from '../middleware/Admin.js';
 
@@ -39,25 +31,6 @@ productRouter.post(
   getProductByCategoryAndSubCategory
 );
 productRouter.post('/get-product-details', getProductDetails);
-productRouter.post('/mega-menu/:categoryId', getMegaMenuData);
-
-// New endpoints
-productRouter.post('/get-product-by-brand', getProductByBrand);
-productRouter.post(
-  '/get-product-by-category-and-brand',
-  getProductByCategoryAndBrand
-);
-productRouter.post(
-  '/get-product-by-subcategory-and-brand',
-  getProductBySubCategoryAndBrand
-);
-productRouter.post('/get-product-by-attributes', getProductByAttributes);
-
-// Additional endpoints that were missing
-productRouter.post('/advanced-filter', advancedFilterProducts);
-productRouter.post('/get-product-by-roast-level', getProductByRoastLevel);
-productRouter.post('/get-product-by-producer', getProductByProducer);
-productRouter.put('/update-rating', auth, updateProductRating);
 
 // Update product
 productRouter.put('/update-product-details', auth, admin, updateProductDetails);
@@ -67,5 +40,15 @@ productRouter.delete('/delete-product', auth, admin, deleteProductDetails);
 
 // Search product
 productRouter.post('/search-product', searchProduct);
+// Filter products by category
+productRouter.post('/get-product-by-category', getProductByCategory);
 
+// Filter products by category and subcategory
+productRouter.post(
+  '/get-product-by-category-and-subcategory',
+  getProductByCategoryAndSubCategory
+);
+
+// Filter products by brand - new endpoint
+productRouter.post('/get-product-by-brand', getProductByBrand);
 export default productRouter;
