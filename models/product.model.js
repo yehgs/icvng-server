@@ -77,6 +77,11 @@ const productSchema = new mongoose.Schema(
       ],
       required: false,
     },
+    featured: {
+      type: Boolean,
+      default: false,
+      required: false,
+    },
     aromaticProfile: {
       type: String,
       required: false,
@@ -150,6 +155,11 @@ const productSchema = new mongoose.Schema(
     stock: {
       type: Number,
       default: 0,
+    },
+    productAvailability: {
+      type: Boolean,
+      default: true,
+      required: false,
     },
     price: {
       type: Number,
