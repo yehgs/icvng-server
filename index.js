@@ -27,7 +27,12 @@ app.use(
   cors({
     credentials: true,
     origin: (origin, callback) => {
-      if (!origin || origin === process.env.FRONTEND_URL) {
+      const allowedOrigins = [
+        process.env.FRONTEND_URL,
+        process.env.FRONTEND_URL2,
+      ];
+
+      if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
         callback(new Error('Not allowed by CORS'));
