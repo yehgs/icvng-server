@@ -20,6 +20,7 @@ import addressRouter from './route/address.route.js';
 import orderRouter from './route/order.route.js';
 import coffeeRoastAreaRouter from './route/coffee-roast-area.route.js';
 import sliderRouter from './route/slider.route.js';
+import bannerRouter from './route/banner.route.js';
 import productRequestRouter from './route/productRequest.route.js';
 
 const app = express();
@@ -75,6 +76,7 @@ app.use('/api/address', addressRouter);
 app.use('/api/order', orderRouter);
 app.use('/api/coffee-roast-area', coffeeRoastAreaRouter);
 app.use('/api/slider', sliderRouter);
+app.use('/api/banner', bannerRouter);
 app.use('/api/product-request', productRequestRouter);
 
 connectDB().then(() => {

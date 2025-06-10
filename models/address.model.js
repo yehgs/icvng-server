@@ -1,40 +1,62 @@
-import mongoose from "mongoose";
+import mongoose from 'mongoose';
 
-const addressSchema = new mongoose.Schema({
-    address_line : {
-        type : String,
-        default : ""
+const addressSchema = new mongoose.Schema(
+  {
+    address_line: {
+      type: String,
+      default: '',
     },
-    city : {
-        type : String,
-        default : ""
+    address_line_2: {
+      type: String,
+      default: '',
     },
-    state : {
-        type : String,
-        default : ""
+    city: {
+      type: String,
+      default: '',
     },
-    pincode : {
-        type : String
+    state: {
+      type: String,
+      default: '',
     },
-    country : {
-        type : String
+    pincode: {
+      type: String,
     },
-    mobile : {
-        type : Number,
-        default : null
+    country: {
+      type: String,
+      default: 'India',
     },
-    status : {
-        type : Boolean,
-        default : true
+    mobile: {
+      type: String,
+      default: null,
     },
-    userId : {
-        type : mongoose.Schema.ObjectId,
-        default : ""
-    }
-},{
-    timestamps : true
-})
+    landline: {
+      type: String,
+      default: null,
+    },
+    address_type: {
+      type: String,
+      enum: ['billing', 'shipping', 'office', 'warehouse', 'home'],
+      default: 'billing',
+    },
+    is_primary: {
+      type: Boolean,
+      default: false,
+    },
+    status: {
+      type: Boolean,
+      default: true,
+    },
+    customerId: {
+      type: mongoose.Schema.ObjectId,
+      ref: 'Customer',
+      required: true,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
 
-const AddressModel = mongoose.model('address',addressSchema)
+const AddressModel = mongoose.model('address', addressSchema);
 
-export default AddressModel
+export default AddressModel;
