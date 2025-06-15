@@ -154,6 +154,7 @@ const productSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    // Stock and availability
     stock: {
       type: Number,
       default: 0,
@@ -163,11 +164,20 @@ const productSchema = new mongoose.Schema(
       default: true,
       required: false,
     },
+    // Pricing details
     price: {
       type: Number,
       required: true,
     },
     salePrice: {
+      type: Number,
+      default: 0,
+    },
+    price3weeksDelivery: {
+      type: Number,
+      default: 0,
+    },
+    price5weeksDelivery: {
       type: Number,
       default: 0,
     },
@@ -179,13 +189,16 @@ const productSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    outOfStockPrice: {
-      type: Number,
-      default: 0,
-    },
     discount: {
       type: Number,
       default: 0,
+    },
+    // Product details
+    sku: {
+      type: String,
+      unique: true,
+      required: true,
+      sparse: true, // Allow temporary empty values during creation
     },
     description: {
       type: String,
@@ -248,6 +261,9 @@ productSchema.index(
     },
   }
 );
+
+// Add index for SKU for better performance
+productSchema.index({ sku: 1 });
 
 const ProductModel = mongoose.model('Product', productSchema);
 

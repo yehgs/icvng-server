@@ -3,6 +3,7 @@ import SubCategoryModel from '../models/subCategory.model.js';
 import CategoryModel from '../models/category.model.js';
 import BrandModel from '../models/brand.model.js';
 import generateSlug from '../utils/generateSlug.js';
+import generateSKU from '../utils/generateSKU.js';
 
 export const createProductController = async (request, response) => {
   try {
@@ -15,8 +16,10 @@ export const createProductController = async (request, response) => {
       producer,
       productType,
       roastLevel,
+      roastOrigin,
       alcoholLevel,
       blend,
+      featured,
       aromaticProfile,
       coffeeOrigin,
       intensity,
@@ -28,11 +31,15 @@ export const createProductController = async (request, response) => {
       unit,
       packaging,
       stock,
+      productAvailability,
       price,
       salePrice,
+      price3weeksDelivery,
+      price5weeksDelivery,
       btbPrice,
       btcPrice,
       discount,
+      sku,
       description,
       shortDescription,
       additionalInfo,
@@ -40,13 +47,15 @@ export const createProductController = async (request, response) => {
       seoTitle,
       seoDescription,
       publish,
+      relatedProducts,
       slug,
     } = request.body;
 
     // Validate required fields
     if (!name || !image[0] || !category || !price || !shortDescription) {
       return response.status(400).json({
-        message: 'Enter required fields',
+        message:
+          'Enter required fields (name, image, category, price, shortDescription)',
         error: true,
         success: false,
       });
@@ -67,6 +76,22 @@ export const createProductController = async (request, response) => {
       });
     }
 
+    // Generate SKU if not provided
+    let generatedSKU = sku;
+    if (!sku || sku.trim() === '') {
+      generatedSKU = await generateSKU(name, category, brand);
+    } else {
+      // Check if provided SKU already exists
+      const existingSKU = await ProductModel.findOne({ sku });
+      if (existingSKU) {
+        return response.status(400).json({
+          message: 'A Product with this SKU already exists',
+          error: true,
+          success: false,
+        });
+      }
+    }
+
     const userId = request.user._id;
 
     const product = new ProductModel({
@@ -78,8 +103,10 @@ export const createProductController = async (request, response) => {
       producer,
       productType,
       roastLevel,
+      roastOrigin,
       alcoholLevel,
       blend,
+      featured: featured || false,
       aromaticProfile,
       coffeeOrigin,
       intensity,
@@ -90,21 +117,28 @@ export const createProductController = async (request, response) => {
       tags,
       attributes,
       unit,
-      stock,
+      stock: stock || 0,
+      productAvailability:
+        productAvailability !== undefined ? productAvailability : true,
       price,
-      salePrice,
-      btbPrice,
-      btcPrice,
-      discount,
-      description,
+      salePrice: salePrice || 0,
+      price3weeksDelivery: price3weeksDelivery || 0,
+      price5weeksDelivery: price5weeksDelivery || 0,
+      btbPrice: btbPrice || 0,
+      btcPrice: btcPrice || 0,
+      discount: discount || 0,
+      sku: generatedSKU,
+      description: description || '',
       shortDescription,
-      additionalInfo,
-      more_details,
+      additionalInfo: additionalInfo || '',
+      more_details: more_details || {},
       createdBy: userId,
       updatedBy: userId,
       seoTitle: seoTitle || name,
-      seoDescription: seoDescription || description.substring(0, 160),
+      seoDescription:
+        seoDescription || (description ? description.substring(0, 160) : ''),
       publish: publish || 'PENDING',
+      relatedProducts: relatedProducts || [],
       slug: generatedSlug,
     });
 
@@ -144,6 +178,7 @@ export const searchProductController = async (request, response) => {
         { name: { $regex: q, $options: 'i' } },
         { description: { $regex: q, $options: 'i' } },
         { shortDescription: { $regex: q, $options: 'i' } },
+        { sku: { $regex: q, $options: 'i' } },
       ],
     };
 
@@ -152,6 +187,7 @@ export const searchProductController = async (request, response) => {
       .populate('brand', 'name')
       .populate('category', 'name')
       .populate('compatibleSystem', 'name')
+      .populate('producer', 'name')
       .sort({ averageRating: -1 })
       .limit(parseInt(limit))
       .lean();
@@ -221,19 +257,7 @@ export const getCategoryStructureController = async (request, response) => {
           })
         );
 
-        // // Get brands directly related to category through products (not through subcategories)
-        // // These are products that belong to the category but don't have a subcategory
-        // const productsInCategory = await ProductModel.find({
-        //   category: category._id,
-        //   subCategory: { $exists: false },
-        // }).lean();
-
-        // // Extract unique brand IDs from these products
-        // const categoryBrandIds = [
-        //   ...new Set(productsInCategory.flatMap((product) => product.brand)),
-        // ];
-
-        // THIS IS THE IMPORTANT PART - Get brands directly related to this category
+        // Get brands directly related to this category
         // Find all products that belong to this category, regardless of subcategory
         const allCategoryProducts = await ProductModel.find({
           category: category._id,
@@ -309,7 +333,7 @@ export const getProductController = async (request, response) => {
         .skip(skip)
         .limit(limit)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer'
+          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy'
         ),
       ProductModel.countDocuments(query),
     ]);
@@ -344,7 +368,7 @@ export const getProductDetails = async (request, response) => {
     }
 
     const product = await ProductModel.findOne({ _id: productId }).populate(
-      'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy'
+      'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
     );
 
     if (!product) {
@@ -372,7 +396,7 @@ export const getProductDetails = async (request, response) => {
 
 export const updateProductDetails = async (request, response) => {
   try {
-    const { _id, name, slug } = request.body;
+    const { _id, name, slug, sku, category, brand } = request.body;
 
     if (!_id) {
       return response.status(400).json({
@@ -381,19 +405,31 @@ export const updateProductDetails = async (request, response) => {
         success: false,
       });
     }
+
+    // Get the existing product
+    const existingProduct = await ProductModel.findById(_id);
+    if (!existingProduct) {
+      return response.status(404).json({
+        message: 'Product not found',
+        error: true,
+        success: false,
+      });
+    }
+
     const userId = request.user._id;
-    // If name is updated but slug is not provided, regenerate slug
     let updateData = { ...request.body, updatedBy: userId };
+
+    // Handle slug generation if name is updated but slug is not provided
     if (name && !slug) {
       const generatedSlug = generateSlug(name);
 
       // Check if the new slug would conflict with any existing product
-      const existingProduct = await ProductModel.findOne({
+      const existingSlugProduct = await ProductModel.findOne({
         slug: generatedSlug,
         _id: { $ne: _id }, // Exclude current product
       });
 
-      if (existingProduct) {
+      if (existingSlugProduct) {
         return response.status(400).json({
           message: 'A Product with this slug already exists',
           error: true,
@@ -404,21 +440,45 @@ export const updateProductDetails = async (request, response) => {
       updateData.slug = generatedSlug;
     }
 
+    // Handle SKU generation if product doesn't have SKU or SKU is empty
+    if (
+      !existingProduct.sku ||
+      existingProduct.sku.trim() === '' ||
+      (sku && sku.trim() === '')
+    ) {
+      const productName = name || existingProduct.name;
+      const productCategory = category || existingProduct.category;
+      const productBrand = brand || existingProduct.brand;
+
+      const generatedSKU = await generateSKU(
+        productName,
+        productCategory,
+        productBrand
+      );
+      updateData.sku = generatedSKU;
+    } else if (sku && sku !== existingProduct.sku) {
+      // If a new SKU is provided and it's different from the existing one
+      const existingSKUProduct = await ProductModel.findOne({
+        sku: sku,
+        _id: { $ne: _id }, // Exclude current product
+      });
+
+      if (existingSKUProduct) {
+        return response.status(400).json({
+          message: 'A Product with this SKU already exists',
+          error: true,
+          success: false,
+        });
+      }
+    }
+
     const updateProduct = await ProductModel.findByIdAndUpdate(
       _id,
       updateData,
       { new: true }
     ).populate(
-      'category subCategory brand tags attributes compatibleSystem producer'
+      'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
     );
-
-    if (!updateProduct) {
-      return response.status(404).json({
-        message: 'Product not found',
-        error: true,
-        success: false,
-      });
-    }
 
     return response.json({
       message: 'updated successfully',
@@ -485,6 +545,8 @@ export const searchProduct = async (request, response) => {
       roastLevel,
       intensity,
       blend,
+      featured,
+      productAvailability,
       minPrice,
       maxPrice,
       sort,
@@ -557,6 +619,16 @@ export const searchProduct = async (request, response) => {
       query.blend = Array.isArray(blend) ? { $in: blend } : blend;
     }
 
+    // Featured filter
+    if (featured !== undefined) {
+      query.featured = featured;
+    }
+
+    // Product availability filter
+    if (productAvailability !== undefined) {
+      query.productAvailability = productAvailability;
+    }
+
     // Price range filter
     if (minPrice !== undefined || maxPrice !== undefined) {
       query.price = {};
@@ -590,6 +662,9 @@ export const searchProduct = async (request, response) => {
         case 'alphabet':
           sortOption = { name: 1 };
           break;
+        case 'featured':
+          sortOption = { featured: -1, createdAt: -1 };
+          break;
       }
     }
 
@@ -600,7 +675,7 @@ export const searchProduct = async (request, response) => {
         .skip(skip)
         .limit(limit)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer'
+          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
         ),
       ProductModel.countDocuments(query),
     ]);
@@ -648,7 +723,7 @@ export const getProductByCategory = async (request, response) => {
         .skip(skip)
         .limit(pageSize)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer'
+          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
         ),
       ProductModel.countDocuments({ category: categoryId }),
     ]);
@@ -698,7 +773,7 @@ export const getProductByCategoryAndSubCategory = async (request, response) => {
         .skip(skip)
         .limit(pageSize)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer'
+          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
         ),
       ProductModel.countDocuments({
         category: categoryId,
@@ -748,7 +823,7 @@ export const getProductByBrand = async (request, response) => {
         .skip(skip)
         .limit(pageSize)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer'
+          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
         ),
       ProductModel.countDocuments({ brand: brandId }),
     ]);
@@ -762,6 +837,129 @@ export const getProductByBrand = async (request, response) => {
       totalPage: Math.ceil(dataCount / pageSize),
       page: pageNumber,
       limit: pageSize,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Get featured products
+export const getFeaturedProducts = async (request, response) => {
+  try {
+    const { page, limit } = request.body;
+
+    const pageNumber = page || 1;
+    const pageSize = limit || 12;
+    const skip = (pageNumber - 1) * pageSize;
+
+    const [data, dataCount] = await Promise.all([
+      ProductModel.find({ featured: true, productAvailability: true })
+        .sort({ averageRating: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .populate(
+          'category subCategory brand tags attributes compatibleSystem producer'
+        ),
+      ProductModel.countDocuments({
+        featured: true,
+        productAvailability: true,
+      }),
+    ]);
+
+    return response.json({
+      message: 'Featured products',
+      error: false,
+      success: true,
+      data: data,
+      totalCount: dataCount,
+      totalPage: Math.ceil(dataCount / pageSize),
+      page: pageNumber,
+      limit: pageSize,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Get products by availability
+export const getProductsByAvailability = async (request, response) => {
+  try {
+    const { available, page, limit } = request.body;
+
+    const pageNumber = page || 1;
+    const pageSize = limit || 12;
+    const skip = (pageNumber - 1) * pageSize;
+
+    const query = { productAvailability: available !== false };
+
+    const [data, dataCount] = await Promise.all([
+      ProductModel.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .populate(
+          'category subCategory brand tags attributes compatibleSystem producer'
+        ),
+      ProductModel.countDocuments(query),
+    ]);
+
+    return response.json({
+      message: `Products ${available !== false ? 'available' : 'unavailable'}`,
+      error: false,
+      success: true,
+      data: data,
+      totalCount: dataCount,
+      totalPage: Math.ceil(dataCount / pageSize),
+      page: pageNumber,
+      limit: pageSize,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Get products by SKU
+export const getProductBySKU = async (request, response) => {
+  try {
+    const { sku } = request.body;
+
+    if (!sku) {
+      return response.status(400).json({
+        message: 'SKU is required',
+        error: true,
+        success: false,
+      });
+    }
+
+    const product = await ProductModel.findOne({ sku }).populate(
+      'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
+    );
+
+    if (!product) {
+      return response.status(404).json({
+        message: 'Product not found with this SKU',
+        error: true,
+        success: false,
+      });
+    }
+
+    return response.json({
+      message: 'Product found',
+      data: product,
+      error: false,
+      success: true,
     });
   } catch (error) {
     return response.status(500).json({

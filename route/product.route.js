@@ -12,6 +12,9 @@ import {
   getProductDetails,
   searchProduct,
   updateProductDetails,
+  getFeaturedProducts,
+  getProductsByAvailability,
+  getProductBySKU,
 } from '../controllers/product.controller.js';
 import { admin } from '../middleware/Admin.js';
 
@@ -21,7 +24,6 @@ const productRouter = Router();
 productRouter.post('/create', auth, admin, createProductController);
 
 // Get products
-// In product routes
 productRouter.get('/search', searchProductController);
 productRouter.get('/category-structure', getCategoryStructureController);
 productRouter.post('/get', getProductController);
@@ -40,6 +42,7 @@ productRouter.delete('/delete-product', auth, admin, deleteProductDetails);
 
 // Search product
 productRouter.post('/search-product', searchProduct);
+
 // Filter products by category
 productRouter.post('/get-product-by-category', getProductByCategory);
 
@@ -49,6 +52,17 @@ productRouter.post(
   getProductByCategoryAndSubCategory
 );
 
-// Filter products by brand - new endpoint
+// Filter products by brand
 productRouter.post('/get-product-by-brand', getProductByBrand);
+
+// NEW ROUTES - Added the three new functions
+// Get featured products
+productRouter.post('/get-featured-products', getFeaturedProducts);
+
+// Get products by availability status
+productRouter.post('/get-products-by-availability', getProductsByAvailability);
+
+// Get product by SKU
+productRouter.post('/get-product-by-sku', getProductBySKU);
+
 export default productRouter;
