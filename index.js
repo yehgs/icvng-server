@@ -22,6 +22,8 @@ import coffeeRoastAreaRouter from './route/coffee-roast-area.route.js';
 import sliderRouter from './route/slider.route.js';
 import bannerRouter from './route/banner.route.js';
 import productRequestRouter from './route/productRequest.route.js';
+import wishlistRouter from './route/wishlist.route.js';
+import compareRouter from './route/compare.route.js';
 
 const app = express();
 app.use(
@@ -79,6 +81,8 @@ app.use('/api/coffee-roast-area', coffeeRoastAreaRouter);
 app.use('/api/slider', sliderRouter);
 app.use('/api/banner', bannerRouter);
 app.use('/api/product-request', productRequestRouter);
+app.use('/api/wishlist', wishlistRouter);
+app.use('/api/compare', compareRouter);
 
 connectDB().then(() => {
   app.listen(PORT, () => {
