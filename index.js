@@ -24,18 +24,38 @@ import bannerRouter from './route/banner.route.js';
 import productRequestRouter from './route/productRequest.route.js';
 import wishlistRouter from './route/wishlist.route.js';
 import compareRouter from './route/compare.route.js';
+import adminAuthRouter from './route/admin-auth.route.js';
+import adminUserRouter from './route/admin-user.route.js';
+import colorRouter from './route/color.route.js';
+import supplierRouter from './route/supplier.route.js';
+import purchaseOrderRouter from './route/purchaseOrder.route.js';
+import stockRouter from './route/stock.route.js';
+import pricingRouter from './route/price.route.js';
+import exchangeRateRouter from './route/exchange-rate.route.js';
+import warehouseRouter from './route/warehouse.route.js';
 
 const app = express();
 app.use(
   cors({
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'x-auth-token',
+      'token',
+      'x-access-token',
+      'x-csrf-token',
+    ],
     origin: (origin, callback) => {
       const allowedOrigins = [
         process.env.FRONTEND_URL,
+        process.env.ADMIN_FRONTEND_URL,
         process.env.FRONTEND_URL2,
         process.env.FRONTEND_URL3,
+        process.env.ADMIN_FRONTEND_URL1,
+        process.env.ADMIN_FRONTEND_URL2,
       ];
 
       if (!origin || allowedOrigins.includes(origin)) {
@@ -83,6 +103,15 @@ app.use('/api/banner', bannerRouter);
 app.use('/api/product-request', productRequestRouter);
 app.use('/api/wishlist', wishlistRouter);
 app.use('/api/compare', compareRouter);
+app.use('/api/admin/auth', adminAuthRouter);
+app.use('/api/admin/user', adminUserRouter);
+app.use('/api/colors', colorRouter);
+app.use('/api/suppliers', supplierRouter);
+app.use('/api/purchase-orders', purchaseOrderRouter);
+app.use('/api/stock', stockRouter);
+app.use('/api/pricing', pricingRouter);
+app.use('/api/exchange-rates', exchangeRateRouter);
+app.use('/api/warehouse', warehouseRouter);
 
 connectDB().then(() => {
   app.listen(PORT, () => {

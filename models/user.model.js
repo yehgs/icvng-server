@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import mongoosePaginate from 'mongoose-paginate-v2';
 
 const userSchema = new mongoose.Schema(
   {
@@ -8,12 +9,12 @@ const userSchema = new mongoose.Schema(
     },
     email: {
       type: String,
-      required: [true, 'provide email'],
+      required: [true, 'Provide email'],
       unique: true,
     },
     password: {
       type: String,
-      required: [true, 'provide password'],
+      required: [true, 'Provide password'],
     },
     avatar: {
       type: String,
@@ -68,14 +69,62 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['ADMIN', 'ACCOUNTANT', 'MANAGER', 'EDITOR', 'SALES', 'USER'],
+      enum: ['ADMIN', 'USER'],
       default: 'USER',
+    },
+    subRole: {
+      type: String,
+      enum: [
+        'DIRECTOR',
+        'SALES',
+        'HR',
+        'MANAGER',
+        'ACCOUNTANT',
+        'GRAPHICS',
+        'EDITOR',
+        'BTC',
+        'BTB',
+        'IT',
+        'WAREHOUSE',
+        null,
+      ],
+      default: null,
+      validate: {
+        validator: function (value) {
+          if (!value) return true;
+          const adminRoles = [
+            'IT',
+            'DIRECTOR',
+            'SALES',
+            'HR',
+            'MANAGER',
+            'WAREHOUSE',
+            'ACCOUNTANT',
+            'GRAPHICS',
+            'EDITOR',
+          ];
+          const userRoles = ['BTC', 'BTB'];
+          if (this.role === 'ADMIN') return adminRoles.includes(value);
+          if (this.role === 'USER') return userRoles.includes(value);
+          return false;
+        },
+        message: 'Invalid subRole for the given role',
+      },
     },
   },
   {
     timestamps: true,
   }
 );
+
+// Add pagination plugin BEFORE creating the model
+userSchema.plugin(mongoosePaginate);
+
+// Create indexes for better performance
+userSchema.index({ email: 1 });
+userSchema.index({ role: 1, subRole: 1 });
+userSchema.index({ status: 1 });
+userSchema.index({ createdAt: -1 });
 
 const UserModel = mongoose.model('User', userSchema);
 

@@ -52,7 +52,7 @@ export const createProductController = async (request, response) => {
     } = request.body;
 
     // Validate required fields
-    if (!name || !image[0] || !category || !price || !shortDescription) {
+    if (!name || !image[0] || !category || !shortDescription) {
       return response.status(400).json({
         message:
           'Enter required fields (name, image, category, price, shortDescription)',
@@ -120,7 +120,7 @@ export const createProductController = async (request, response) => {
       stock: stock || 0,
       productAvailability:
         productAvailability !== undefined ? productAvailability : true,
-      price,
+      price: price || 0,
       salePrice: salePrice || 0,
       price3weeksDelivery: price3weeksDelivery || 0,
       price5weeksDelivery: price5weeksDelivery || 0,

@@ -112,6 +112,12 @@ const productSchema = new mongoose.Schema(
       ],
       required: false,
     },
+    colors: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Color',
+      },
+    ],
     coffeeRoastAreas: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'coffee_roast_area',
@@ -154,17 +160,74 @@ const productSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
-    // Stock and availability
     stock: {
       type: Number,
       default: 0,
+    },
+    warehouseStock: {
+      enabled: {
+        type: Boolean,
+        default: false,
+      },
+      stockOnArrival: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      damagedQty: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      expiredQty: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      refurbishedQty: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      finalStock: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      onlineStock: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      offlineStock: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      notes: {
+        type: String,
+        default: '',
+      },
+      lastUpdated: {
+        type: Date,
+        default: Date.now,
+      },
+      updatedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    },
+
+    stockSource: {
+      type: String,
+      enum: ['WAREHOUSE_MANUAL', 'STOCK_BATCHES', 'PRODUCT_DEFAULT'],
+      default: 'PRODUCT_DEFAULT',
     },
     productAvailability: {
       type: Boolean,
       default: true,
       required: false,
     },
-    // Pricing details
     price: {
       type: Number,
       required: true,
@@ -189,6 +252,38 @@ const productSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    pricing: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ProductPricing',
+    },
+    isPerishable: {
+      type: Boolean,
+      default: function () {
+        // Auto-determine based on product type
+        const perishableTypes = ['COFFEE_BEANS', 'COFFEE', 'TEA', 'DRINKS'];
+        return perishableTypes.includes(this.productType);
+      },
+    },
+
+    shelfLifeDays: {
+      type: Number,
+      default: function () {
+        // Default shelf life based on product type
+        const shelfLifeMap = {
+          COFFEE_BEANS: 365, // 1 year for beans
+          COFFEE: 730, // 2 years for ground/instant
+          TEA: 1095, // 3 years for tea
+          DRINKS: 180, // 6 months for beverages
+        };
+        return shelfLifeMap[this.productType] || null;
+      },
+    },
+
+    expirationWarningDays: {
+      type: Number,
+      default: 30, // Warn 30 days before expiration
+    },
+
     discount: {
       type: Number,
       default: 0,
@@ -264,6 +359,38 @@ productSchema.index(
 
 // Add index for SKU for better performance
 productSchema.index({ sku: 1 });
+
+// Virtual to check if warehouse override is active
+productSchema.virtual('isWarehouseManaged').get(function () {
+  return this.warehouseStock?.enabled === true;
+});
+
+// Virtual to get effective stock (prioritizes warehouse override)
+productSchema.virtual('effectiveStock').get(function () {
+  if (this.warehouseStock?.enabled) {
+    return this.warehouseStock.finalStock || 0;
+  }
+  return this.stock || 0;
+});
+
+// Virtual to get stock status based on effective stock
+productSchema.virtual('stockStatus').get(function () {
+  const stock = this.effectiveStock;
+
+  if (stock === 0) return 'OUT_OF_STOCK';
+  if (stock <= 5) return 'CRITICAL_STOCK';
+  if (stock <= 10) return 'LOW_STOCK';
+  return 'IN_STOCK';
+});
+
+// Add index for warehouse stock queries
+productSchema.index({ 'warehouseStock.enabled': 1 });
+productSchema.index({ stockSource: 1 });
+productSchema.index({ 'warehouseStock.lastUpdated': -1 });
+
+// Note: Your existing Stock model remains unchanged!
+// The warehouse system works as an overlay that can optionally override
+// the stock calculations from your existing Stock model.
 
 const ProductModel = mongoose.model('Product', productSchema);
 
