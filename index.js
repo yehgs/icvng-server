@@ -34,6 +34,9 @@ import pricingRouter from './route/price.route.js';
 import exchangeRateRouter from './route/exchange-rate.route.js';
 import warehouseRouter from './route/warehouse.route.js';
 
+// console.log(process.env.ADMIN_FRONTEND_URL1);
+// console.log(process.env.ADMIN_FRONTEND_URL2);
+
 const app = express();
 app.use(
   cors({
@@ -49,6 +52,7 @@ app.use(
       'x-csrf-token',
     ],
     origin: (origin, callback) => {
+      console.log('Incoming Origin:', origin);
       const allowedOrigins = [
         process.env.FRONTEND_URL,
         process.env.ADMIN_FRONTEND_URL,
@@ -61,11 +65,13 @@ app.use(
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
+        console.log('Blocked by CORS:', origin);
         callback(new Error('Not allowed by CORS'));
       }
     },
   })
 );
+
 app.options('*', cors());
 app.use(express.json());
 app.use(cookieParser());
