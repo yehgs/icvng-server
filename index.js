@@ -56,6 +56,7 @@ app.use(
       const allowedOrigins = [
         process.env.FRONTEND_URL,
         process.env.ADMIN_FRONTEND_URL,
+        process.env.FRONTEND_URL1,
         process.env.FRONTEND_URL2,
         process.env.FRONTEND_URL3,
         process.env.ADMIN_FRONTEND_URL1,

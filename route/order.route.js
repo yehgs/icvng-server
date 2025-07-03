@@ -1,12 +1,30 @@
-import { Router } from 'express'
-import auth from '../middleware/auth.js'
-import { CashOnDeliveryOrderController, getOrderDetailsController, paymentController, webhookStripe } from '../controllers/order.controller.js'
+import { Router } from 'express';
+import auth from '../middleware/auth.js';
+import {
+  CashOnDeliveryOrderController,
+  getOrderDetailsController,
+  paymentController,
+  flutterwavePaymentController,
+  webhookStripe,
+  flutterwaveWebhookController,
+} from '../controllers/order.controller.js';
 
-const orderRouter = Router()
+const orderRouter = Router();
 
-orderRouter.post("/cash-on-delivery",auth,CashOnDeliveryOrderController)
-orderRouter.post('/checkout',auth,paymentController)
-orderRouter.post('/webhook',webhookStripe)
-orderRouter.get("/order-list",auth,getOrderDetailsController)
+// Cash on delivery order (NGN only)
+orderRouter.post('/cash-on-delivery', auth, CashOnDeliveryOrderController);
 
-export default orderRouter
+// Stripe checkout for international currencies
+orderRouter.post('/checkout', auth, paymentController);
+
+// Flutterwave payment for NGN
+orderRouter.post('/flutterwave-payment', auth, flutterwavePaymentController);
+
+// Webhook endpoints
+orderRouter.post('/webhook/stripe', webhookStripe);
+orderRouter.post('/webhook/flutterwave', flutterwaveWebhookController);
+
+// Get user orders
+orderRouter.get('/order-list', auth, getOrderDetailsController);
+
+export default orderRouter;
