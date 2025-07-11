@@ -52,7 +52,7 @@ const newUserWelcomeTemplate = ({
               
               <p>Click the button below to access your dashboard:</p>
               <a href="${
-                process.env.ADMIN_FRONTEND_URL || 'http://localhost:3000'
+                process.env.ADMIN_FRONTEND_URL || 'http://app.i-coffee.ng'
               }" class="button">Access Dashboard</a>
               
               <h3>What's Next?</h3>

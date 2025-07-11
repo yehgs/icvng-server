@@ -15,7 +15,7 @@ const forgotPasswordTemplate = ({ name, otp }) => {
         ${otp}
       </div>
       
-      <p style="font-size: 16px; line-height: 1.6; margin-bottom: 15px;">This OTP is valid for 1 hour only. Enter it on the Italian Coffee Ventures website to proceed with resetting your password.</p>
+      <p style="font-size: 16px; line-height: 1.6; margin-bottom: 15px;">This OTP is valid for 1 hour only. Enter it on the I-Coffee.ng website to proceed with resetting your password.</p>
       
       <p style="font-size: 14px; color: #666; margin-top: 20px; line-height: 1.5;">If you didn't request this, please ignore this email or contact customer support immediately.</p>
     </div>
@@ -43,7 +43,7 @@ const forgotPasswordTemplate = ({ name, otp }) => {
         <p>
           <a href="tel:+2341234567890" style="color: #9B2226; text-decoration: none; font-weight: 600;">+234 123 456 7890</a>
         </p>
-        <p style="margin-top: 10px;">&copy; ${new Date().getFullYear()} Italian Coffee Ventures. All rights reserved.</p>
+        <p style="margin-top: 10px;">&copy; ${new Date().getFullYear()} I-Coffee.ng. All rights reserved.</p>
       </div>
     </div>
   </div>

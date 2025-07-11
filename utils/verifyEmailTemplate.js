@@ -7,7 +7,7 @@ const verifyEmailTemplate = ({ name, url }) => {
     </div>
     
     <div style="background: white; border-radius: 8px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
-      <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Thank you for registering with Italian Coffee Ventures. Please verify your email address by clicking the button below:</p>
+      <p style="font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Thank you for registering with I-Coffee.ng. Please verify your email address by clicking the button below:</p>
       
       <div style="text-align: center; margin: 30px 0;">
         <a href="${url}" style="display: inline-block; background: #8D7B68; color: #FFF; padding: 14px 30px; font-size: 16px; font-weight: bold; text-decoration: none; border-radius: 6px; transition: all 0.3s ease; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
@@ -41,7 +41,7 @@ const verifyEmailTemplate = ({ name, url }) => {
         <p>
           <a href="tel:+2341234567890" style="color: #9B2226; text-decoration: none; font-weight: 600;">+234 123 456 7890</a>
         </p>
-        <p>&copy; ${new Date().getFullYear()} Italian Coffee Ventures. All rights reserved.</p>
+        <p>&copy; ${new Date().getFullYear()} I-Coffee.ng. All rights reserved.</p>
       </div>
     </div>
   </div>
