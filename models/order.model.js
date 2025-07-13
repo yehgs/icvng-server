@@ -43,12 +43,12 @@ const orderSchema = new mongoose.Schema(
     },
     payment_status: {
       type: String,
-      enum: ['PENDING', 'PAID', 'FAILED', 'CASH ON DELIVERY', 'REFUNDED'],
+      enum: ['PENDING', 'PAID', 'FAILED', 'REFUNDED', 'PENDING_BANK_TRANSFER'], // Added PENDING_BANK_TRANSFER
       default: 'PENDING',
     },
     payment_method: {
       type: String,
-      enum: ['STRIPE', 'FLUTTERWAVE', 'CASH_ON_DELIVERY'],
+      enum: ['STRIPE', 'FLUTTERWAVE', 'BANK_TRANSFER'], // Added BANK_TRANSFER
       default: 'STRIPE',
     },
     delivery_address: {
@@ -159,6 +159,26 @@ const orderSchema = new mongoose.Schema(
     refund_processed_at: {
       type: Date,
     },
+    // Bank transfer specific fields
+    bank_transfer_details: {
+      bankName: String,
+      accountName: String,
+      accountNumber: String,
+      sortCode: String,
+      reference: String,
+    },
+    bank_transfer_status: {
+      type: String,
+      enum: ['PENDING', 'VERIFIED', 'FAILED'],
+      default: 'PENDING',
+    },
+    bank_transfer_verified_at: {
+      type: Date,
+    },
+    bank_transfer_verified_by: {
+      type: mongoose.Schema.ObjectId,
+      ref: 'User', // Admin who verified the transfer
+    },
     // Admin notes
     admin_notes: {
       type: String,
@@ -182,6 +202,8 @@ orderSchema.index({ payment_status: 1 });
 orderSchema.index({ order_status: 1 });
 orderSchema.index({ productId: 1 });
 orderSchema.index({ createdAt: -1 });
+orderSchema.index({ payment_method: 1 }); // Added index for payment method
+orderSchema.index({ bank_transfer_status: 1 }); // Added index for bank transfer status
 
 // Virtual for formatted order date
 orderSchema.virtual('formattedOrderDate').get(function () {
@@ -216,6 +238,21 @@ orderSchema.virtual('deliveryStatus').get(function () {
   } else {
     return 'PENDING';
   }
+});
+
+// Virtual for bank transfer status display
+orderSchema.virtual('bankTransferStatusDisplay').get(function () {
+  if (this.payment_method !== 'BANK_TRANSFER') {
+    return null;
+  }
+
+  const statusMap = {
+    PENDING: 'Awaiting Transfer',
+    VERIFIED: 'Transfer Verified',
+    FAILED: 'Transfer Failed',
+  };
+
+  return statusMap[this.bank_transfer_status] || 'Unknown';
 });
 
 // Pre-save middleware to set estimated delivery based on price option
@@ -263,6 +300,25 @@ orderSchema.statics.getOrderStats = async function (userId = null) {
         cancelledOrders: {
           $sum: { $cond: [{ $eq: ['$order_status', 'CANCELLED'] }, 1, 0] },
         },
+        bankTransferOrders: {
+          $sum: {
+            $cond: [{ $eq: ['$payment_method', 'BANK_TRANSFER'] }, 1, 0],
+          },
+        },
+        pendingBankTransfers: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ['$payment_method', 'BANK_TRANSFER'] },
+                  { $eq: ['$payment_status', 'PENDING_BANK_TRANSFER'] },
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
       },
     },
   ]);
@@ -275,6 +331,8 @@ orderSchema.statics.getOrderStats = async function (userId = null) {
       pendingOrders: 0,
       completedOrders: 0,
       cancelledOrders: 0,
+      bankTransferOrders: 0,
+      pendingBankTransfers: 0,
     }
   );
 };
@@ -301,11 +359,25 @@ orderSchema.statics.getOrdersByDateRange = function (
     .sort({ createdAt: -1 });
 };
 
+// Static method to get pending bank transfers (for admin)
+orderSchema.statics.getPendingBankTransfers = function () {
+  return this.find({
+    payment_method: 'BANK_TRANSFER',
+    payment_status: 'PENDING_BANK_TRANSFER',
+    bank_transfer_status: 'PENDING',
+  })
+    .populate('userId delivery_address productId')
+    .sort({ createdAt: -1 });
+};
+
 // Instance method to check if order can be cancelled
 orderSchema.methods.canBeCancelled = function () {
   const cancellableStatuses = ['PENDING', 'CONFIRMED'];
+  const cancellablePaymentStatuses = ['PENDING', 'PENDING_BANK_TRANSFER'];
+
   return (
     cancellableStatuses.includes(this.order_status) &&
+    cancellablePaymentStatuses.includes(this.payment_status) &&
     this.payment_status !== 'REFUNDED'
   );
 };
@@ -321,6 +393,26 @@ orderSchema.methods.canBeReturned = function () {
   const daysSinceDelivery = (now - deliveryDate) / (1000 * 60 * 60 * 24);
 
   return daysSinceDelivery <= 30; // 30-day return policy
+};
+
+// Instance method to verify bank transfer (for admin use)
+orderSchema.methods.verifyBankTransfer = function (adminUserId) {
+  this.bank_transfer_status = 'VERIFIED';
+  this.bank_transfer_verified_at = new Date();
+  this.bank_transfer_verified_by = adminUserId;
+  this.payment_status = 'PAID';
+  this.order_status = 'CONFIRMED';
+
+  return this.save();
+};
+
+// Instance method to reject bank transfer (for admin use)
+orderSchema.methods.rejectBankTransfer = function (adminUserId, reason) {
+  this.bank_transfer_status = 'FAILED';
+  this.payment_status = 'FAILED';
+  this.admin_notes = `Bank transfer rejected: ${reason}`;
+
+  return this.save();
 };
 
 const OrderModel = mongoose.model('order', orderSchema);

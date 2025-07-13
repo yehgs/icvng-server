@@ -1,11 +1,11 @@
-import Stripe from '../config/stripe.js';
-import CartProductModel from '../models/cartproduct.model.js';
 import OrderModel from '../models/order.model.js';
+import CartProductModel from '../models/cartproduct.model.js';
 import UserModel from '../models/user.model.js';
 import ExchangeRateModel from '../models/exchange-rate.model.js';
 import mongoose from 'mongoose';
+import Stripe from '../config/stripe.js';
 
-// Helper function to get effective stock
+// Helper function to get effective stock (for display purposes only)
 const getEffectiveStock = (product) => {
   if (
     product.warehouseStock?.enabled &&
@@ -35,7 +35,7 @@ const getProductPrice = (product, priceOption = 'regular') => {
   }
 };
 
-// Helper function to convert currency
+// Helper function to convert currency using exchange rate system
 const convertCurrency = async (amount, fromCurrency, toCurrency) => {
   if (fromCurrency === toCurrency) return amount;
 
@@ -51,7 +51,8 @@ const convertCurrency = async (amount, fromCurrency, toCurrency) => {
   }
 };
 
-export async function CashOnDeliveryOrderController(request, response) {
+// Direct Bank Transfer Order Controller (NGN only)
+export async function DirectBankTransferOrderController(request, response) {
   try {
     const userId = request.userId;
     const {
@@ -60,94 +61,76 @@ export async function CashOnDeliveryOrderController(request, response) {
       addressId,
       subTotalAmt,
       currency = 'NGN',
+      bankDetails,
     } = request.body;
 
-    // Cash on delivery only available for NGN
+    // Bank transfer only available for NGN
     if (currency !== 'NGN') {
       return response.status(400).json({
-        message: 'Cash on Delivery is only available for NGN currency',
+        message: 'Direct Bank Transfer is only available for NGN currency',
         error: true,
         success: false,
       });
     }
 
-    // Validate stock for all items
+    // Only validate productAvailability - orders can proceed even with 0 stock
     for (const item of list_items) {
-      if (!item.productId.productAvailability) {
+      const productData = item.productId || item; // Handle both DB cart and guest cart
+      if (!productData.productAvailability) {
         return response.status(400).json({
-          message: `Product ${item.productId.name} is no longer available`,
+          message: `Product ${productData.name} is not available for production`,
           error: true,
           success: false,
         });
       }
+    }
 
-      // Check stock only for regular delivery
+    // Create order items directly without stock validation
+    const orderItems = list_items.map((item) => {
+      const productData = item.productId || item; // Handle both structures
       const priceOption = item.priceOption || 'regular';
-      if (priceOption === 'regular') {
-        const effectiveStock = getEffectiveStock(item.productId);
-        if (item.quantity > effectiveStock) {
-          return response.status(400).json({
-            message: `Insufficient stock for ${item.productId.name}. Only ${effectiveStock} available`,
-            error: true,
-            success: false,
-          });
-        }
-      }
-    }
+      const productPrice = getProductPrice(productData, priceOption);
+      const finalPrice = pricewithDiscount(productPrice, productData.discount);
 
-    // Generate transaction reference
-    const txRef = `FLW-${Date.now()}-${userId}`;
-
-    // Prepare Flutterwave payment data
-    const paymentData = {
-      tx_ref: txRef,
-      amount: totalAmt,
-      currency: currency,
-      redirect_url: `${process.env.FRONTEND_URL}/payment/flutterwave/callback`,
-      customer: {
-        email: user.email,
-        name: user.name || user.email,
-        phonenumber: user.mobile || '',
-      },
-      customizations: {
-        title: 'Order Payment',
-        description: 'Payment for order items',
-        logo: process.env.LOGO_URL || '',
-      },
-      meta: {
+      return {
         userId: userId,
-        addressId: addressId,
-        itemCount: list_items.length,
-      },
-    };
-
-    // Create Flutterwave payment link
-    const flutterwaveResponse = await fetch(
-      'https://api.flutterwave.com/v3/payments',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`,
-          'Content-Type': 'application/json',
+        orderId: `BANK-${Date.now()}-${new mongoose.Types.ObjectId()}`,
+        productId: productData._id,
+        product_details: {
+          name: productData.name,
+          image: productData.image,
+          priceOption: priceOption,
+          deliveryTime: priceOption,
         },
-        body: JSON.stringify(paymentData),
-      }
-    );
+        paymentId: `BANK-${Date.now()}`,
+        payment_status: 'PENDING_BANK_TRANSFER',
+        payment_method: 'BANK_TRANSFER',
+        delivery_address: addressId,
+        subTotalAmt: finalPrice * item.quantity,
+        totalAmt: finalPrice * item.quantity,
+        currency: currency,
+        quantity: item.quantity,
+        unitPrice: finalPrice,
+        // Store bank transfer details
+        bank_transfer_details: bankDetails,
+        admin_notes: `Bank Transfer - Reference: ${bankDetails.reference}`,
+      };
+    });
 
-    const flutterwaveData = await flutterwaveResponse.json();
+    // Save orders
+    const orders = await OrderModel.insertMany(orderItems);
 
-    if (flutterwaveData.status === 'success') {
-      return response.json({
-        success: true,
-        paymentUrl: flutterwaveData.data.link,
-        txRef: txRef,
-        message: 'Payment link generated successfully',
-      });
-    } else {
-      throw new Error(
-        flutterwaveData.message || 'Failed to create payment link'
-      );
-    }
+    // Clear cart
+    await CartProductModel.deleteMany({ userId: userId });
+    await UserModel.updateOne({ _id: userId }, { shopping_cart: [] });
+
+    return response.json({
+      message: 'Bank transfer order placed successfully',
+      data: orders,
+      bankDetails: bankDetails,
+      error: false,
+      success: true,
+    });
   } catch (error) {
     return response.status(500).json({
       message: error.message || error,
@@ -189,6 +172,16 @@ export async function flutterwaveWebhookController(request, response) {
         });
       }
 
+      // Only check productAvailability
+      for (const item of cartItems) {
+        if (!item.productId.productAvailability) {
+          return response.status(400).json({
+            message: `Product ${item.productId.name} is not available for production`,
+            error: true,
+          });
+        }
+      }
+
       // Create order items
       const orderItems = cartItems.map((item) => {
         const priceOption = item.priceOption || 'regular';
@@ -200,7 +193,7 @@ export async function flutterwaveWebhookController(request, response) {
 
         return {
           userId: meta.userId,
-          orderId: `ORD-${new mongoose.Types.ObjectId()}`,
+          orderId: `FLW-${new mongoose.Types.ObjectId()}`,
           productId: item.productId._id,
           product_details: {
             name: item.productId.name,
@@ -210,6 +203,7 @@ export async function flutterwaveWebhookController(request, response) {
           },
           paymentId: tx_ref,
           payment_status: 'PAID',
+          payment_method: 'FLUTTERWAVE',
           delivery_address: meta.addressId,
           subTotalAmt: finalPrice * item.quantity,
           totalAmt: finalPrice * item.quantity,
@@ -267,7 +261,7 @@ const getOrderProductItems = async ({
 
       const payload = {
         userId: userId,
-        orderId: `ORD-${new mongoose.Types.ObjectId()}`,
+        orderId: `STR-${new mongoose.Types.ObjectId()}`,
         productId: product.metadata.productId,
         product_details: {
           name: product.name,
@@ -277,6 +271,7 @@ const getOrderProductItems = async ({
         },
         paymentId: paymentId,
         payment_status: payment_status,
+        payment_method: 'STRIPE',
         delivery_address: addressId,
         subTotalAmt: amountInBaseCurrency,
         totalAmt: amountInBaseCurrency,
@@ -375,39 +370,29 @@ export async function paymentController(request, response) {
 
     const user = await UserModel.findById(userId);
 
-    // Validate stock for all items
+    // Only validate productAvailability
     for (const item of list_items) {
-      if (!item.productId.productAvailability) {
+      const productData = item.productId || item; // Handle both structures
+      if (!productData.productAvailability) {
         return response.status(400).json({
-          message: `Product ${item.productId.name} is no longer available`,
+          message: `Product ${productData.name} is not available for production`,
           error: true,
           success: false,
         });
       }
-
-      const priceOption = item.priceOption || 'regular';
-      if (priceOption === 'regular') {
-        const effectiveStock = getEffectiveStock(item.productId);
-        if (item.quantity > effectiveStock) {
-          return response.status(400).json({
-            message: `Insufficient stock for ${item.productId.name}. Only ${effectiveStock} available`,
-            error: true,
-            success: false,
-          });
-        }
-      }
     }
 
-    // Convert amounts to payment currency if needed
+    // Convert amounts to payment currency if needed using exchange rate system
     let paymentAmount = totalAmt;
     if (currency !== 'NGN') {
       paymentAmount = await convertCurrency(totalAmt, 'NGN', currency);
     }
 
     const line_items = list_items.map((item) => {
+      const productData = item.productId || item; // Handle both structures
       const priceOption = item.priceOption || 'regular';
-      const productPrice = getProductPrice(item.productId, priceOption);
-      let finalPrice = pricewithDiscount(productPrice, item.productId.discount);
+      const productPrice = getProductPrice(productData, priceOption);
+      let finalPrice = pricewithDiscount(productPrice, productData.discount);
 
       // Convert price to payment currency
       if (currency !== 'NGN') {
@@ -418,10 +403,10 @@ export async function paymentController(request, response) {
         price_data: {
           currency: currency.toLowerCase(),
           product_data: {
-            name: `${item.productId.name} - ${priceOption} delivery`,
-            images: item.productId.image,
+            name: `${productData.name} - ${priceOption} delivery`,
+            images: productData.image,
             metadata: {
-              productId: item.productId._id,
+              productId: productData._id,
               priceOption: priceOption,
             },
           },
@@ -481,26 +466,15 @@ export async function flutterwavePaymentController(request, response) {
 
     const user = await UserModel.findById(userId);
 
-    // Validate stock for all items
+    // Only validate productAvailability
     for (const item of list_items) {
-      if (!item.productId.productAvailability) {
+      const productData = item.productId || item; // Handle both structures
+      if (!productData.productAvailability) {
         return response.status(400).json({
-          message: `Product ${item.productId.name} is no longer available`,
+          message: `Product ${productData.name} is not available for production`,
           error: true,
           success: false,
         });
-      }
-
-      const priceOption = item.priceOption || 'regular';
-      if (priceOption === 'regular') {
-        const effectiveStock = getEffectiveStock(item.productId);
-        if (item.quantity > effectiveStock) {
-          return response.status(400).json({
-            message: `Insufficient stock for ${item.productId.name}. Only ${effectiveStock} available`,
-            error: true,
-            success: false,
-          });
-        }
       }
     }
 

@@ -15,18 +15,18 @@ const getEffectiveStock = (product) => {
 
 export const addToCartItemController = async (request, response) => {
   try {
-    const userId = request.userId;
+    const userId = request.userId; // This can be null for guest users
     const { productId, quantity = 1, priceOption } = request.body;
 
     if (!productId) {
-      return response.status(402).json({
+      return response.status(400).json({
         message: 'Provide productId',
         error: true,
         success: false,
       });
     }
 
-    // Get product details with stock information
+    // Get product details
     const product = await ProductModel.findById(productId);
 
     if (!product) {
@@ -37,7 +37,7 @@ export const addToCartItemController = async (request, response) => {
       });
     }
 
-    // Check if product is available for production
+    // Only check productAvailability - users can order even if stock is 0
     if (!product.productAvailability) {
       return response.status(400).json({
         message: 'This product is not available for production',
@@ -46,37 +46,41 @@ export const addToCartItemController = async (request, response) => {
       });
     }
 
-    // Get effective stock
-    const effectiveStock = getEffectiveStock(product);
+    // For guest users, just return success (cart will be managed in localStorage)
+    if (!userId) {
+      return response.json({
+        message: 'Item prepared for cart (guest mode)',
+        error: false,
+        success: true,
+        guestMode: true,
+        productData: {
+          productId: product._id,
+          quantity: quantity,
+          priceOption: priceOption || 'regular',
+          price: product.price,
+          discount: product.discount || 0,
+          name: product.name,
+          image: product.image,
+          stock: getEffectiveStock(product),
+          productAvailability: product.productAvailability,
+        },
+      });
+    }
 
-    // Check if there's existing cart item
+    // Check if there's existing cart item for logged-in users
     const checkItemCart = await CartProductModel.findOne({
       userId: userId,
       productId: productId,
+      priceOption: priceOption || 'regular', // Include priceOption in uniqueness check
     });
 
     if (checkItemCart) {
-      // Update quantity instead of returning error
+      // Update quantity
       const newQuantity = checkItemCart.quantity + quantity;
-
-      // Validate stock for updated quantity (only for regular delivery)
-      if (priceOption === 'regular' || !priceOption) {
-        if (newQuantity > effectiveStock) {
-          return response.status(400).json({
-            message: `Cannot add ${quantity} more items. Only ${
-              effectiveStock - checkItemCart.quantity
-            } available`,
-            error: true,
-            success: false,
-            availableStock: effectiveStock - checkItemCart.quantity,
-          });
-        }
-      }
-
       checkItemCart.quantity = newQuantity;
-      if (priceOption) {
-        checkItemCart.priceOption = priceOption;
-      }
+
+      // Update selected price based on current product pricing
+      await checkItemCart.updatePriceFromProduct();
 
       const updatedItem = await checkItemCart.save();
 
@@ -88,19 +92,7 @@ export const addToCartItemController = async (request, response) => {
       });
     }
 
-    // Validate stock for new item (only for regular delivery)
-    if (priceOption === 'regular' || !priceOption) {
-      if (quantity > effectiveStock) {
-        return response.status(400).json({
-          message: `Cannot add ${quantity} items. Only ${effectiveStock} available`,
-          error: true,
-          success: false,
-          availableStock: effectiveStock,
-        });
-      }
-    }
-
-    // Create new cart item
+    // Create new cart item for logged-in users
     const cartItem = new CartProductModel({
       quantity: quantity,
       userId: userId,
@@ -108,17 +100,23 @@ export const addToCartItemController = async (request, response) => {
       priceOption: priceOption || 'regular',
     });
 
+    // Update selected price from product
+    await cartItem.updatePriceFromProduct();
+
     const save = await cartItem.save();
 
-    // Update user's shopping cart
-    const updateCartUser = await UserModel.updateOne(
-      { _id: userId },
-      {
-        $push: {
-          shopping_cart: productId,
-        },
-      }
-    );
+    // Update user's shopping cart (only if not already present)
+    const user = await UserModel.findById(userId);
+    if (!user.shopping_cart.includes(productId)) {
+      await UserModel.updateOne(
+        { _id: userId },
+        {
+          $addToSet: {
+            shopping_cart: productId,
+          },
+        }
+      );
+    }
 
     return response.json({
       data: save,
@@ -139,17 +137,28 @@ export const getCartItemController = async (request, response) => {
   try {
     const userId = request.userId;
 
-    const cartItem = await CartProductModel.find({
+    // For guest users, return empty cart with guest mode flag
+    if (!userId) {
+      return response.json({
+        data: [],
+        error: false,
+        success: true,
+        guestMode: true,
+        message: 'Guest cart - manage in localStorage',
+      });
+    }
+
+    const cartItems = await CartProductModel.find({
       userId: userId,
     }).populate('productId');
 
-    // Filter out cart items for products that are no longer available
-    const validCartItems = cartItem.filter(
+    // Filter out cart items for products that are no longer available for production
+    const validCartItems = cartItems.filter(
       (item) => item.productId && item.productId.productAvailability
     );
 
     // Remove invalid cart items from database
-    const invalidItems = cartItem.filter(
+    const invalidItems = cartItems.filter(
       (item) => !item.productId || !item.productId.productAvailability
     );
 
@@ -165,10 +174,20 @@ export const getCartItemController = async (request, response) => {
       );
     }
 
+    // Update prices for all cart items to reflect current product pricing
+    for (const item of validCartItems) {
+      try {
+        await item.updatePriceFromProduct();
+      } catch (error) {
+        console.error('Error updating cart item price:', error);
+      }
+    }
+
     return response.json({
       data: validCartItems,
       error: false,
       success: true,
+      message: validCartItems.length ? 'Cart items retrieved' : 'Cart is empty',
     });
   } catch (error) {
     return response.status(500).json({
@@ -184,19 +203,58 @@ export const updateCartItemQtyController = async (request, response) => {
     const userId = request.userId;
     const { _id, qty } = request.body;
 
-    if (!_id || !qty) {
-      return response.status(400).json({
-        message: 'provide _id, qty',
+    if (!userId) {
+      return response.status(401).json({
+        message: 'Login required to update cart',
         error: true,
         success: false,
       });
     }
 
-    if (qty <= 0) {
+    if (!_id || qty === undefined || qty === null) {
       return response.status(400).json({
-        message: 'Quantity must be greater than 0',
+        message: 'Provide _id and qty',
         error: true,
         success: false,
+      });
+    }
+
+    if (qty < 0) {
+      return response.status(400).json({
+        message: 'Quantity cannot be negative',
+        error: true,
+        success: false,
+      });
+    }
+
+    // If quantity is 0, delete the item
+    if (qty === 0) {
+      const deletedItem = await CartProductModel.findOneAndDelete({
+        _id: _id,
+        userId: userId,
+      });
+
+      if (!deletedItem) {
+        return response.status(404).json({
+          message: 'Cart item not found',
+          error: true,
+          success: false,
+        });
+      }
+
+      // Update user's shopping cart
+      await UserModel.updateOne(
+        { _id: userId },
+        {
+          $pull: { shopping_cart: deletedItem.productId },
+        }
+      );
+
+      return response.json({
+        message: 'Item removed from cart',
+        success: true,
+        error: false,
+        data: { deleted: true, _id: _id },
       });
     }
 
@@ -214,43 +272,25 @@ export const updateCartItemQtyController = async (request, response) => {
       });
     }
 
+    // Only check productAvailability
     if (!cartItem.productId.productAvailability) {
       return response.status(400).json({
-        message: 'Product is no longer available',
+        message: 'Product is no longer available for production',
         error: true,
         success: false,
       });
     }
 
-    // Validate stock (only for regular delivery)
-    if (cartItem.priceOption === 'regular' || !cartItem.priceOption) {
-      const effectiveStock = getEffectiveStock(cartItem.productId);
-
-      if (qty > effectiveStock) {
-        return response.status(400).json({
-          message: `Cannot update quantity to ${qty}. Only ${effectiveStock} available`,
-          error: true,
-          success: false,
-          availableStock: effectiveStock,
-        });
-      }
-    }
-
-    const updateCartitem = await CartProductModel.updateOne(
-      {
-        _id: _id,
-        userId: userId,
-      },
-      {
-        quantity: qty,
-      }
-    );
+    // Update quantity and price
+    cartItem.quantity = qty;
+    await cartItem.updatePriceFromProduct();
+    const updatedItem = await cartItem.save();
 
     return response.json({
       message: 'Cart updated successfully',
       success: true,
       error: false,
-      data: updateCartitem,
+      data: updatedItem,
     });
   } catch (error) {
     return response.status(500).json({
@@ -265,6 +305,14 @@ export const deleteCartItemQtyController = async (request, response) => {
   try {
     const userId = request.userId;
     const { _id } = request.body;
+
+    if (!userId) {
+      return response.status(401).json({
+        message: 'Login required to delete cart item',
+        error: true,
+        success: false,
+      });
+    }
 
     if (!_id) {
       return response.status(400).json({
@@ -293,13 +341,21 @@ export const deleteCartItemQtyController = async (request, response) => {
       userId: userId,
     });
 
-    // Update user's shopping cart
-    await UserModel.updateOne(
-      { _id: userId },
-      {
-        $pull: { shopping_cart: cartItem.productId },
-      }
-    );
+    // Check if this was the last item of this product in cart
+    const remainingItems = await CartProductModel.countDocuments({
+      userId: userId,
+      productId: cartItem.productId,
+    });
+
+    // Only remove from user's shopping cart if no more items of this product exist
+    if (remainingItems === 0) {
+      await UserModel.updateOne(
+        { _id: userId },
+        {
+          $pull: { shopping_cart: cartItem.productId },
+        }
+      );
+    }
 
     return response.json({
       message: 'Item removed successfully',
@@ -316,10 +372,21 @@ export const deleteCartItemQtyController = async (request, response) => {
   }
 };
 
-// New controller to validate cart items stock
+// Updated validate cart controller - only checks productAvailability
 export const validateCartController = async (request, response) => {
   try {
     const userId = request.userId;
+
+    if (!userId) {
+      return response.json({
+        message: 'Guest mode - cart validation handled in frontend',
+        data: [],
+        removedItems: 0,
+        error: false,
+        success: true,
+        guestMode: true,
+      });
+    }
 
     const cartItems = await CartProductModel.find({
       userId: userId,
@@ -336,43 +403,28 @@ export const validateCartController = async (request, response) => {
           productId: item.productId?._id || null,
           productName: item.productId?.name || 'Unknown Product',
           status: 'removed',
-          reason: 'Product no longer available',
+          reason: 'Product no longer available for production',
         });
         continue;
       }
 
-      // Check stock only for regular delivery
-      if (item.priceOption === 'regular' || !item.priceOption) {
-        const effectiveStock = getEffectiveStock(item.productId);
-
-        if (item.quantity > effectiveStock) {
-          validationResults.push({
-            cartItemId: item._id,
-            productId: item.productId._id,
-            productName: item.productId.name,
-            currentQuantity: item.quantity,
-            availableStock: effectiveStock,
-            status: 'stock_issue',
-            reason:
-              effectiveStock === 0 ? 'Out of stock' : 'Insufficient stock',
-          });
-        } else {
-          validationResults.push({
-            cartItemId: item._id,
-            productId: item.productId._id,
-            productName: item.productId.name,
-            status: 'valid',
-          });
-        }
-      } else {
-        // For non-regular delivery options, always valid
-        validationResults.push({
-          cartItemId: item._id,
-          productId: item.productId._id,
-          productName: item.productId.name,
-          status: 'valid',
-        });
+      // Update price to reflect current pricing
+      try {
+        await item.updatePriceFromProduct();
+        await item.save();
+      } catch (error) {
+        console.error('Error updating item price during validation:', error);
       }
+
+      // All items with productAvailability = true are valid
+      validationResults.push({
+        cartItemId: item._id,
+        productId: item.productId._id,
+        productName: item.productId.name,
+        status: 'valid',
+        currentPrice: item.selectedPrice,
+        quantity: item.quantity,
+      });
     }
 
     // Remove invalid items
@@ -383,7 +435,9 @@ export const validateCartController = async (request, response) => {
       const validItems = await CartProductModel.find({ userId }).populate(
         'productId'
       );
-      const validProductIds = validItems.map((item) => item.productId._id);
+      const validProductIds = [
+        ...new Set(validItems.map((item) => item.productId._id)),
+      ];
       await UserModel.updateOne(
         { _id: userId },
         { shopping_cart: validProductIds }
@@ -394,8 +448,104 @@ export const validateCartController = async (request, response) => {
       message: 'Cart validation completed',
       data: validationResults,
       removedItems: itemsToRemove.length,
+      updatedItems: validationResults.filter((item) => item.status === 'valid')
+        .length,
       error: false,
       success: true,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// New function to migrate guest cart to user cart
+export const migrateGuestCartController = async (request, response) => {
+  try {
+    const userId = request.userId;
+    const { guestCartItems } = request.body;
+
+    if (!userId) {
+      return response.status(401).json({
+        message: 'User authentication required',
+        error: true,
+        success: false,
+      });
+    }
+
+    if (!guestCartItems || !Array.isArray(guestCartItems)) {
+      return response.status(400).json({
+        message: 'Provide guestCartItems array',
+        error: true,
+        success: false,
+      });
+    }
+
+    let migratedCount = 0;
+    let errors = [];
+
+    for (const guestItem of guestCartItems) {
+      try {
+        const { productId, quantity, priceOption } = guestItem;
+
+        // Verify product exists and is available
+        const product = await ProductModel.findById(productId);
+        if (!product || !product.productAvailability) {
+          errors.push(`Product ${productId} not available for migration`);
+          continue;
+        }
+
+        // Check if item already exists in user's cart
+        const existingItem = await CartProductModel.findOne({
+          userId: userId,
+          productId: productId,
+          priceOption: priceOption || 'regular',
+        });
+
+        if (existingItem) {
+          // Update quantity
+          existingItem.quantity += quantity;
+          await existingItem.updatePriceFromProduct();
+          await existingItem.save();
+        } else {
+          // Create new cart item
+          const newCartItem = new CartProductModel({
+            userId: userId,
+            productId: productId,
+            quantity: quantity,
+            priceOption: priceOption || 'regular',
+          });
+
+          await newCartItem.updatePriceFromProduct();
+          await newCartItem.save();
+
+          // Add to user's shopping cart
+          await UserModel.updateOne(
+            { _id: userId },
+            { $addToSet: { shopping_cart: productId } }
+          );
+        }
+
+        migratedCount++;
+      } catch (error) {
+        errors.push(
+          `Error migrating item ${guestItem.productId}: ${error.message}`
+        );
+      }
+    }
+
+    return response.json({
+      message: `Successfully migrated ${migratedCount} items to cart`,
+      error: false,
+      success: true,
+      data: {
+        migratedCount,
+        totalItems: guestCartItems.length,
+        errors: errors.length > 0 ? errors : undefined,
+      },
     });
   } catch (error) {
     return response.status(500).json({

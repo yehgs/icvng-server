@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import auth from '../middleware/auth.js';
 import {
-  CashOnDeliveryOrderController,
+  DirectBankTransferOrderController,
   getOrderDetailsController,
   paymentController,
   flutterwavePaymentController,
@@ -11,8 +11,12 @@ import {
 
 const orderRouter = Router();
 
-// Cash on delivery order (NGN only)
-orderRouter.post('/cash-on-delivery', auth, CashOnDeliveryOrderController);
+// Direct Bank Transfer order (NGN only) - replaces cash on delivery
+orderRouter.post(
+  '/direct-bank-transfer',
+  auth,
+  DirectBankTransferOrderController
+);
 
 // Stripe checkout for international currencies
 orderRouter.post('/checkout', auth, paymentController);

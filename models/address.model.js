@@ -23,7 +23,7 @@ const addressSchema = new mongoose.Schema(
     },
     country: {
       type: String,
-      default: 'India',
+      default: 'Nigeria', // Changed from India to Nigeria since your system uses NGN
     },
     mobile: {
       type: String,
@@ -46,9 +46,10 @@ const addressSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    customerId: {
+    // Fixed field name to match your controller
+    userId: {
       type: mongoose.Schema.ObjectId,
-      ref: 'Customer',
+      ref: 'User', // Changed from Customer to User to match your system
       required: true,
     },
   },

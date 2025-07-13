@@ -1,3 +1,5 @@
+//admin
+
 import UserModel from '../models/user.model.js';
 import bcryptjs from 'bcryptjs';
 import sendEmail from '../config/sendEmail.js';

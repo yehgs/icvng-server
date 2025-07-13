@@ -25,6 +25,26 @@ export const addToWishlistController = async (request, response) => {
       });
     }
 
+    // For guest users, return success (wishlist will be managed in localStorage)
+    if (!userId) {
+      return response.json({
+        message: 'Product prepared for wishlist (guest mode)',
+        error: false,
+        success: true,
+        guestMode: true,
+        productData: {
+          _id: product._id,
+          name: product.name,
+          image: product.image,
+          price: product.price,
+          discount: product.discount || 0,
+          productAvailability: product.productAvailability,
+          sku: product.sku,
+          productType: product.productType,
+        },
+      });
+    }
+
     // Check if already in wishlist
     const existingWishlistItem = await WishlistModel.findOne({
       userId,
@@ -76,6 +96,16 @@ export const removeFromWishlistController = async (request, response) => {
       });
     }
 
+    // For guest users, return success (handled in frontend)
+    if (!userId) {
+      return response.json({
+        message: 'Product removed from wishlist (guest mode)',
+        error: false,
+        success: true,
+        guestMode: true,
+      });
+    }
+
     const deletedItem = await WishlistModel.findOneAndDelete({
       userId,
       productId,
@@ -107,6 +137,17 @@ export const removeFromWishlistController = async (request, response) => {
 export const getWishlistController = async (request, response) => {
   try {
     const userId = request.userId;
+
+    // For guest users, return empty array with guest mode flag
+    if (!userId) {
+      return response.json({
+        message: 'Guest wishlist - manage in localStorage',
+        data: [],
+        success: true,
+        error: false,
+        guestMode: true,
+      });
+    }
 
     const wishlistItems = await WishlistModel.find({ userId })
       .populate({
@@ -170,6 +211,27 @@ export const toggleWishlistController = async (request, response) => {
       });
     }
 
+    // For guest users, return success with product data
+    if (!userId) {
+      return response.json({
+        message: 'Toggle wishlist (guest mode)',
+        error: false,
+        success: true,
+        guestMode: true,
+        action: 'toggle', // Frontend will determine actual action
+        productData: {
+          _id: product._id,
+          name: product.name,
+          image: product.image,
+          price: product.price,
+          discount: product.discount || 0,
+          productAvailability: product.productAvailability,
+          sku: product.sku,
+          productType: product.productType,
+        },
+      });
+    }
+
     // Check if already in wishlist
     const existingWishlistItem = await WishlistModel.findOne({
       userId,
@@ -216,6 +278,16 @@ export const clearWishlistController = async (request, response) => {
   try {
     const userId = request.userId;
 
+    // For guest users, return success (handled in frontend)
+    if (!userId) {
+      return response.json({
+        message: 'Wishlist cleared (guest mode)',
+        success: true,
+        error: false,
+        guestMode: true,
+      });
+    }
+
     const result = await WishlistModel.deleteMany({ userId });
 
     return response.json({
@@ -238,6 +310,17 @@ export const checkWishlistController = async (request, response) => {
     const { productId } = request.params;
     const userId = request.userId;
 
+    // For guest users, return false (frontend will handle localStorage check)
+    if (!userId) {
+      return response.json({
+        isInWishlist: false,
+        success: true,
+        error: false,
+        guestMode: true,
+        message: 'Guest mode - check localStorage in frontend',
+      });
+    }
+
     const existingWishlistItem = await WishlistModel.findOne({
       userId,
       productId,
@@ -247,6 +330,92 @@ export const checkWishlistController = async (request, response) => {
       isInWishlist: !!existingWishlistItem,
       success: true,
       error: false,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Migrate guest wishlist to user account
+export const migrateGuestWishlistController = async (request, response) => {
+  try {
+    const userId = request.userId;
+    const { guestWishlistItems } = request.body;
+
+    if (!userId) {
+      return response.status(401).json({
+        message: 'User authentication required',
+        error: true,
+        success: false,
+      });
+    }
+
+    if (!guestWishlistItems || !Array.isArray(guestWishlistItems)) {
+      return response.status(400).json({
+        message: 'Provide guestWishlistItems array',
+        error: true,
+        success: false,
+      });
+    }
+
+    let migratedCount = 0;
+    let skippedCount = 0;
+    let errors = [];
+
+    for (const guestItem of guestWishlistItems) {
+      try {
+        const productId = guestItem._id || guestItem.productId;
+
+        if (!productId) {
+          errors.push('Invalid product ID in guest wishlist');
+          continue;
+        }
+
+        // Verify product exists
+        const product = await ProductModel.findById(productId);
+        if (!product) {
+          errors.push(`Product ${productId} not found`);
+          continue;
+        }
+
+        // Check if item already exists in user's wishlist
+        const existingItem = await WishlistModel.findOne({
+          userId: userId,
+          productId: productId,
+        });
+
+        if (existingItem) {
+          skippedCount++;
+          continue; // Skip if already in wishlist
+        }
+
+        // Create new wishlist item
+        const newWishlistItem = new WishlistModel({
+          userId: userId,
+          productId: productId,
+        });
+
+        await newWishlistItem.save();
+        migratedCount++;
+      } catch (error) {
+        errors.push(`Error migrating wishlist item: ${error.message}`);
+      }
+    }
+
+    return response.json({
+      message: `Successfully migrated ${migratedCount} items to wishlist`,
+      error: false,
+      success: true,
+      data: {
+        migratedCount,
+        skippedCount,
+        totalItems: guestWishlistItems.length,
+        errors: errors.length > 0 ? errors : undefined,
+      },
     });
   } catch (error) {
     return response.status(500).json({

@@ -1,3 +1,4 @@
+//admin
 import UserModel from '../models/user.model.js';
 import bcryptjs from 'bcryptjs';
 import generatedAccessToken from '../utils/generatedAccessToken.js';

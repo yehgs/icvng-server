@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-dotenv.config();
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 import helmet from 'helmet';
@@ -33,6 +32,8 @@ import stockRouter from './route/stock.route.js';
 import pricingRouter from './route/price.route.js';
 import exchangeRateRouter from './route/exchange-rate.route.js';
 import warehouseRouter from './route/warehouse.route.js';
+
+dotenv.config();
 
 // console.log(process.env.ADMIN_FRONTEND_URL1);
 // console.log(process.env.ADMIN_FRONTEND_URL2);

@@ -10,7 +10,7 @@ const wishlistSchema = new mongoose.Schema(
     },
     productId: {
       type: mongoose.Schema.ObjectId,
-      ref: 'product',
+      ref: 'Product',
       required: true,
     },
   },

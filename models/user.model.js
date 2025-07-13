@@ -82,6 +82,7 @@ const userSchema = new mongoose.Schema(
         'ACCOUNTANT',
         'GRAPHICS',
         'EDITOR',
+        'LOGISTICS',
         'BTC',
         'BTB',
         'IT',
@@ -101,6 +102,7 @@ const userSchema = new mongoose.Schema(
             'WAREHOUSE',
             'ACCOUNTANT',
             'GRAPHICS',
+            'LOGISTICS',
             'EDITOR',
           ];
           const userRoles = ['BTC', 'BTB'];
