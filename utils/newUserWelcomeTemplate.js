@@ -1,3 +1,4 @@
+//sample email template for new user welcome
 const newUserWelcomeTemplate = ({
   name,
   email,

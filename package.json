@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "seed:logistics": "node scripts/seedLogisticsData.js",
+    "seed:logistics:dev": "nodemon scripts/seedLogisticsData.js"
   },
   "author": "",
   "license": "ISC",
@@ -24,6 +26,9 @@
     "mongoose-paginate-v2": "^1.9.1",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "naija-state-local-government": "^1.1.2",
+    "nigeria-states-lgas": "^0.0.2",
+    "nigerian-states-lgas": "^1.0.3",
     "nodemon": "^3.1.4",
     "resend": "^3.5.0",
     "stripe": "^16.12.0"

@@ -1,3 +1,4 @@
+//sample
 const verifyEmailTemplate = ({ name, url }) => {
   return `
   <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #4B2E2B; background: linear-gradient(to bottom, #EDE0D4, #F5EBE0); padding: 25px; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.05);">

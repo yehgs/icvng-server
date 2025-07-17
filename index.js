@@ -32,6 +32,7 @@ import stockRouter from './route/stock.route.js';
 import pricingRouter from './route/price.route.js';
 import exchangeRateRouter from './route/exchange-rate.route.js';
 import warehouseRouter from './route/warehouse.route.js';
+import shippingRouter from './route/shipping.route.js';
 
 dotenv.config();
 
@@ -53,7 +54,7 @@ app.use(
       'x-csrf-token',
     ],
     origin: (origin, callback) => {
-      console.log('Incoming Origin:', origin);
+      // console.log('Incoming Origin:', origin);
       const allowedOrigins = [
         process.env.FRONTEND_URL,
         process.env.ADMIN_FRONTEND_URL,
@@ -120,6 +121,7 @@ app.use('/api/stock', stockRouter);
 app.use('/api/pricing', pricingRouter);
 app.use('/api/exchange-rates', exchangeRateRouter);
 app.use('/api/warehouse', warehouseRouter);
+app.use('/api/shipping', shippingRouter);
 
 connectDB().then(() => {
   app.listen(PORT, () => {
