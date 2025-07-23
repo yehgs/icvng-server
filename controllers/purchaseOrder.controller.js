@@ -21,6 +21,7 @@ export const createPurchaseOrder = async (request, response) => {
       deliveryTerms,
       notes,
       internalNotes,
+      receipts,
     } = request.body;
 
     if (!supplier || !items || items.length === 0 || !expectedDeliveryDate) {
@@ -50,6 +51,15 @@ export const createPurchaseOrder = async (request, response) => {
         success: false,
       });
     }
+
+    // Process receipts if provided
+    const processedReceipts = receipts
+      ? receipts.map((receipt) => ({
+          ...receipt,
+          uploadedBy: request.user._id,
+          uploadedAt: receipt.uploadedAt || new Date(),
+        }))
+      : [];
 
     // Validate products exist and calculate totals
     let calculatedSubtotal = 0;
@@ -135,6 +145,7 @@ export const createPurchaseOrder = async (request, response) => {
       batchNumber,
       supplier,
       items: processedItems,
+      receipts: processedReceipts,
       expectedDeliveryDate: new Date(expectedDeliveryDate),
       currency: currency || baseCurrency,
       subtotal,

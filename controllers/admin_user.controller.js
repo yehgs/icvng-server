@@ -5,6 +5,7 @@ import bcryptjs from 'bcryptjs';
 import sendEmail from '../config/sendEmail.js';
 import newUserWelcomeTemplate from '../utils/newUserWelcomeTemplate.js';
 import passwordResetTemplate from '../utils/passwordResetTemplate.js';
+import passwordRecoveryTemplate from '../utils/passwordRecoveryTemplate.js';
 import generatedOtp from '../utils/generatedOtp.js';
 
 export async function getAllUsersController(request, response) {

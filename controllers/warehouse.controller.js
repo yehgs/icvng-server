@@ -1,4 +1,5 @@
-// controllers/warehouse.controller.js - FIXED for consistent stock flow
+// controllers/warehouse.controller.js - Updated to include weight functionality
+
 import ProductModel from '../models/product.model.js';
 import StockModel from '../models/stock.model.js';
 import UserModel from '../models/user.model.js';
@@ -37,7 +38,7 @@ const logActivity = (user, action, target, changes = null, notes = '') => {
   }
 };
 
-// FIXED: Helper function to sync stock from Stock model for a product
+// Helper function to sync stock from Stock model for a product
 const syncStockFromStockModel = async (productId) => {
   try {
     const stockBatches = await StockModel.find({
@@ -67,7 +68,6 @@ const syncStockFromStockModel = async (productId) => {
       }
     );
 
-    // Calculate final stock consistently
     const finalStock = totals.goodQuantity + totals.refurbishedQuantity;
 
     return {
@@ -87,10 +87,9 @@ const syncStockFromStockModel = async (productId) => {
   }
 };
 
-// FIXED: Helper function to get effective stock data with consistent structure
+// Helper function to get effective stock data with consistent structure
 const getEffectiveStock = async (product) => {
   if (product.warehouseStock?.enabled) {
-    // Use warehouse manual stock - FIXED: include all quality fields
     return {
       stockOnArrival: product.warehouseStock.stockOnArrival || 0,
       damagedQty: product.warehouseStock.damagedQty || 0,
@@ -105,13 +104,11 @@ const getEffectiveStock = async (product) => {
       isManualOverride: true,
     };
   } else {
-    // FIXED: Use stock batches with consistent structure
     const stockTotals = await syncStockFromStockModel(product._id);
 
     if (stockTotals) {
       return stockTotals;
     } else {
-      // FIXED: Fallback to product's current stock with quality breakdown
       return {
         stockOnArrival: product.stock || 0,
         damagedQty: 0,
@@ -171,7 +168,6 @@ export const getProductsForStock = async (request, response) => {
       ProductModel.countDocuments(query),
     ]);
 
-    // Add effective stock data to each product
     const productsWithStock = await Promise.all(
       products.map(async (product) => {
         const effectiveStock = await getEffectiveStock(product);
@@ -201,7 +197,7 @@ export const getProductsForStock = async (request, response) => {
   }
 };
 
-// FIXED: Update stock quantities (warehouse only) - now includes all quality fields
+// Update stock quantities (warehouse only)
 export const updateStock = async (request, response) => {
   try {
     const {
@@ -241,7 +237,7 @@ export const updateStock = async (request, response) => {
       });
     }
 
-    // FIXED: Comprehensive validation including quality breakdown
+    // Comprehensive validation including quality breakdown
     const validationErrors = [];
 
     if (stockOnArrival < 0)
@@ -257,7 +253,7 @@ export const updateStock = async (request, response) => {
     if (offlineStock < 0)
       validationErrors.push('Offline stock cannot be negative');
 
-    // FIXED: Quality breakdown validation
+    // Quality breakdown validation
     const totalProcessed =
       damagedQty + expiredQty + refurbishedQty + finalStock;
     if (totalProcessed !== stockOnArrival) {
@@ -266,7 +262,7 @@ export const updateStock = async (request, response) => {
       );
     }
 
-    // FIXED: Distribution validation
+    // Distribution validation
     if (onlineStock + offlineStock > finalStock) {
       validationErrors.push('Total distribution cannot exceed final stock');
     }
@@ -323,7 +319,7 @@ export const updateStock = async (request, response) => {
       }
     });
 
-    // FIXED: Enable warehouse manual override and update product with complete structure
+    // Enable warehouse manual override and update product with complete structure
     const updateData = {
       warehouseStock: {
         enabled: true,
@@ -338,7 +334,7 @@ export const updateStock = async (request, response) => {
         lastUpdated: new Date(),
         updatedBy: request.user._id,
       },
-      stock: finalStock, // Update main stock field
+      stock: finalStock,
       stockSource: 'WAREHOUSE_MANUAL',
       updatedBy: request.user._id,
     };
@@ -394,7 +390,98 @@ export const updateStock = async (request, response) => {
   }
 };
 
-// FIXED: Disable warehouse override and sync from batches
+// NEW: Update product weight (warehouse only, no approval required)
+export const updateWeight = async (request, response) => {
+  try {
+    const { productId, weight } = request.body;
+
+    const userRole = request.user.subRole || request.user.role;
+    if (userRole !== 'WAREHOUSE') {
+      return response.status(403).json({
+        message: 'Only warehouse staff can update product weight',
+        error: true,
+        success: false,
+      });
+    }
+
+    if (!productId) {
+      return response.status(400).json({
+        message: 'Product ID is required',
+        error: true,
+        success: false,
+      });
+    }
+
+    // Weight validation
+    if (weight < 0) {
+      return response.status(400).json({
+        message: 'Weight cannot be negative',
+        error: true,
+        success: false,
+      });
+    }
+
+    const currentProduct = await ProductModel.findById(productId);
+    if (!currentProduct) {
+      return response.status(404).json({
+        message: 'Product not found',
+        error: true,
+        success: false,
+      });
+    }
+
+    // Track changes for activity log
+    const changes = {};
+    if (currentProduct.weight !== weight) {
+      changes.weight = {
+        from: currentProduct.weight || 0,
+        to: weight,
+      };
+    }
+
+    // Update product weight
+    const updateData = {
+      weight,
+      updatedBy: request.user._id,
+    };
+
+    const updatedProduct = await ProductModel.findByIdAndUpdate(
+      productId,
+      updateData,
+      { new: true, runValidators: true }
+    ).populate('category brand compatibleSystem', 'name');
+
+    // Log activity
+    logActivity(
+      request.user,
+      'WEIGHT_UPDATE',
+      {
+        type: 'PRODUCT',
+        id: productId,
+        name: updatedProduct.name,
+        sku: updatedProduct.sku,
+      },
+      changes,
+      'Product weight updated'
+    );
+
+    return response.json({
+      message: 'Product weight updated successfully',
+      data: updatedProduct,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Update weight error:', error);
+    return response.status(500).json({
+      message: error.message || 'Failed to update product weight',
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Rest of the existing functions remain the same...
 export const disableWarehouseOverride = async (request, response) => {
   try {
     const { productId } = request.params;
@@ -417,7 +504,6 @@ export const disableWarehouseOverride = async (request, response) => {
       });
     }
 
-    // FIXED: Disable warehouse override and sync from Stock model properly
     const stockTotals = await syncStockFromStockModel(productId);
     const newStock = stockTotals ? stockTotals.finalStock : product.stock || 0;
 
@@ -463,7 +549,6 @@ export const disableWarehouseOverride = async (request, response) => {
   }
 };
 
-// FIXED: Sync all products from stock model
 export const syncAllFromStockModel = async (request, response) => {
   try {
     const userRole = request.user.subRole || request.user.role;
@@ -534,7 +619,6 @@ export const syncAllFromStockModel = async (request, response) => {
   }
 };
 
-// FIXED: Get stock summary for warehouse
 export const getStockSummary = async (request, response) => {
   try {
     const products = await ProductModel.find({}).lean();
@@ -548,7 +632,7 @@ export const getStockSummary = async (request, response) => {
       outOfStockItems: 0,
       damagedItems: 0,
       refurbishedItems: 0,
-      expiredItems: 0, // FIXED: Added expired items
+      expiredItems: 0,
       manualOverrideCount: 0,
       stockBatchCount: 0,
     };
@@ -562,7 +646,7 @@ export const getStockSummary = async (request, response) => {
       stats.offlineStock += effectiveStock.offlineStock;
       stats.damagedItems += effectiveStock.damagedQty;
       stats.refurbishedItems += effectiveStock.refurbishedQty;
-      stats.expiredItems += effectiveStock.expiredQty; // FIXED: Track expired
+      stats.expiredItems += effectiveStock.expiredQty;
 
       if (effectiveStock.source === 'WAREHOUSE_MANUAL') {
         stats.manualOverrideCount += 1;
@@ -594,7 +678,7 @@ export const getStockSummary = async (request, response) => {
   }
 };
 
-// Rest of the functions remain the same...
+// Rest of the existing functions remain the same...
 export const getSystemStatus = async (request, response) => {
   try {
     return response.json({
@@ -896,10 +980,8 @@ export const getLowStockAlerts = async (request, response) => {
   }
 };
 
-// Bulk update stock
 export const bulkUpdateStock = async (request, response) => {
   try {
-    // Check if system is enabled
     if (!systemSettings.enabled) {
       return response.status(403).json({
         message: 'Warehouse stock system is disabled',
@@ -908,7 +990,6 @@ export const bulkUpdateStock = async (request, response) => {
       });
     }
 
-    // Check user permissions
     const userRole = request.user.subRole || request.user.role;
     if (userRole !== 'WAREHOUSE') {
       return response.status(403).json({
@@ -931,7 +1012,6 @@ export const bulkUpdateStock = async (request, response) => {
     const results = [];
     const errors = [];
 
-    // Process each update
     for (const update of updates) {
       try {
         const product = await ProductModel.findById(update.productId);
@@ -940,7 +1020,6 @@ export const bulkUpdateStock = async (request, response) => {
           continue;
         }
 
-        // Update product with new stock data
         const updateData = {
           stockOnArrival: update.stockOnArrival,
           damagedQty: update.damagedQty,
@@ -965,7 +1044,6 @@ export const bulkUpdateStock = async (request, response) => {
           success: true,
         });
 
-        // Log activity
         logActivity(
           request.user,
           'BULK_STOCK_UPDATE',
@@ -1009,7 +1087,6 @@ export const bulkUpdateStock = async (request, response) => {
   }
 };
 
-// Stock reconciliation
 export const reconcileStock = async (request, response) => {
   try {
     const { productId, actualCount } = request.body;
@@ -1034,7 +1111,6 @@ export const reconcileStock = async (request, response) => {
     const currentStock = product.finalStock || product.stock || 0;
     const difference = actualCount - currentStock;
 
-    // Update the stock
     await ProductModel.findByIdAndUpdate(productId, {
       finalStock: actualCount,
       stock: actualCount,
@@ -1042,7 +1118,6 @@ export const reconcileStock = async (request, response) => {
       updatedBy: request.user._id,
     });
 
-    // Log activity
     logActivity(
       request.user,
       'STOCK_RECONCILIATION',
@@ -1082,7 +1157,6 @@ export const reconcileStock = async (request, response) => {
   }
 };
 
-// Export stock data
 export const exportStockData = async (request, response) => {
   try {
     const { category, brand, productType, compatibleSystem } = request.query;
@@ -1098,13 +1172,13 @@ export const exportStockData = async (request, response) => {
       .populate('category brand compatibleSystem', 'name')
       .sort({ name: 1 });
 
-    // Create CSV content
     const csvHeaders = [
       'Product Name',
       'SKU',
       'Category',
       'Brand',
       'Product Type',
+      'Weight',
       'Stock on Arrival',
       'Damaged Qty',
       'Expired Qty',
@@ -1122,6 +1196,7 @@ export const exportStockData = async (request, response) => {
       product.category?.name || '',
       product.brand?.map((b) => b.name).join(', ') || '',
       product.productType || '',
+      product.weight || 0,
       product.stockOnArrival || 0,
       product.damagedQty || 0,
       product.expiredQty || 0,
@@ -1155,14 +1230,12 @@ export const exportStockData = async (request, response) => {
   }
 };
 
-// Export activity log
 export const exportActivityLog = async (request, response) => {
   try {
     const { dateRange, action, user } = request.query;
 
     let filteredActivities = [...activityLog];
 
-    // Apply filters
     if (dateRange && dateRange !== 'all') {
       const daysAgo = parseInt(dateRange);
       const cutoffDate = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
@@ -1183,7 +1256,6 @@ export const exportActivityLog = async (request, response) => {
       );
     }
 
-    // Create CSV content
     const csvHeaders = [
       'Timestamp',
       'User',

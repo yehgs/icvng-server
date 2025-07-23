@@ -534,6 +534,86 @@ shippingZoneSchema.virtual('geopolitical_zones_covered').get(function () {
   return [...new Set(this.states.map((s) => s.geopolitical_zone))];
 });
 
+shippingZoneSchema.statics.findZoneByCity = async function (city, state) {
+  try {
+    console.log(`Looking for zone covering city: ${city}, state: ${state}`);
+
+    // Get all active zones to debug
+    const allZones = await this.find({ isActive: true });
+    console.log(
+      `Found ${allZones.length} active zones:`,
+      allZones.map((z) => z.name)
+    );
+
+    // Since your pickup method uses defaultLocations (no zones),
+    // it should work regardless of zone coverage
+    // But let's see if there are any zones that could match Lagos
+
+    for (const zone of allZones) {
+      console.log(`Checking zone: ${zone.name}`);
+      console.log('Zone states:', zone.states);
+
+      // Check if state matches
+      const stateMatch = zone.states.find(
+        (s) =>
+          s.name.toLowerCase().includes(state.toLowerCase()) ||
+          state.toLowerCase().includes(s.name.toLowerCase())
+      );
+
+      if (stateMatch) {
+        console.log(`State match found in zone ${zone.name}:`, stateMatch);
+
+        // Check LGA coverage
+        if (stateMatch.coverage_type === 'all') {
+          console.log('Zone covers all LGAs in state');
+          return zone;
+        } else if (stateMatch.coverage_type === 'specific') {
+          // Check specific LGA coverage if needed
+          console.log('Zone has specific LGA coverage');
+          return zone;
+        }
+      }
+    }
+
+    console.log('No matching zone found');
+    return null;
+  } catch (error) {
+    console.error('Error in findZoneByCity:', error);
+    return null;
+  }
+};
+
+// Test function to check zone lookup
+export const testZoneLookup = async (request, response) => {
+  try {
+    const { city = 'Lagos', state = 'Lagos' } = request.query;
+
+    console.log(`Testing zone lookup for: ${city}, ${state}`);
+
+    const zone = await ShippingZoneModel.findZoneByCity(city, state);
+
+    return response.json({
+      success: true,
+      data: {
+        searchCriteria: { city, state },
+        foundZone: zone
+          ? {
+              id: zone._id,
+              name: zone.name,
+              code: zone.code,
+              states: zone.states,
+            }
+          : null,
+      },
+    });
+  } catch (error) {
+    return response.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+};
+
 const ShippingZoneModel = mongoose.model('ShippingZone', shippingZoneSchema);
 
 export default ShippingZoneModel;

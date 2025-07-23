@@ -4,6 +4,7 @@ import auth from '../middleware/auth.js';
 import {
   getProductsForStock,
   updateStock,
+  updateWeight,
   disableWarehouseOverride,
   syncAllFromStockModel,
   getStockSummary,
@@ -25,6 +26,7 @@ const warehouseRouter = Router();
 // Product stock management routes
 warehouseRouter.get('/products', auth, getProductsForStock);
 warehouseRouter.put('/update-stock', auth, updateStock);
+warehouseRouter.put('/update-weight', auth, updateWeight); // NEW: Weight update route
 warehouseRouter.put('/bulk-update-stock', auth, bulkUpdateStock);
 warehouseRouter.post('/reconcile-stock', auth, reconcileStock);
 

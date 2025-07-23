@@ -22,6 +22,9 @@ import {
   getShippingDashboardStats,
   getCategoriesForAssignment,
   getProductsForAssignment,
+  debugPickupMethod,
+  calculateCheckoutShippingDebug,
+  testSpecificPickupMethod,
 } from '../controllers/shipping.controller.js';
 
 const shippingRouter = Router();
@@ -143,5 +146,12 @@ shippingRouter.get(
   requireRole(logisticsRoles),
   getTrackingStats
 );
+
+shippingRouter.post('/debug-pickup-method', debugPickupMethod);
+shippingRouter.post(
+  '/debug-calculate-checkout',
+  calculateCheckoutShippingDebug
+);
+shippingRouter.get('/test-specific-pickup', testSpecificPickupMethod);
 
 export default shippingRouter;

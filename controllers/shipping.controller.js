@@ -234,7 +234,6 @@ export const deleteShippingZone = async (request, response) => {
 };
 
 // ===== SHIPPING METHODS =====
-
 export const createShippingMethod = async (request, response) => {
   try {
     const userId = request.user._id;
@@ -278,6 +277,7 @@ export const createShippingMethod = async (request, response) => {
       updatedBy: userId,
     };
 
+    // Remove unused configurations based on type
     if (methodData.type !== 'pickup') {
       delete processedMethodData.pickup;
     }
@@ -286,6 +286,161 @@ export const createShippingMethod = async (request, response) => {
     }
     if (methodData.type !== 'table_shipping') {
       delete processedMethodData.tableShipping;
+    }
+
+    // Special handling for pickup method
+    if (methodData.type === 'pickup' && processedMethodData.pickup) {
+      const pickupConfig = processedMethodData.pickup;
+
+      // Clean up zoneLocations - remove empty zones and invalid locations
+      if (pickupConfig.zoneLocations) {
+        pickupConfig.zoneLocations = pickupConfig.zoneLocations.filter(
+          (zoneLocation) => {
+            // Remove if no zone selected
+            if (!zoneLocation.zone || zoneLocation.zone.trim() === '') {
+              return false;
+            }
+
+            // Filter out invalid locations within this zone
+            if (zoneLocation.locations) {
+              zoneLocation.locations = zoneLocation.locations.filter(
+                (location) => {
+                  return (
+                    location.name &&
+                    location.name.trim() !== '' &&
+                    location.address &&
+                    location.address.trim() !== '' &&
+                    location.city &&
+                    location.city.trim() !== '' &&
+                    location.state &&
+                    location.state.trim() !== ''
+                  );
+                }
+              );
+            }
+
+            // Keep zone location only if it has valid locations
+            return zoneLocation.locations && zoneLocation.locations.length > 0;
+          }
+        );
+      }
+
+      // Clean up defaultLocations - remove invalid ones
+      if (pickupConfig.defaultLocations) {
+        pickupConfig.defaultLocations = pickupConfig.defaultLocations.filter(
+          (location) => {
+            return (
+              location.name &&
+              location.name.trim() !== '' &&
+              location.address &&
+              location.address.trim() !== '' &&
+              location.city &&
+              location.city.trim() !== '' &&
+              location.state &&
+              location.state.trim() !== ''
+            );
+          }
+        );
+      }
+
+      // Ensure at least one valid location exists (either zone-specific or default)
+      const hasZoneLocations =
+        pickupConfig.zoneLocations && pickupConfig.zoneLocations.length > 0;
+      const hasDefaultLocations =
+        pickupConfig.defaultLocations &&
+        pickupConfig.defaultLocations.length > 0;
+
+      if (!hasZoneLocations && !hasDefaultLocations) {
+        return response.status(400).json({
+          message:
+            'At least one valid pickup location is required with name, address, city, and state',
+          error: true,
+          success: false,
+        });
+      }
+
+      // If no assignment specified, default to all products
+      if (!pickupConfig.assignment) {
+        pickupConfig.assignment = 'all_products';
+      }
+
+      // Clean up categories and products arrays if not using them
+      if (pickupConfig.assignment !== 'categories') {
+        pickupConfig.categories = [];
+      }
+      if (pickupConfig.assignment !== 'specific_products') {
+        pickupConfig.products = [];
+      }
+    }
+
+    // Handle flat_rate method
+    if (methodData.type === 'flat_rate' && processedMethodData.flatRate) {
+      const flatRateConfig = processedMethodData.flatRate;
+
+      // If no assignment specified, default to all products
+      if (!flatRateConfig.assignment) {
+        flatRateConfig.assignment = 'all_products';
+      }
+
+      // Clean up categories and products arrays if not using them
+      if (flatRateConfig.assignment !== 'categories') {
+        flatRateConfig.categories = [];
+      }
+      if (flatRateConfig.assignment !== 'specific_products') {
+        flatRateConfig.products = [];
+      }
+
+      // Clean up zone rates - remove empty zones
+      if (flatRateConfig.zoneRates) {
+        flatRateConfig.zoneRates = flatRateConfig.zoneRates.filter(
+          (zoneRate) => {
+            return zoneRate.zone && zoneRate.zone.trim() !== '';
+          }
+        );
+      }
+    }
+
+    // Handle table_shipping method
+    if (
+      methodData.type === 'table_shipping' &&
+      processedMethodData.tableShipping
+    ) {
+      const tableShippingConfig = processedMethodData.tableShipping;
+
+      // If no assignment specified, default to all products
+      if (!tableShippingConfig.assignment) {
+        tableShippingConfig.assignment = 'all_products';
+      }
+
+      // Clean up categories and products arrays if not using them
+      if (tableShippingConfig.assignment !== 'categories') {
+        tableShippingConfig.categories = [];
+      }
+      if (tableShippingConfig.assignment !== 'specific_products') {
+        tableShippingConfig.products = [];
+      }
+
+      // Clean up zone rates - remove empty zones
+      if (tableShippingConfig.zoneRates) {
+        tableShippingConfig.zoneRates = tableShippingConfig.zoneRates.filter(
+          (zoneRate) => {
+            return zoneRate.zone && zoneRate.zone.trim() !== '';
+          }
+        );
+      }
+
+      // Validate that at least one zone rate exists for table shipping
+      if (
+        !tableShippingConfig.zoneRates ||
+        tableShippingConfig.zoneRates.length === 0
+      ) {
+        return response.status(400).json({
+          message:
+            'At least one zone rate is required for table shipping method',
+          error: true,
+          success: false,
+        });
+      }
     }
 
     const newMethod = new ShippingMethodModel(processedMethodData);
@@ -298,6 +453,7 @@ export const createShippingMethod = async (request, response) => {
       success: true,
     });
   } catch (error) {
+    console.error('Create shipping method error:', error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
@@ -1421,6 +1577,513 @@ export const getShippingDashboardStats = async (request, response) => {
       message: error.message || error,
       error: true,
       success: false,
+    });
+  }
+};
+
+export const debugPickupMethod = async (request, response) => {
+  try {
+    const { methodId, addressId } = request.body;
+
+    console.log('=== DEBUG PICKUP METHOD ===');
+    console.log('Method ID:', methodId);
+    console.log('Address ID:', addressId);
+
+    // Get the method
+    const method = await ShippingMethodModel.findById(methodId);
+    if (!method) {
+      return response.json({
+        success: false,
+        error: 'Method not found',
+        methodId,
+      });
+    }
+
+    console.log('Found method:', {
+      name: method.name,
+      type: method.type,
+      isActive: method.isActive,
+      pickup: method.pickup,
+    });
+
+    // Get the address
+    let address = null;
+    let zone = null;
+
+    if (addressId) {
+      address = await mongoose.model('address').findById(addressId);
+      console.log('Found address:', {
+        city: address?.city,
+        state: address?.state,
+        lga: address?.lga,
+      });
+
+      if (address) {
+        zone = await ShippingZoneModel.findZoneByCity(
+          address.city,
+          address.state
+        );
+        console.log(
+          'Found zone:',
+          zone
+            ? {
+                name: zone.name,
+                code: zone.code,
+                id: zone._id,
+              }
+            : 'No zone found'
+        );
+      }
+    }
+
+    // Test method calculations
+    const testItems = [
+      {
+        productId: '507f1f77bcf86cd799439011', // dummy ID
+        quantity: 1,
+        category: '507f1f77bcf86cd799439012', // dummy category ID
+      },
+    ];
+
+    const testCalculation = method.calculateShippingCost({
+      weight: 1,
+      orderValue: 1000,
+      zone: zone?._id || '507f1f77bcf86cd799439013', // dummy zone ID
+      items: testItems,
+    });
+
+    console.log('Test calculation result:', testCalculation);
+
+    // Test method availability checks
+    const isCurrentlyValid = method.isCurrentlyValid();
+    const isAvailableInZone = zone
+      ? method.isAvailableInZone(zone._id)
+      : method.isAvailableInZone('507f1f77bcf86cd799439013');
+    const appliesToProducts = method.appliesToProducts([
+      '507f1f77bcf86cd799439011',
+    ]);
+    const appliesToCategories = method.appliesToCategories([
+      '507f1f77bcf86cd799439012',
+    ]);
+
+    console.log('Method checks:', {
+      isCurrentlyValid,
+      isAvailableInZone,
+      appliesToProducts,
+      appliesToCategories,
+    });
+
+    // Check pickup locations
+    if (method.type === 'pickup' && zone) {
+      const pickupLocations = method.getPickupLocationsForZone(zone._id);
+      console.log('Pickup locations for zone:', pickupLocations);
+    }
+
+    return response.json({
+      success: true,
+      data: {
+        method: {
+          name: method.name,
+          type: method.type,
+          isActive: method.isActive,
+          pickup: method.pickup,
+        },
+        address: address
+          ? {
+              city: address.city,
+              state: address.state,
+              lga: address.lga,
+            }
+          : null,
+        zone: zone
+          ? {
+              name: zone.name,
+              code: zone.code,
+              id: zone._id,
+            }
+          : null,
+        calculations: {
+          testCalculation,
+          isCurrentlyValid,
+          isAvailableInZone,
+          appliesToProducts,
+          appliesToCategories,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Debug pickup method error:', error);
+    return response.status(500).json({
+      success: false,
+      error: error.message,
+      stack: error.stack,
+    });
+  }
+};
+
+export const calculateCheckoutShippingDebug = async (request, response) => {
+  try {
+    const { addressId, items, orderValue, totalWeight } = request.body;
+
+    console.log('\n=== CALCULATE CHECKOUT SHIPPING DEBUG ===');
+    console.log('Input data:', {
+      addressId,
+      itemsCount: items?.length,
+      orderValue,
+      totalWeight,
+    });
+
+    if (!addressId || !items || items.length === 0) {
+      return response.status(400).json({
+        message: 'Address ID and items are required',
+        error: true,
+        success: false,
+      });
+    }
+
+    // Get address details
+    const address = await mongoose.model('address').findById(addressId);
+    if (!address) {
+      return response.status(404).json({
+        message: 'Address not found',
+        error: true,
+        success: false,
+      });
+    }
+
+    console.log('Address found:', {
+      city: address.city,
+      state: address.state,
+      lga: address.lga,
+    });
+
+    // Find shipping zone
+    let zone = null;
+    try {
+      zone = await ShippingZoneModel.findZoneByCity(
+        address.city,
+        address.state
+      );
+      console.log(
+        'Zone lookup result:',
+        zone
+          ? {
+              name: zone.name,
+              code: zone.code,
+              id: zone._id,
+            }
+          : 'No zone found'
+      );
+    } catch (zoneError) {
+      console.log('Zone lookup error:', zoneError.message);
+    }
+
+    // Get all active shipping methods
+    const shippingMethods = await ShippingMethodModel.find({
+      isActive: true,
+    }).sort({ sortOrder: 1 });
+
+    console.log(`Found ${shippingMethods.length} active shipping methods`);
+
+    const availableMethods = [];
+    const debugLog = [];
+
+    for (const method of shippingMethods) {
+      const methodDebug = {
+        methodName: method.name,
+        methodType: method.type,
+        methodId: method._id,
+      };
+
+      console.log(
+        `\n--- Processing method: ${method.name} (${method.type}) ---`
+      );
+
+      try {
+        // Check if method is currently valid
+        const isCurrentlyValid = method.isCurrentlyValid();
+        methodDebug.isCurrentlyValid = isCurrentlyValid;
+        console.log('Is currently valid:', isCurrentlyValid);
+
+        if (!isCurrentlyValid) {
+          methodDebug.reason = 'Method is not currently valid (time-based)';
+          debugLog.push(methodDebug);
+          continue;
+        }
+
+        // For pickup methods, let's specifically check zone availability
+        if (method.type === 'pickup') {
+          console.log('Processing pickup method...');
+          console.log('Pickup config:', JSON.stringify(method.pickup, null, 2));
+
+          // Check if zone locations exist
+          const hasZoneLocations =
+            method.pickup.zoneLocations &&
+            method.pickup.zoneLocations.length > 0;
+          const hasDefaultLocations =
+            method.pickup.defaultLocations &&
+            method.pickup.defaultLocations.length > 0;
+
+          console.log(
+            'Zone locations count:',
+            method.pickup.zoneLocations?.length || 0
+          );
+          console.log(
+            'Default locations count:',
+            method.pickup.defaultLocations?.length || 0
+          );
+
+          methodDebug.hasZoneLocations = hasZoneLocations;
+          methodDebug.hasDefaultLocations = hasDefaultLocations;
+
+          let isAvailableInZone = true;
+          let pickupLocations = [];
+
+          if (hasZoneLocations && zone) {
+            // Check zone-specific availability
+            const zoneLocation = method.pickup.zoneLocations.find(
+              (zl) => zl.zone.toString() === zone._id.toString()
+            );
+
+            if (zoneLocation) {
+              pickupLocations = zoneLocation.locations.filter(
+                (loc) => loc.isActive !== false
+              );
+              console.log(
+                'Found zone-specific locations:',
+                pickupLocations.length
+              );
+            } else {
+              isAvailableInZone = false;
+              console.log('No zone-specific locations for this zone');
+            }
+          } else if (!hasZoneLocations && hasDefaultLocations) {
+            // Use default locations for all zones
+            pickupLocations = method.pickup.defaultLocations.filter(
+              (loc) => loc.isActive !== false
+            );
+            console.log('Using default locations:', pickupLocations.length);
+          } else if (hasZoneLocations && !zone) {
+            // Zone locations exist but no zone found
+            isAvailableInZone = false;
+            console.log('Zone locations exist but no zone found for address');
+          }
+
+          methodDebug.isAvailableInZone = isAvailableInZone;
+          methodDebug.pickupLocationsCount = pickupLocations.length;
+
+          if (!isAvailableInZone || pickupLocations.length === 0) {
+            methodDebug.reason = 'No pickup locations available for this zone';
+            debugLog.push(methodDebug);
+            continue;
+          }
+
+          // Check product/category assignment
+          const productIds = items.map((item) => item.productId || item._id);
+          const categoryIds = [
+            ...new Set(items.map((item) => item.category).filter(Boolean)),
+          ];
+
+          console.log('Product IDs:', productIds);
+          console.log('Category IDs:', categoryIds);
+          console.log('Assignment type:', method.pickup.assignment);
+
+          const appliesToProducts = method.appliesToProducts(productIds);
+          const appliesToCategories = method.appliesToCategories(categoryIds);
+
+          methodDebug.appliesToProducts = appliesToProducts;
+          methodDebug.appliesToCategories = appliesToCategories;
+
+          console.log('Applies to products:', appliesToProducts);
+          console.log('Applies to categories:', appliesToCategories);
+
+          if (!appliesToProducts && !appliesToCategories) {
+            methodDebug.reason = 'Method does not apply to cart items';
+            debugLog.push(methodDebug);
+            continue;
+          }
+
+          // If we get here, pickup method is available
+          methodDebug.isEligible = true;
+          methodDebug.cost = 0;
+
+          availableMethods.push({
+            _id: method._id,
+            name: method.name,
+            code: method.code,
+            type: method.type,
+            description: method.description || 'Pickup available',
+            cost: 0,
+            estimatedDelivery: method.estimatedDelivery,
+            pickupLocations: pickupLocations,
+            reason: `${pickupLocations.length} pickup location(s) available`,
+          });
+
+          console.log('✅ Pickup method added to available methods');
+        } else {
+          // Handle other method types (flat_rate, table_shipping)
+          console.log('Processing non-pickup method...');
+
+          // Check zone availability for other methods
+          const isAvailableInZone = zone
+            ? method.isAvailableInZone(zone._id)
+            : false;
+          methodDebug.isAvailableInZone = isAvailableInZone;
+
+          if (!isAvailableInZone) {
+            methodDebug.reason = 'Method not available in zone';
+            debugLog.push(methodDebug);
+            continue;
+          }
+
+          // Calculate shipping cost
+          const calculation = method.calculateShippingCost({
+            weight: totalWeight || 1,
+            orderValue: orderValue || 0,
+            zone: zone._id,
+            items: items,
+          });
+
+          methodDebug.calculation = calculation;
+
+          if (calculation.eligible) {
+            availableMethods.push({
+              _id: method._id,
+              name: method.name,
+              code: method.code,
+              type: method.type,
+              description: method.description,
+              cost: calculation.cost,
+              estimatedDelivery: method.estimatedDelivery,
+              reason: calculation.reason,
+            });
+
+            methodDebug.isEligible = true;
+            console.log('✅ Method added to available methods');
+          } else {
+            methodDebug.reason = calculation.reason;
+            console.log('❌ Method not eligible:', calculation.reason);
+          }
+        }
+      } catch (methodError) {
+        console.error(`Error processing method ${method.name}:`, methodError);
+        methodDebug.error = methodError.message;
+      }
+
+      debugLog.push(methodDebug);
+    }
+
+    console.log(`\n=== FINAL RESULT ===`);
+    console.log(`Available methods: ${availableMethods.length}`);
+    console.log(
+      'Methods:',
+      availableMethods.map((m) => `${m.name} (${m.type})`)
+    );
+
+    return response.json({
+      message: 'Shipping methods calculated successfully (debug mode)',
+      data: {
+        zone: zone
+          ? {
+              _id: zone._id,
+              name: zone.name,
+              code: zone.code,
+            }
+          : null,
+        methods: availableMethods,
+        address: {
+          city: address.city,
+          state: address.state,
+          lga: address.lga,
+        },
+        debug: {
+          totalMethodsChecked: shippingMethods.length,
+          methodsDebugLog: debugLog,
+          inputData: {
+            addressId,
+            itemsCount: items.length,
+            orderValue,
+            totalWeight,
+          },
+        },
+      },
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Calculate checkout shipping debug error:', error);
+    return response.status(500).json({
+      message: error.message,
+      error: true,
+      success: false,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    });
+  }
+};
+
+// 3. Test script for your specific case
+export const testSpecificPickupMethod = async (request, response) => {
+  try {
+    console.log('\n=== TESTING SPECIFIC PICKUP METHOD ===');
+
+    // Find your specific pickup method by code
+    const method = await ShippingMethodModel.findOne({
+      code: 'SHP-PUP',
+      type: 'pickup',
+    });
+
+    if (!method) {
+      return response.json({
+        success: false,
+        error: 'Pickup method with code SHP-PUP not found',
+      });
+    }
+
+    console.log('Found method:', method.name);
+    console.log(
+      'Method pickup config:',
+      JSON.stringify(method.pickup, null, 2)
+    );
+
+    // Test with a Lagos address (since your pickup is in Lagos)
+    const lagosAddress = await mongoose.model('address').findOne({
+      city: { $regex: /lagos/i },
+      state: { $regex: /lagos/i },
+    });
+
+    console.log(
+      'Test address:',
+      lagosAddress
+        ? {
+            city: lagosAddress.city,
+            state: lagosAddress.state,
+            id: lagosAddress._id,
+          }
+        : 'No Lagos address found'
+    );
+
+    // Test the method directly
+    const testData = {
+      addressId: lagosAddress?._id,
+      items: [
+        {
+          productId: new mongoose.Types.ObjectId(),
+          quantity: 1,
+          category: new mongoose.Types.ObjectId(),
+        },
+      ],
+      orderValue: 5000,
+      totalWeight: 1,
+    };
+
+    // Call the debug function
+    request.body = testData;
+    return await calculateCheckoutShippingDebug(request, response);
+  } catch (error) {
+    return response.status(500).json({
+      success: false,
+      error: error.message,
+      stack: error.stack,
     });
   }
 };

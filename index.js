@@ -11,7 +11,7 @@ import attributeRouter from './route/attribute.route.js';
 import tagRouter from './route/tag.route.js';
 import brandRouter from './route/brand.route.js';
 import ratingRouter from './route/rating.route.js';
-import uploadRouter from './route/upload.router.js';
+import uploadRouter from './route/upload.route.js';
 import subCategoryRouter from './route/subCategory.route.js';
 import productRouter from './route/product.route.js';
 import cartRouter from './route/cart.route.js';
@@ -33,6 +33,7 @@ import pricingRouter from './route/price.route.js';
 import exchangeRateRouter from './route/exchange-rate.route.js';
 import warehouseRouter from './route/warehouse.route.js';
 import shippingRouter from './route/shipping.route.js';
+import blogRouter from './route/blog.route.js';
 
 dotenv.config();
 
@@ -74,8 +75,10 @@ app.use(
     },
   })
 );
-
 app.options('*', cors());
+
+app.use('/api/file', uploadRouter);
+
 app.use(express.json());
 app.use(cookieParser());
 app.use(morgan());
@@ -96,7 +99,6 @@ app.get('/', (request, response) => {
 
 app.use('/api/user', userRouter);
 app.use('/api/category', categoryRouter);
-app.use('/api/file', uploadRouter);
 app.use('/api/subcategory', subCategoryRouter);
 app.use('/api/product', productRouter);
 app.use('/api/tag', tagRouter);
@@ -122,6 +124,7 @@ app.use('/api/pricing', pricingRouter);
 app.use('/api/exchange-rates', exchangeRateRouter);
 app.use('/api/warehouse', warehouseRouter);
 app.use('/api/shipping', shippingRouter);
+app.use('/api/blog', blogRouter);
 
 connectDB().then(() => {
   app.listen(PORT, () => {

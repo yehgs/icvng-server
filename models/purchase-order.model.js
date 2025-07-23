@@ -39,6 +39,35 @@ const purchaseOrderItemSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
+  receipts: [
+    {
+      url: {
+        type: String,
+        required: true,
+      },
+      name: {
+        type: String,
+        required: true,
+      },
+      type: {
+        type: String,
+        enum: ['image', 'pdf'],
+        required: true,
+      },
+      size: {
+        type: Number,
+        required: true,
+      },
+      uploadedAt: {
+        type: Date,
+        default: Date.now,
+      },
+      uploadedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    },
+  ],
 });
 
 const statusHistorySchema = new mongoose.Schema(
