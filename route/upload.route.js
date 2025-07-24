@@ -5,7 +5,7 @@ import auth from '../middleware/auth.js';
 import uploadImageController from '../controllers/uploadImage.controller.js';
 import uploadFileController from '../controllers/uploadFile.controller.js';
 import deleteFileController from '../controllers/deleteFile.controller.js'; // New import
-import upload from '../middleware/multer.js';
+import { uploadImage, uploadFile } from '../middleware/multer.js';
 
 const uploadRouter = Router();
 
@@ -13,14 +13,14 @@ const uploadRouter = Router();
 uploadRouter.post(
   '/upload',
   auth,
-  upload.single('image'),
+  uploadImage.single('image'),
   uploadImageController
 );
 
 uploadRouter.post(
   '/upload-file',
   auth,
-  upload.single('file'),
+  uploadFile.single('file'),
   uploadFileController
 );
 

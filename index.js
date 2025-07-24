@@ -77,7 +77,7 @@ app.use(
 );
 app.options('*', cors());
 
-app.use('/api/file', uploadRouter);
+// app.use('/api/file', uploadRouter);
 
 app.use(express.json());
 app.use(cookieParser());
@@ -96,7 +96,7 @@ app.get('/', (request, response) => {
     message: 'Server is running ' + PORT,
   });
 });
-
+app.use('/api/file', uploadRouter);
 app.use('/api/user', userRouter);
 app.use('/api/category', categoryRouter);
 app.use('/api/subcategory', subCategoryRouter);
