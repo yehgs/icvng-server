@@ -4,50 +4,96 @@ import ShippingMethodModel from '../models/shipping-method.model.js';
 import ShippingTrackingModel from '../models/shipping-tracking.model.js';
 import OrderModel from '../models/order.model.js';
 import ProductModel from '../models/product.model.js';
-// import CategoryModel from '../models/category.model.js';
+import { nigeriaStatesLgas } from '../data/nigeria-states-lgas.js';
 import mongoose from 'mongoose';
 
+// Helper function to generate unique zone code
+const generateZoneCode = async (name) => {
+  const baseCode = name.substring(0, 3).toUpperCase();
+  let code = baseCode;
+  let counter = 1;
+
+  while (await ShippingZoneModel.findOne({ code })) {
+    code = baseCode + counter.toString().padStart(2, '0');
+    counter++;
+  }
+
+  return code;
+};
+
+// Helper function to generate unique method code
+const generateMethodCode = async (name, type) => {
+  const typePrefix = {
+    flat_rate: 'FR',
+    table_shipping: 'TS',
+    pickup: 'PU',
+  };
+
+  const nameCode = name.substring(0, 2).toUpperCase();
+  const baseCode = `${typePrefix[type] || 'SM'}-${nameCode}`;
+  let code = baseCode;
+  let counter = 1;
+
+  while (await ShippingMethodModel.findOne({ code })) {
+    code = baseCode + counter.toString().padStart(2, '0');
+    counter++;
+  }
+
+  return code;
+};
 // ===== SHIPPING ZONES =====
 
 export const createShippingZone = async (request, response) => {
   try {
     const userId = request.user._id;
-    const { name, code, description, states, isActive, sortOrder } =
-      request.body;
+    const { name, description, states, isActive, sortOrder } = request.body;
 
-    if (!name || !code || !states || states.length === 0) {
+    if (!name || !states || states.length === 0) {
       return response.status(400).json({
-        message: 'Name, code, and states are required',
+        message: 'Name and states are required',
         error: true,
         success: false,
       });
     }
 
-    const existingZone = await ShippingZoneModel.findOne({
-      $or: [{ name }, { code: code.toUpperCase() }],
-    });
+    // Auto-generate unique code if not provided
+    const code = await generateZoneCode(name);
 
+    const existingZone = await ShippingZoneModel.findOne({ name });
     if (existingZone) {
       return response.status(400).json({
-        message: 'Shipping zone with this name or code already exists',
+        message: 'Shipping zone with this name already exists',
         error: true,
         success: false,
       });
     }
 
-    // Process states with LGA coverage
-    const processedStates = states.map((state) => ({
-      ...state,
-      code: state.code || state.name.substring(0, 2).toUpperCase(),
-      coverage_type: state.coverage_type || 'all',
-      available_lgas: state.available_lgas || [],
-      covered_lgas:
-        state.coverage_type === 'specific' ? state.covered_lgas || [] : [],
-    }));
+    // Process states with LGA coverage using Nigeria data
+    const processedStates = states.map((state) => {
+      // Find state in Nigeria data
+      const nigeriaState = nigeriaStatesLgas.find(
+        (s) => s.state.toLowerCase() === state.name.toLowerCase()
+      );
+
+      if (!nigeriaState) {
+        throw new Error(`Invalid state: ${state.name}`);
+      }
+
+      return {
+        name: nigeriaState.state,
+        code: state.code || nigeriaState.state.substring(0, 2).toUpperCase(),
+        coverage_type: state.coverage_type || 'all',
+        available_lgas: nigeriaState.lga, // Use actual LGA data
+        covered_lgas:
+          state.coverage_type === 'specific'
+            ? state.covered_lgas || []
+            : nigeriaState.lga,
+      };
+    });
 
     const newZone = new ShippingZoneModel({
       name,
-      code: code.toUpperCase(),
+      code,
       description,
       states: processedStates,
       isActive: isActive !== undefined ? isActive : true,
@@ -101,29 +147,9 @@ export const getShippingZones = async (request, response) => {
       ShippingZoneModel.countDocuments(query),
     ]);
 
-    // Add calculated coverage stats to each zone
-    const zonesWithStats = zones.map((zone) => {
-      const zoneObj = zone.toObject();
-
-      // Calculate total LGAs covered
-      let totalLgasCovered = 0;
-      zone.states.forEach((state) => {
-        if (state.coverage_type === 'all') {
-          totalLgasCovered += state.available_lgas?.length || 0;
-        } else {
-          totalLgasCovered += state.covered_lgas?.length || 0;
-        }
-      });
-
-      return {
-        ...zoneObj,
-        total_lgas_covered: totalLgasCovered,
-      };
-    });
-
     return response.json({
       message: 'Shipping zones retrieved successfully',
-      data: zonesWithStats,
+      data: zones,
       totalCount,
       totalPages: Math.ceil(totalCount / limit),
       currentPage: parseInt(page),
@@ -487,108 +513,12 @@ export const getShippingMethods = async (request, response) => {
       ShippingMethodModel.find(query)
         .populate('createdBy', 'name email')
         .populate('updatedBy', 'name email')
-        .populate('tableShipping.zoneRates.zone', 'name code')
         .sort({ sortOrder: 1, name: 1 })
         .skip(skip)
         .limit(parseInt(limit))
         .lean(),
       ShippingMethodModel.countDocuments(query),
     ]);
-
-    // Manually populate categories and products
-    for (let method of methods) {
-      // Try to populate categories using the correct model name
-      if (method.flatRate?.categories?.length > 0) {
-        try {
-          const CategoryModel = mongoose.model('category');
-          const categories = await CategoryModel.find({
-            _id: { $in: method.flatRate.categories },
-          })
-            .select('name slug')
-            .lean();
-          method.flatRate.categories = categories;
-        } catch (error) {
-          console.warn(
-            'Could not populate flatRate categories:',
-            error.message
-          );
-        }
-      }
-
-      if (method.tableShipping?.categories?.length > 0) {
-        try {
-          const CategoryModel = mongoose.model('category');
-          const categories = await CategoryModel.find({
-            _id: { $in: method.tableShipping.categories },
-          })
-            .select('name slug')
-            .lean();
-          method.tableShipping.categories = categories;
-        } catch (error) {
-          console.warn(
-            'Could not populate tableShipping categories:',
-            error.message
-          );
-        }
-      }
-
-      if (method.pickup?.categories?.length > 0) {
-        try {
-          const CategoryModel = mongoose.model('category');
-          const categories = await CategoryModel.find({
-            _id: { $in: method.pickup.categories },
-          })
-            .select('name slug')
-            .lean();
-          method.pickup.categories = categories;
-        } catch (error) {
-          console.warn('Could not populate pickup categories:', error.message);
-        }
-      }
-
-      // Try to populate products
-      if (method.flatRate?.products?.length > 0) {
-        try {
-          const products = await ProductModel.find({
-            _id: { $in: method.flatRate.products },
-          })
-            .select('name sku')
-            .lean();
-          method.flatRate.products = products;
-        } catch (error) {
-          console.warn('Could not populate flatRate products:', error.message);
-        }
-      }
-
-      if (method.tableShipping?.products?.length > 0) {
-        try {
-          const products = await ProductModel.find({
-            _id: { $in: method.tableShipping.products },
-          })
-            .select('name sku')
-            .lean();
-          method.tableShipping.products = products;
-        } catch (error) {
-          console.warn(
-            'Could not populate tableShipping products:',
-            error.message
-          );
-        }
-      }
-
-      if (method.pickup?.products?.length > 0) {
-        try {
-          const products = await ProductModel.find({
-            _id: { $in: method.pickup.products },
-          })
-            .select('name sku')
-            .lean();
-          method.pickup.products = products;
-        } catch (error) {
-          console.warn('Could not populate pickup products:', error.message);
-        }
-      }
-    }
 
     return response.json({
       message: 'Shipping methods retrieved successfully',
@@ -771,7 +701,7 @@ export const getProductsForAssignment = async (request, response) => {
     const { search = '', page = 1, limit = 50, category } = request.query;
 
     const query = {
-      publish: 'PUBLISHED', // Only include published products
+      publish: 'PUBLISHED',
     };
 
     if (search) {
@@ -830,7 +760,7 @@ export const calculateCheckoutShipping = async (request, response) => {
       });
     }
 
-    // Get address details with populated shipping zone
+    // Get address details
     const address = await mongoose
       .model('address')
       .findById(addressId)
@@ -844,38 +774,41 @@ export const calculateCheckoutShipping = async (request, response) => {
       });
     }
 
-    // Find shipping zone using enhanced zone lookup
+    // FIXED: Enhanced zone finding with state/LGA matching
     let zone = address.shipping_zone;
 
     if (!zone) {
-      zone = await ShippingZoneModel.findZoneByCity(
-        address.city,
-        address.state
-      );
+      // Find zone by state and LGA
+      const zones = await ShippingZoneModel.find({ isActive: true });
 
-      if (zone) {
-        await mongoose.model('address').findByIdAndUpdate(addressId, {
-          shipping_zone: zone._id,
-        });
+      for (const testZone of zones) {
+        const stateMatch = testZone.states.find(
+          (state) => state.name.toLowerCase() === address.state.toLowerCase()
+        );
+
+        if (stateMatch) {
+          // Check if LGA is covered
+          if (
+            stateMatch.coverage_type === 'all' ||
+            stateMatch.covered_lgas.some(
+              (lga) => lga.toLowerCase() === address.lga.toLowerCase()
+            )
+          ) {
+            zone = testZone;
+
+            // Update address with found zone
+            await mongoose.model('address').findByIdAndUpdate(addressId, {
+              shipping_zone: zone._id,
+            });
+            break;
+          }
+        }
       }
     }
 
     if (!zone) {
       return response.status(400).json({
         message: 'No shipping zone found for your location',
-        error: true,
-        success: false,
-      });
-    }
-
-    // Verify location is covered by the zone
-    const isLocationCovered = zone.isLocationCovered(
-      address.state,
-      address.lga
-    );
-    if (!isLocationCovered) {
-      return response.status(400).json({
-        message: 'Shipping not available to your specific location',
         error: true,
         success: false,
       });
@@ -897,7 +830,7 @@ export const calculateCheckoutShipping = async (request, response) => {
       });
     }
 
-    // Extract unique category IDs from products
+    // Extract category IDs
     const categoryIds = [
       ...new Set(products.map((p) => p.category?._id).filter(Boolean)),
     ];
@@ -912,12 +845,12 @@ export const calculateCheckoutShipping = async (request, response) => {
         if (product && product.weight) {
           calculatedWeight += product.weight * item.quantity;
         } else {
-          calculatedWeight += 1 * item.quantity;
+          calculatedWeight += 1 * item.quantity; // Default 1kg per item
         }
       }
     }
 
-    // Get all active shipping methods
+    // FIXED: Get all active shipping methods and apply proper filtering
     const shippingMethods = await ShippingMethodModel.find({
       isActive: true,
     }).sort({ sortOrder: 1 });
@@ -926,30 +859,60 @@ export const calculateCheckoutShipping = async (request, response) => {
 
     for (const method of shippingMethods) {
       try {
-        // Check if method is currently valid (time-based) with better error handling
+        // Check if method is currently valid
         if (!method.isCurrentlyValid()) {
-          console.log(`Method ${method.name} is not currently valid`);
+          continue;
+        }
+
+        // FIXED: Enhanced product/category matching
+        let appliesToItems = false;
+        const config = method[method.type];
+
+        if (!config) {
+          appliesToItems = true; // If no config, apply to all
+        } else {
+          switch (config.assignment) {
+            case 'all_products':
+              appliesToItems = true;
+              break;
+            case 'categories':
+              if (!config.categories || config.categories.length === 0) {
+                appliesToItems = true; // No categories specified = all products
+              } else {
+                appliesToItems = categoryIds.some((catId) =>
+                  config.categories.some(
+                    (methodCatId) => methodCatId.toString() === catId.toString()
+                  )
+                );
+              }
+              break;
+            case 'specific_products':
+              if (!config.products || config.products.length === 0) {
+                appliesToItems = true; // No products specified = all products
+              } else {
+                appliesToItems = productIds.some((prodId) =>
+                  config.products.some(
+                    (methodProdId) =>
+                      methodProdId.toString() === prodId.toString()
+                  )
+                );
+              }
+              break;
+            default:
+              appliesToItems = true;
+          }
+        }
+
+        if (!appliesToItems) {
           continue;
         }
 
         // Check if method is available in this zone
         if (!method.isAvailableInZone(zone._id)) {
-          console.log(
-            `Method ${method.name} is not available in zone ${zone.name}`
-          );
           continue;
         }
 
-        // Check if method applies to the products/categories in the cart
-        const appliesToProducts = method.appliesToProducts(productIds);
-        const appliesToCategories = method.appliesToCategories(categoryIds);
-
-        if (!appliesToProducts && !appliesToCategories) {
-          console.log(`Method ${method.name} does not apply to cart items`);
-          continue;
-        }
-
-        let calculation = method.calculateShippingCost({
+        const calculation = method.calculateShippingCost({
           weight: calculatedWeight,
           orderValue: orderValue || 0,
           zone: zone._id,
@@ -975,7 +938,6 @@ export const calculateCheckoutShipping = async (request, response) => {
             );
           }
 
-          // Add zone information for all methods
           methodData.zoneInfo = {
             zoneId: zone._id,
             zoneName: zone.name,
@@ -983,14 +945,9 @@ export const calculateCheckoutShipping = async (request, response) => {
           };
 
           availableMethods.push(methodData);
-        } else {
-          console.log(
-            `Method ${method.name} is not eligible: ${calculation.reason}`
-          );
         }
       } catch (methodError) {
         console.error(`Error processing method ${method.name}:`, methodError);
-        // Continue with next method instead of breaking the whole process
         continue;
       }
     }
@@ -1009,9 +966,7 @@ export const calculateCheckoutShipping = async (request, response) => {
           _id: zone._id,
           name: zone.name,
           code: zone.code,
-          coverage: zone.isLocationCovered(address.state, address.lga)
-            ? 'full'
-            : 'partial',
+          coverage: 'full',
         },
         methods: availableMethods,
         calculatedWeight,
@@ -1577,513 +1532,6 @@ export const getShippingDashboardStats = async (request, response) => {
       message: error.message || error,
       error: true,
       success: false,
-    });
-  }
-};
-
-export const debugPickupMethod = async (request, response) => {
-  try {
-    const { methodId, addressId } = request.body;
-
-    console.log('=== DEBUG PICKUP METHOD ===');
-    console.log('Method ID:', methodId);
-    console.log('Address ID:', addressId);
-
-    // Get the method
-    const method = await ShippingMethodModel.findById(methodId);
-    if (!method) {
-      return response.json({
-        success: false,
-        error: 'Method not found',
-        methodId,
-      });
-    }
-
-    console.log('Found method:', {
-      name: method.name,
-      type: method.type,
-      isActive: method.isActive,
-      pickup: method.pickup,
-    });
-
-    // Get the address
-    let address = null;
-    let zone = null;
-
-    if (addressId) {
-      address = await mongoose.model('address').findById(addressId);
-      console.log('Found address:', {
-        city: address?.city,
-        state: address?.state,
-        lga: address?.lga,
-      });
-
-      if (address) {
-        zone = await ShippingZoneModel.findZoneByCity(
-          address.city,
-          address.state
-        );
-        console.log(
-          'Found zone:',
-          zone
-            ? {
-                name: zone.name,
-                code: zone.code,
-                id: zone._id,
-              }
-            : 'No zone found'
-        );
-      }
-    }
-
-    // Test method calculations
-    const testItems = [
-      {
-        productId: '507f1f77bcf86cd799439011', // dummy ID
-        quantity: 1,
-        category: '507f1f77bcf86cd799439012', // dummy category ID
-      },
-    ];
-
-    const testCalculation = method.calculateShippingCost({
-      weight: 1,
-      orderValue: 1000,
-      zone: zone?._id || '507f1f77bcf86cd799439013', // dummy zone ID
-      items: testItems,
-    });
-
-    console.log('Test calculation result:', testCalculation);
-
-    // Test method availability checks
-    const isCurrentlyValid = method.isCurrentlyValid();
-    const isAvailableInZone = zone
-      ? method.isAvailableInZone(zone._id)
-      : method.isAvailableInZone('507f1f77bcf86cd799439013');
-    const appliesToProducts = method.appliesToProducts([
-      '507f1f77bcf86cd799439011',
-    ]);
-    const appliesToCategories = method.appliesToCategories([
-      '507f1f77bcf86cd799439012',
-    ]);
-
-    console.log('Method checks:', {
-      isCurrentlyValid,
-      isAvailableInZone,
-      appliesToProducts,
-      appliesToCategories,
-    });
-
-    // Check pickup locations
-    if (method.type === 'pickup' && zone) {
-      const pickupLocations = method.getPickupLocationsForZone(zone._id);
-      console.log('Pickup locations for zone:', pickupLocations);
-    }
-
-    return response.json({
-      success: true,
-      data: {
-        method: {
-          name: method.name,
-          type: method.type,
-          isActive: method.isActive,
-          pickup: method.pickup,
-        },
-        address: address
-          ? {
-              city: address.city,
-              state: address.state,
-              lga: address.lga,
-            }
-          : null,
-        zone: zone
-          ? {
-              name: zone.name,
-              code: zone.code,
-              id: zone._id,
-            }
-          : null,
-        calculations: {
-          testCalculation,
-          isCurrentlyValid,
-          isAvailableInZone,
-          appliesToProducts,
-          appliesToCategories,
-        },
-      },
-    });
-  } catch (error) {
-    console.error('Debug pickup method error:', error);
-    return response.status(500).json({
-      success: false,
-      error: error.message,
-      stack: error.stack,
-    });
-  }
-};
-
-export const calculateCheckoutShippingDebug = async (request, response) => {
-  try {
-    const { addressId, items, orderValue, totalWeight } = request.body;
-
-    console.log('\n=== CALCULATE CHECKOUT SHIPPING DEBUG ===');
-    console.log('Input data:', {
-      addressId,
-      itemsCount: items?.length,
-      orderValue,
-      totalWeight,
-    });
-
-    if (!addressId || !items || items.length === 0) {
-      return response.status(400).json({
-        message: 'Address ID and items are required',
-        error: true,
-        success: false,
-      });
-    }
-
-    // Get address details
-    const address = await mongoose.model('address').findById(addressId);
-    if (!address) {
-      return response.status(404).json({
-        message: 'Address not found',
-        error: true,
-        success: false,
-      });
-    }
-
-    console.log('Address found:', {
-      city: address.city,
-      state: address.state,
-      lga: address.lga,
-    });
-
-    // Find shipping zone
-    let zone = null;
-    try {
-      zone = await ShippingZoneModel.findZoneByCity(
-        address.city,
-        address.state
-      );
-      console.log(
-        'Zone lookup result:',
-        zone
-          ? {
-              name: zone.name,
-              code: zone.code,
-              id: zone._id,
-            }
-          : 'No zone found'
-      );
-    } catch (zoneError) {
-      console.log('Zone lookup error:', zoneError.message);
-    }
-
-    // Get all active shipping methods
-    const shippingMethods = await ShippingMethodModel.find({
-      isActive: true,
-    }).sort({ sortOrder: 1 });
-
-    console.log(`Found ${shippingMethods.length} active shipping methods`);
-
-    const availableMethods = [];
-    const debugLog = [];
-
-    for (const method of shippingMethods) {
-      const methodDebug = {
-        methodName: method.name,
-        methodType: method.type,
-        methodId: method._id,
-      };
-
-      console.log(
-        `\n--- Processing method: ${method.name} (${method.type}) ---`
-      );
-
-      try {
-        // Check if method is currently valid
-        const isCurrentlyValid = method.isCurrentlyValid();
-        methodDebug.isCurrentlyValid = isCurrentlyValid;
-        console.log('Is currently valid:', isCurrentlyValid);
-
-        if (!isCurrentlyValid) {
-          methodDebug.reason = 'Method is not currently valid (time-based)';
-          debugLog.push(methodDebug);
-          continue;
-        }
-
-        // For pickup methods, let's specifically check zone availability
-        if (method.type === 'pickup') {
-          console.log('Processing pickup method...');
-          console.log('Pickup config:', JSON.stringify(method.pickup, null, 2));
-
-          // Check if zone locations exist
-          const hasZoneLocations =
-            method.pickup.zoneLocations &&
-            method.pickup.zoneLocations.length > 0;
-          const hasDefaultLocations =
-            method.pickup.defaultLocations &&
-            method.pickup.defaultLocations.length > 0;
-
-          console.log(
-            'Zone locations count:',
-            method.pickup.zoneLocations?.length || 0
-          );
-          console.log(
-            'Default locations count:',
-            method.pickup.defaultLocations?.length || 0
-          );
-
-          methodDebug.hasZoneLocations = hasZoneLocations;
-          methodDebug.hasDefaultLocations = hasDefaultLocations;
-
-          let isAvailableInZone = true;
-          let pickupLocations = [];
-
-          if (hasZoneLocations && zone) {
-            // Check zone-specific availability
-            const zoneLocation = method.pickup.zoneLocations.find(
-              (zl) => zl.zone.toString() === zone._id.toString()
-            );
-
-            if (zoneLocation) {
-              pickupLocations = zoneLocation.locations.filter(
-                (loc) => loc.isActive !== false
-              );
-              console.log(
-                'Found zone-specific locations:',
-                pickupLocations.length
-              );
-            } else {
-              isAvailableInZone = false;
-              console.log('No zone-specific locations for this zone');
-            }
-          } else if (!hasZoneLocations && hasDefaultLocations) {
-            // Use default locations for all zones
-            pickupLocations = method.pickup.defaultLocations.filter(
-              (loc) => loc.isActive !== false
-            );
-            console.log('Using default locations:', pickupLocations.length);
-          } else if (hasZoneLocations && !zone) {
-            // Zone locations exist but no zone found
-            isAvailableInZone = false;
-            console.log('Zone locations exist but no zone found for address');
-          }
-
-          methodDebug.isAvailableInZone = isAvailableInZone;
-          methodDebug.pickupLocationsCount = pickupLocations.length;
-
-          if (!isAvailableInZone || pickupLocations.length === 0) {
-            methodDebug.reason = 'No pickup locations available for this zone';
-            debugLog.push(methodDebug);
-            continue;
-          }
-
-          // Check product/category assignment
-          const productIds = items.map((item) => item.productId || item._id);
-          const categoryIds = [
-            ...new Set(items.map((item) => item.category).filter(Boolean)),
-          ];
-
-          console.log('Product IDs:', productIds);
-          console.log('Category IDs:', categoryIds);
-          console.log('Assignment type:', method.pickup.assignment);
-
-          const appliesToProducts = method.appliesToProducts(productIds);
-          const appliesToCategories = method.appliesToCategories(categoryIds);
-
-          methodDebug.appliesToProducts = appliesToProducts;
-          methodDebug.appliesToCategories = appliesToCategories;
-
-          console.log('Applies to products:', appliesToProducts);
-          console.log('Applies to categories:', appliesToCategories);
-
-          if (!appliesToProducts && !appliesToCategories) {
-            methodDebug.reason = 'Method does not apply to cart items';
-            debugLog.push(methodDebug);
-            continue;
-          }
-
-          // If we get here, pickup method is available
-          methodDebug.isEligible = true;
-          methodDebug.cost = 0;
-
-          availableMethods.push({
-            _id: method._id,
-            name: method.name,
-            code: method.code,
-            type: method.type,
-            description: method.description || 'Pickup available',
-            cost: 0,
-            estimatedDelivery: method.estimatedDelivery,
-            pickupLocations: pickupLocations,
-            reason: `${pickupLocations.length} pickup location(s) available`,
-          });
-
-          console.log('✅ Pickup method added to available methods');
-        } else {
-          // Handle other method types (flat_rate, table_shipping)
-          console.log('Processing non-pickup method...');
-
-          // Check zone availability for other methods
-          const isAvailableInZone = zone
-            ? method.isAvailableInZone(zone._id)
-            : false;
-          methodDebug.isAvailableInZone = isAvailableInZone;
-
-          if (!isAvailableInZone) {
-            methodDebug.reason = 'Method not available in zone';
-            debugLog.push(methodDebug);
-            continue;
-          }
-
-          // Calculate shipping cost
-          const calculation = method.calculateShippingCost({
-            weight: totalWeight || 1,
-            orderValue: orderValue || 0,
-            zone: zone._id,
-            items: items,
-          });
-
-          methodDebug.calculation = calculation;
-
-          if (calculation.eligible) {
-            availableMethods.push({
-              _id: method._id,
-              name: method.name,
-              code: method.code,
-              type: method.type,
-              description: method.description,
-              cost: calculation.cost,
-              estimatedDelivery: method.estimatedDelivery,
-              reason: calculation.reason,
-            });
-
-            methodDebug.isEligible = true;
-            console.log('✅ Method added to available methods');
-          } else {
-            methodDebug.reason = calculation.reason;
-            console.log('❌ Method not eligible:', calculation.reason);
-          }
-        }
-      } catch (methodError) {
-        console.error(`Error processing method ${method.name}:`, methodError);
-        methodDebug.error = methodError.message;
-      }
-
-      debugLog.push(methodDebug);
-    }
-
-    console.log(`\n=== FINAL RESULT ===`);
-    console.log(`Available methods: ${availableMethods.length}`);
-    console.log(
-      'Methods:',
-      availableMethods.map((m) => `${m.name} (${m.type})`)
-    );
-
-    return response.json({
-      message: 'Shipping methods calculated successfully (debug mode)',
-      data: {
-        zone: zone
-          ? {
-              _id: zone._id,
-              name: zone.name,
-              code: zone.code,
-            }
-          : null,
-        methods: availableMethods,
-        address: {
-          city: address.city,
-          state: address.state,
-          lga: address.lga,
-        },
-        debug: {
-          totalMethodsChecked: shippingMethods.length,
-          methodsDebugLog: debugLog,
-          inputData: {
-            addressId,
-            itemsCount: items.length,
-            orderValue,
-            totalWeight,
-          },
-        },
-      },
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    console.error('Calculate checkout shipping debug error:', error);
-    return response.status(500).json({
-      message: error.message,
-      error: true,
-      success: false,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-    });
-  }
-};
-
-// 3. Test script for your specific case
-export const testSpecificPickupMethod = async (request, response) => {
-  try {
-    console.log('\n=== TESTING SPECIFIC PICKUP METHOD ===');
-
-    // Find your specific pickup method by code
-    const method = await ShippingMethodModel.findOne({
-      code: 'SHP-PUP',
-      type: 'pickup',
-    });
-
-    if (!method) {
-      return response.json({
-        success: false,
-        error: 'Pickup method with code SHP-PUP not found',
-      });
-    }
-
-    console.log('Found method:', method.name);
-    console.log(
-      'Method pickup config:',
-      JSON.stringify(method.pickup, null, 2)
-    );
-
-    // Test with a Lagos address (since your pickup is in Lagos)
-    const lagosAddress = await mongoose.model('address').findOne({
-      city: { $regex: /lagos/i },
-      state: { $regex: /lagos/i },
-    });
-
-    console.log(
-      'Test address:',
-      lagosAddress
-        ? {
-            city: lagosAddress.city,
-            state: lagosAddress.state,
-            id: lagosAddress._id,
-          }
-        : 'No Lagos address found'
-    );
-
-    // Test the method directly
-    const testData = {
-      addressId: lagosAddress?._id,
-      items: [
-        {
-          productId: new mongoose.Types.ObjectId(),
-          quantity: 1,
-          category: new mongoose.Types.ObjectId(),
-        },
-      ],
-      orderValue: 5000,
-      totalWeight: 1,
-    };
-
-    // Call the debug function
-    request.body = testData;
-    return await calculateCheckoutShippingDebug(request, response);
-  } catch (error) {
-    return response.status(500).json({
-      success: false,
-      error: error.message,
-      stack: error.stack,
     });
   }
 };

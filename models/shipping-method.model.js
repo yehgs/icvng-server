@@ -1,4 +1,4 @@
-// models/shippingMethod.model.js - Updated with simplified table shipping structure
+// models/shippingMethod.model.js - FIXED VERSION with enhanced assignment logic
 import mongoose from 'mongoose';
 
 const shippingMethodSchema = new mongoose.Schema(
@@ -93,9 +93,8 @@ const shippingMethodSchema = new mongoose.Schema(
       },
     },
 
-    // Table shipping configuration (zone-based with weight) - UPDATED STRUCTURE
+    // Table shipping configuration (zone-based with weight)
     tableShipping: {
-      // Assignment settings (same as flat rate)
       assignment: {
         type: String,
         enum: ['all_products', 'categories', 'specific_products'],
@@ -113,7 +112,7 @@ const shippingMethodSchema = new mongoose.Schema(
           ref: 'Product',
         },
       ],
-      // Zone-based weight rates - SIMPLIFIED STRUCTURE
+      // Zone-based weight rates
       zoneRates: [
         {
           zone: {
@@ -130,7 +129,6 @@ const shippingMethodSchema = new mongoose.Schema(
           ],
         },
       ],
-      // Duration settings
       validFrom: {
         type: Date,
         default: Date.now,
@@ -169,6 +167,10 @@ const shippingMethodSchema = new mongoose.Schema(
                 type: String,
                 required: true,
               },
+              lga: {
+                type: String,
+                required: true, // FIXED: Make LGA required for Nigerian addresses
+              },
               postalCode: String,
               phone: String,
               operatingHours: {
@@ -206,6 +208,10 @@ const shippingMethodSchema = new mongoose.Schema(
           state: {
             type: String,
             required: true,
+          },
+          lga: {
+            type: String,
+            required: true, // FIXED: Make LGA required for Nigerian addresses
           },
           postalCode: String,
           phone: String,
@@ -281,40 +287,25 @@ shippingMethodSchema.index({ type: 1 });
 shippingMethodSchema.index({ isActive: 1 });
 shippingMethodSchema.index({ sortOrder: 1 });
 
-// Method to check if method is currently valid
-// Method to check if method is currently valid
+// FIXED: Enhanced method to check if method is currently valid
 shippingMethodSchema.methods.isCurrentlyValid = function () {
   const now = new Date();
-
-  // Get the configuration object based on the method type
   const config = this[this.type];
 
-  // If no config exists, consider it valid
   if (!config) {
-    return true;
+    return true; // If no config exists, consider it valid
   }
 
-  // Check if validFrom and validUntil exist before using them
-  if (!config.validFrom && !config.validUntil) {
-    return true; // If no dates set, always valid
+  // Check validity period
+  if (config.validFrom && now < config.validFrom) {
+    return false; // Not yet valid
   }
 
-  // If only validFrom is set
-  if (config.validFrom && !config.validUntil) {
-    return now >= config.validFrom;
+  if (config.validUntil && now > config.validUntil) {
+    return false; // Expired
   }
 
-  // If only validUntil is set
-  if (!config.validFrom && config.validUntil) {
-    return now <= config.validUntil;
-  }
-
-  // If both are set
-  if (config.validFrom && config.validUntil) {
-    return now >= config.validFrom && now <= config.validUntil;
-  }
-
-  return true; // Default to valid
+  return true;
 };
 
 // Get assignment display text
@@ -335,28 +326,12 @@ shippingMethodSchema.methods.getAssignmentDisplay = function () {
   }
 };
 
-// models/shippingMethod.model.js - Enhanced calculateShippingCost method
+// FIXED: Enhanced calculateShippingCost method
 shippingMethodSchema.methods.calculateShippingCost = function (orderData) {
   const { weight, orderValue, zone, items } = orderData;
 
   if (!this.isActive || !this.isCurrentlyValid()) {
     return { eligible: false, reason: 'Shipping method not available' };
-  }
-
-  // Check if method applies to the items in the order
-  const productIds = items.map((item) => item.productId || item._id);
-  const categoryIds = [
-    ...new Set(items.map((item) => item.category).filter(Boolean)),
-  ];
-
-  const appliesToProducts = this.appliesToProducts(productIds);
-  const appliesToCategories = this.appliesToCategories(categoryIds);
-
-  if (!appliesToProducts && !appliesToCategories) {
-    return {
-      eligible: false,
-      reason: 'Shipping method not applicable to these products',
-    };
   }
 
   let cost = 0;
@@ -487,19 +462,28 @@ shippingMethodSchema.methods.calculateShippingCost = function (orderData) {
   };
 };
 
-// Enhanced method to check if method applies to specific products with better validation
+// FIXED: Enhanced method to check if method applies to specific products
 shippingMethodSchema.methods.appliesToProducts = function (productIds) {
   const config = this[this.type];
 
-  if (!config) return false;
+  if (!config) {
+    return true; // If no config, apply to all products
+  }
 
-  if (config.assignment === 'all_products') {
+  // FIXED: If assignment is all_products OR no specific assignment configured, apply to all
+  if (
+    config.assignment === 'all_products' ||
+    (!config.assignment &&
+      !config.categories?.length &&
+      !config.products?.length)
+  ) {
     return true;
   }
 
   if (config.assignment === 'specific_products') {
+    // FIXED: If no products specified, apply to all products
     if (!config.products || config.products.length === 0) {
-      return false;
+      return true;
     }
     return productIds.some((id) =>
       config.products.some(
@@ -511,19 +495,28 @@ shippingMethodSchema.methods.appliesToProducts = function (productIds) {
   return false;
 };
 
-// Enhanced method to check if method applies to categories with better validation
+// FIXED: Enhanced method to check if method applies to categories
 shippingMethodSchema.methods.appliesToCategories = function (categoryIds) {
   const config = this[this.type];
 
-  if (!config) return false;
+  if (!config) {
+    return true; // If no config, apply to all products
+  }
 
-  if (config.assignment === 'all_products') {
+  // FIXED: If assignment is all_products OR no specific assignment configured, apply to all
+  if (
+    config.assignment === 'all_products' ||
+    (!config.assignment &&
+      !config.categories?.length &&
+      !config.products?.length)
+  ) {
     return true;
   }
 
   if (config.assignment === 'categories') {
+    // FIXED: If no categories specified, apply to all products
     if (!config.categories || config.categories.length === 0) {
-      return false;
+      return true;
     }
     return categoryIds.some((id) =>
       config.categories.some((catId) => catId.toString() === id.toString())
@@ -533,6 +526,7 @@ shippingMethodSchema.methods.appliesToCategories = function (categoryIds) {
   return false;
 };
 
+// Get pickup locations for a specific zone
 shippingMethodSchema.methods.getPickupLocationsForZone = function (zoneId) {
   if (this.type !== 'pickup') return [];
 
@@ -554,15 +548,15 @@ shippingMethodSchema.methods.getPickupLocationsForZone = function (zoneId) {
   }
 };
 
-// Method to check if method is available in a specific zone
+// FIXED: Enhanced method to check if method is available in a specific zone
 shippingMethodSchema.methods.isAvailableInZone = function (zoneId) {
   if (!this.isActive) return false;
 
   switch (this.type) {
     case 'flat_rate':
       const flatConfig = this.flatRate;
-      if (flatConfig.zoneRates.length === 0) {
-        return true; // Available in all zones
+      if (!flatConfig.zoneRates || flatConfig.zoneRates.length === 0) {
+        return true; // Available in all zones when no zone-specific rates
       }
       return flatConfig.zoneRates.some(
         (zr) => zr.zone.toString() === zoneId.toString()
@@ -570,14 +564,24 @@ shippingMethodSchema.methods.isAvailableInZone = function (zoneId) {
 
     case 'table_shipping':
       const tableConfig = this.tableShipping;
+      if (!tableConfig.zoneRates || tableConfig.zoneRates.length === 0) {
+        return false; // Table shipping requires zone rates
+      }
       return tableConfig.zoneRates.some(
         (zr) => zr.zone.toString() === zoneId.toString()
       );
 
     case 'pickup':
       const pickupConfig = this.pickup;
-      if (pickupConfig.zoneLocations.length === 0) {
-        return true; // Available in all zones
+      if (
+        !pickupConfig.zoneLocations ||
+        pickupConfig.zoneLocations.length === 0
+      ) {
+        // No zone-specific locations, check if default locations exist
+        return (
+          pickupConfig.defaultLocations &&
+          pickupConfig.defaultLocations.length > 0
+        );
       }
       return pickupConfig.zoneLocations.some(
         (zl) => zl.zone.toString() === zoneId.toString()

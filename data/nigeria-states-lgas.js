@@ -63,7 +63,7 @@ export const nigeriaStatesLgas = [
   {
     state: 'Akwa Ibom',
     capital: 'Uyo',
-    region: 'South South',
+    region: 'South South',  
     population: 5278100,
     description:
       'Akwa Ibom is a state in southern Nigeria, known for its oil-rich resources and beautiful coastal scenery.',
