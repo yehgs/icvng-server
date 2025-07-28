@@ -774,43 +774,109 @@ export const calculateCheckoutShipping = async (request, response) => {
       });
     }
 
-    // FIXED: Enhanced zone finding with state/LGA matching
+    console.log('Address details:', {
+      state: address.state,
+      lga: address.lga,
+      city: address.city,
+      existingZone: address.shipping_zone?._id,
+    });
+
+    // FIXED: Enhanced zone finding with better state/LGA matching
     let zone = address.shipping_zone;
 
     if (!zone) {
-      // Find zone by state and LGA
+      console.log('No existing zone found, searching for matching zone...');
+
+      // Find zone by state and LGA with better matching logic
       const zones = await ShippingZoneModel.find({ isActive: true });
 
+      console.log(`Found ${zones.length} active zones to check`);
+
       for (const testZone of zones) {
+        console.log(`Checking zone: ${testZone.name} (${testZone.code})`);
+        console.log(
+          'Zone states:',
+          testZone.states.map((s) => ({
+            name: s.name,
+            coverage: s.coverage_type,
+            coveredLgas: s.covered_lgas,
+          }))
+        );
+
         const stateMatch = testZone.states.find(
-          (state) => state.name.toLowerCase() === address.state.toLowerCase()
+          (state) =>
+            state.name.toLowerCase().trim() ===
+            address.state.toLowerCase().trim()
         );
 
         if (stateMatch) {
-          // Check if LGA is covered
-          if (
-            stateMatch.coverage_type === 'all' ||
-            stateMatch.covered_lgas.some(
-              (lga) => lga.toLowerCase() === address.lga.toLowerCase()
-            )
-          ) {
-            zone = testZone;
+          console.log(`State match found: ${stateMatch.name}`);
+          console.log(`Coverage type: ${stateMatch.coverage_type}`);
+          console.log(
+            `Available LGAs: ${stateMatch.available_lgas?.length || 0}`
+          );
+          console.log(`Covered LGAs: ${stateMatch.covered_lgas?.length || 0}`);
 
-            // Update address with found zone
+          // FIXED: Enhanced LGA coverage checking
+          let lgaCovered = false;
+
+          if (stateMatch.coverage_type === 'all') {
+            lgaCovered = true;
+            console.log('Zone covers all LGAs in state');
+          } else if (stateMatch.coverage_type === 'specific') {
+            // Check if the address LGA is in the covered LGAs list
+            lgaCovered = stateMatch.covered_lgas?.some(
+              (lga) =>
+                lga.toLowerCase().trim() === address.lga.toLowerCase().trim()
+            );
+            console.log(`LGA ${address.lga} covered: ${lgaCovered}`);
+            console.log('Covered LGAs:', stateMatch.covered_lgas);
+          } else {
+            // Fallback: check if LGA exists in available LGAs (for backward compatibility)
+            lgaCovered = stateMatch.available_lgas?.some(
+              (lga) =>
+                lga.toLowerCase().trim() === address.lga.toLowerCase().trim()
+            );
+            console.log(`LGA ${address.lga} in available list: ${lgaCovered}`);
+          }
+
+          if (lgaCovered) {
+            zone = testZone;
+            console.log(`✅ Zone match found: ${zone.name}`);
+
+            // Update address with found zone for future use
             await mongoose.model('address').findByIdAndUpdate(addressId, {
               shipping_zone: zone._id,
             });
             break;
+          } else {
+            console.log(
+              `❌ LGA ${address.lga} not covered by zone ${testZone.name}`
+            );
           }
+        } else {
+          console.log(
+            `❌ State ${address.state} not found in zone ${testZone.name}`
+          );
         }
       }
+    } else {
+      console.log(`✅ Using existing zone: ${zone.name}`);
     }
 
     if (!zone) {
+      console.log('❌ No shipping zone found for address');
       return response.status(400).json({
-        message: 'No shipping zone found for your location',
+        message: `No shipping zone found for ${address.city}, ${address.lga}, ${address.state}. Please contact support.`,
         error: true,
         success: false,
+        debug: {
+          address: {
+            state: address.state,
+            lga: address.lga,
+            city: address.city,
+          },
+        },
       });
     }
 
@@ -835,6 +901,13 @@ export const calculateCheckoutShipping = async (request, response) => {
       ...new Set(products.map((p) => p.category?._id).filter(Boolean)),
     ];
 
+    console.log('Cart analysis:', {
+      productCount: products.length,
+      categoryCount: categoryIds.length,
+      productIds: productIds.slice(0, 3), // Log first 3 for debugging
+      categoryIds: categoryIds.slice(0, 3),
+    });
+
     // Calculate total weight if not provided
     let calculatedWeight = totalWeight || 0;
     if (!calculatedWeight) {
@@ -850,45 +923,96 @@ export const calculateCheckoutShipping = async (request, response) => {
       }
     }
 
+    console.log(`Calculated weight: ${calculatedWeight}kg`);
+
     // FIXED: Get all active shipping methods and apply proper filtering
     const shippingMethods = await ShippingMethodModel.find({
       isActive: true,
     }).sort({ sortOrder: 1 });
 
+    console.log(`Found ${shippingMethods.length} active shipping methods`);
+
     const availableMethods = [];
 
     for (const method of shippingMethods) {
       try {
+        console.log(`\n🔍 Checking method: ${method.name} (${method.type})`);
+
         // Check if method is currently valid
         if (!method.isCurrentlyValid()) {
+          console.log(`❌ Method ${method.name} is not currently valid`);
           continue;
         }
+
+        // FIXED: Enhanced zone availability checking
+        const isAvailableInZone = method.isAvailableInZone(zone._id);
+        if (!isAvailableInZone) {
+          console.log(
+            `❌ Method ${method.name} is not available in zone ${zone.name}`
+          );
+          console.log('Method zone configuration:', {
+            type: method.type,
+            hasZoneRates: method[method.type]?.zoneRates?.length > 0,
+            hasZoneLocations: method[method.type]?.zoneLocations?.length > 0,
+            hasDefaultLocations:
+              method[method.type]?.defaultLocations?.length > 0,
+          });
+          continue;
+        }
+
+        console.log(
+          `✅ Method ${method.name} is available in zone ${zone.name}`
+        );
 
         // FIXED: Enhanced product/category matching
         let appliesToItems = false;
         const config = method[method.type];
 
         if (!config) {
-          appliesToItems = true; // If no config, apply to all
+          console.log('No config found, applying to all products');
+          appliesToItems = true;
         } else {
+          console.log(`Method assignment: ${config.assignment}`);
+          console.log(`Categories assigned: ${config.categories?.length || 0}`);
+          console.log(`Products assigned: ${config.products?.length || 0}`);
+
           switch (config.assignment) {
             case 'all_products':
               appliesToItems = true;
+              console.log('✅ Applies to all products');
               break;
+
             case 'categories':
               if (!config.categories || config.categories.length === 0) {
                 appliesToItems = true; // No categories specified = all products
+                console.log(
+                  '✅ No categories specified, applies to all products'
+                );
               } else {
                 appliesToItems = categoryIds.some((catId) =>
                   config.categories.some(
                     (methodCatId) => methodCatId.toString() === catId.toString()
                   )
                 );
+                console.log(`Category match result: ${appliesToItems}`);
+                if (appliesToItems) {
+                  const matchedCategories = categoryIds.filter((catId) =>
+                    config.categories.some(
+                      (methodCatId) =>
+                        methodCatId.toString() === catId.toString()
+                    )
+                  );
+                  console.log('✅ Matched categories:', matchedCategories);
+                }
               }
               break;
+
             case 'specific_products':
               if (!config.products || config.products.length === 0) {
                 appliesToItems = true; // No products specified = all products
+                console.log(
+                  '✅ No products specified, applies to all products'
+                );
               } else {
                 appliesToItems = productIds.some((prodId) =>
                   config.products.some(
@@ -896,27 +1020,44 @@ export const calculateCheckoutShipping = async (request, response) => {
                       methodProdId.toString() === prodId.toString()
                   )
                 );
+                console.log(`Product match result: ${appliesToItems}`);
+                if (appliesToItems) {
+                  const matchedProducts = productIds.filter((prodId) =>
+                    config.products.some(
+                      (methodProdId) =>
+                        methodProdId.toString() === prodId.toString()
+                    )
+                  );
+                  console.log('✅ Matched products:', matchedProducts);
+                }
               }
               break;
+
             default:
               appliesToItems = true;
+              console.log('✅ Default case, applies to all products');
           }
         }
 
         if (!appliesToItems) {
+          console.log(`❌ Method ${method.name} does not apply to cart items`);
           continue;
         }
 
-        // Check if method is available in this zone
-        if (!method.isAvailableInZone(zone._id)) {
-          continue;
-        }
+        console.log(`✅ Method ${method.name} applies to cart items`);
 
+        // Calculate shipping cost
         const calculation = method.calculateShippingCost({
           weight: calculatedWeight,
           orderValue: orderValue || 0,
           zone: zone._id,
           items: items,
+        });
+
+        console.log(`Calculation result:`, {
+          eligible: calculation.eligible,
+          cost: calculation.cost,
+          reason: calculation.reason,
         });
 
         if (calculation.eligible) {
@@ -945,12 +1086,24 @@ export const calculateCheckoutShipping = async (request, response) => {
           };
 
           availableMethods.push(methodData);
+          console.log(`✅ Added method ${method.name} to available methods`);
+        } else {
+          console.log(
+            `❌ Method ${method.name} calculation not eligible: ${calculation.reason}`
+          );
         }
       } catch (methodError) {
-        console.error(`Error processing method ${method.name}:`, methodError);
+        console.error(
+          `❌ Error processing method ${method.name}:`,
+          methodError
+        );
         continue;
       }
     }
+
+    console.log(
+      `\n📊 Final result: ${availableMethods.length} methods available`
+    );
 
     // Sort methods by cost (free first, then by price)
     availableMethods.sort((a, b) => {
@@ -983,7 +1136,7 @@ export const calculateCheckoutShipping = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Error calculating shipping:', error);
+    console.error('❌ Error calculating shipping:', error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
@@ -1016,9 +1169,12 @@ export const createShipment = async (request, response) => {
       });
     }
 
-    const order = await OrderModel.findById(orderId).populate(
-      'delivery_address userId'
-    );
+    const order = await OrderModel.findById(orderId)
+      .populate('delivery_address')
+      .populate('userId', 'name email mobile')
+      .populate('productId', 'name weight')
+      .populate('shippingMethod', 'name type');
+
     if (!order) {
       return response.status(404).json({
         message: 'Order not found',
@@ -1053,8 +1209,22 @@ export const createShipment = async (request, response) => {
       orderId,
       trackingNumber: trackingNumber?.toUpperCase(),
       carrier,
+      shippingMethod: order.shippingMethod?._id,
       estimatedDelivery,
-      packageInfo,
+      packageInfo: {
+        weight: packageInfo?.weight || order.productId?.weight || 1,
+        dimensions: packageInfo?.dimensions || {
+          length: 20,
+          width: 15,
+          height: 10,
+          unit: 'cm',
+        },
+        fragile: packageInfo?.fragile || false,
+        insured: packageInfo?.insured || order.totalAmt > 50000,
+        insuranceValue:
+          packageInfo?.insuranceValue ||
+          (order.totalAmt > 50000 ? order.totalAmt : 0),
+      },
       deliveryInstructions,
       priority: priority || 'NORMAL',
       orderType: orderType,
@@ -1063,13 +1233,13 @@ export const createShipment = async (request, response) => {
             addressLine: order.delivery_address.address_line,
             city: order.delivery_address.city,
             state: order.delivery_address.state,
-            postalCode: order.delivery_address.postal_code,
-            country: order.delivery_address.country,
+            postalCode: order.delivery_address.pincode,
+            country: order.delivery_address.country || 'Nigeria',
           }
         : {},
       recipientInfo: {
         name: order.userId ? order.userId.name : 'Customer',
-        phone: order.delivery_address?.mobile,
+        phone: order.delivery_address?.mobile || order.userId?.mobile,
         email: order.userId ? order.userId.email : '',
       },
       shippingCost: order.shipping_cost || 0,
@@ -1088,7 +1258,7 @@ export const createShipment = async (request, response) => {
             ? 'Online order confirmed and ready for processing'
             : 'Offline order created and ready for processing',
         location: {
-          facility: 'I-Coffee Warehouse',
+          facility: 'I-Coffee Shop',
           city: 'Lagos',
           state: 'Lagos',
           country: 'Nigeria',
@@ -1104,10 +1274,36 @@ export const createShipment = async (request, response) => {
       estimated_delivery: estimatedDelivery,
     });
 
+    // Send notification emails
+    try {
+      if (order.userId) {
+        await sendShippingNotificationEmail({
+          user: order.userId,
+          order: order,
+          tracking: savedTracking,
+          latestEvent:
+            savedTracking.trackingEvents[
+              savedTracking.trackingEvents.length - 1
+            ],
+        });
+      }
+
+      // Send team notification
+      await sendOrderNotificationToTeam({
+        user: order.userId,
+        order: order,
+        items: [order],
+        orderType: `Shipment Created - ${orderType}`,
+      });
+    } catch (emailError) {
+      console.error('Failed to send notification emails:', emailError);
+    }
+
     const populatedTracking = await ShippingTrackingModel.findById(
       savedTracking._id
     )
       .populate('orderId')
+      .populate('shippingMethod')
       .populate('createdBy', 'name email');
 
     return response.json({
@@ -1131,7 +1327,10 @@ export const updateTracking = async (request, response) => {
     const { trackingId } = request.params;
     const { status, description, location, estimatedDelivery } = request.body;
 
-    const tracking = await ShippingTrackingModel.findById(trackingId);
+    const tracking = await ShippingTrackingModel.findById(trackingId)
+      .populate('orderId')
+      .populate('orderId.userId', 'name email');
+
     if (!tracking) {
       return response.status(404).json({
         message: 'Tracking not found',
@@ -1180,10 +1379,36 @@ export const updateTracking = async (request, response) => {
         order_status: orderStatus,
         ...(status === 'DELIVERED' && { actual_delivery: new Date() }),
       });
+
+      // Send email notification for important status changes
+      const importantStatuses = [
+        'PICKED_UP',
+        'IN_TRANSIT',
+        'OUT_FOR_DELIVERY',
+        'DELIVERED',
+        'ATTEMPTED',
+      ];
+      if (importantStatuses.includes(status)) {
+        try {
+          await sendShippingNotificationEmail({
+            user: tracking.orderId.userId,
+            order: tracking.orderId,
+            tracking: tracking,
+            latestEvent:
+              tracking.trackingEvents[tracking.trackingEvents.length - 1],
+          });
+        } catch (emailError) {
+          console.error(
+            'Failed to send shipping notification email:',
+            emailError
+          );
+        }
+      }
     }
 
     const updatedTracking = await ShippingTrackingModel.findById(trackingId)
       .populate('orderId')
+      .populate('shippingMethod')
       .populate('trackingEvents.updatedBy', 'name');
 
     return response.json({
@@ -1286,6 +1511,7 @@ export const getAllTrackings = async (request, response) => {
     const [trackings, totalCount] = await Promise.all([
       ShippingTrackingModel.find(query)
         .populate('orderId', 'orderId payment_status totalAmt')
+        .populate('shippingMethod', 'name type')
         .populate('createdBy', 'name email')
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -1432,13 +1658,21 @@ export const getPublicShippingMethods = async (request, response) => {
 
 export const getOrdersReadyForShipping = async (request, response) => {
   try {
-    const { page = 1, limit = 10, status = 'CONFIRMED' } = request.query;
+    const { page = 1, limit = 20, search } = request.query;
 
     const query = {
       payment_status: 'PAID',
-      order_status: status,
-      tracking_number: { $exists: false },
+      order_status: { $in: ['CONFIRMED', 'PROCESSING'] },
     };
+
+    // Add search functionality
+    if (search) {
+      query.$or = [
+        { orderId: { $regex: search, $options: 'i' } },
+        { 'userId.name': { $regex: search, $options: 'i' } },
+        { 'userId.email': { $regex: search, $options: 'i' } },
+      ];
+    }
 
     const skip = (page - 1) * limit;
 
@@ -1447,6 +1681,8 @@ export const getOrdersReadyForShipping = async (request, response) => {
         .populate('delivery_address')
         .populate('userId', 'name email mobile')
         .populate('productId', 'name image weight')
+        .populate('shippingMethod', 'name type')
+        .populate('shippingZone', 'name')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
@@ -1489,8 +1725,7 @@ export const getShippingDashboardStats = async (request, response) => {
     ] = await Promise.all([
       OrderModel.countDocuments({
         payment_status: 'PAID',
-        order_status: 'CONFIRMED',
-        tracking_number: { $exists: false },
+        order_status: { $in: ['CONFIRMED', 'PROCESSING'] },
       }),
       ShippingTrackingModel.countDocuments({
         status: { $in: ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY'] },

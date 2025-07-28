@@ -3,7 +3,7 @@ const verifyEmailTemplate = ({ name, url }) => {
   return `
   <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #4B2E2B; background: linear-gradient(to bottom, #EDE0D4, #F5EBE0); padding: 25px; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.05);">
     <div style="text-align: center; margin-bottom: 20px;">
-      <img src="https://your-domain.com/coffee-logo.png" alt="Italian Coffee Ventures" width="150" style="margin-bottom: 15px;">
+      <img src="https://barattini.coffee/wp-content/uploads/2025/07/web-logo.svg" alt="I-Coffee" width="150" style="margin-bottom: 15px;">
       <h2 style="color: #4B2E2B; font-weight: 600; margin: 10px 0; font-size: 24px;">Welcome, ${name}!</h2>
     </div>
     
@@ -23,13 +23,13 @@ const verifyEmailTemplate = ({ name, url }) => {
       <p style="font-weight: 600; font-size: 16px; margin-bottom: 15px;">Connect with us:</p>
       
       <div style="display: flex; justify-content: center; margin: 15px 0;">
-        <a href="https://facebook.com/italiancoffee" style="margin-right: 15px;">
+        <a href="https://www.facebook.com/Italiancoffeeonline/?ref=pages_you_manage" style="margin-right: 15px;">
           <img src="https://cdn-icons-png.flaticon.com/512/733/733547.png" alt="Facebook" width="30">
         </a>
-        <a href="https://twitter.com/italiancoffee" style="margin-right: 15px;">
+        <a href="https://twitter.com/italiancoffee_v" style="margin-right: 15px;">
           <img src="https://cdn-icons-png.flaticon.com/512/733/733579.png" alt="Twitter" width="30">
         </a>
-        <a href="https://instagram.com/italiancoffee">
+       <a href="https://www.instagram.com/italiancofeeventure/">
           <img src="https://cdn-icons-png.flaticon.com/512/2111/2111463.png" alt="Instagram" width="30">
         </a>
       </div>
@@ -37,12 +37,12 @@ const verifyEmailTemplate = ({ name, url }) => {
       <div style="text-align: center; color: #666; font-size: 14px; line-height: 1.6;">
         <p>Need help? Contact us:</p>
         <p>
-          <a href="mailto:customercare@italiancoffee.com" style="color: #9B2226; text-decoration: none; font-weight: 600;">customercare@italiancoffee.com</a>
+          <a href="mailto:customercare@i-coffee.ng" style="color: #9B2226; text-decoration: none; font-weight: 600;">customercare@i-coffee.ng</a>
         </p>
         <p>
-          <a href="tel:+2341234567890" style="color: #9B2226; text-decoration: none; font-weight: 600;">+234 123 456 7890</a>
+          <a href="tel:+2348039827194" style="color: #9B2226; text-decoration: none; font-weight: 600;">+234 8039 827194</a>
         </p>
-        <p>&copy; ${new Date().getFullYear()} I-Coffee.ng. All rights reserved.</p>
+        <p>&copy; ${new Date().getFullYear()} I-coffee.ng. All rights reserved.</p>
       </div>
     </div>
   </div>

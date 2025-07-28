@@ -1,4 +1,4 @@
-// controllers/order.controller.js - Updated with shipping integration
+// controllers/order.controller.js - Enhanced with auto tracking generation
 import OrderModel from '../models/order.model.js';
 import CartProductModel from '../models/cartproduct.model.js';
 import UserModel from '../models/user.model.js';
@@ -11,6 +11,7 @@ import Stripe from '../config/stripe.js';
 import {
   sendOrderConfirmationEmail,
   sendShippingNotificationEmail,
+  sendOrderNotificationToTeam,
 } from '../utils/emailTemplates.js';
 
 const getEffectiveStock = (product) => {
@@ -55,6 +56,83 @@ const getProductPrice = (product, priceOption = 'regular') => {
     case 'regular':
     default:
       return product.price;
+  }
+};
+
+// Helper function to create tracking automatically
+const createTrackingForOrder = async (order, userId) => {
+  try {
+    // Check if tracking already exists
+    const existingTracking = await ShippingTrackingModel.findOne({
+      orderId: order._id,
+    });
+    if (existingTracking) {
+      return existingTracking;
+    }
+
+    const trackingData = {
+      orderId: order._id,
+      carrier: {
+        name: 'I-Coffee Logistics',
+        code: 'ICF',
+        phone: '+234-800-ICOFFEE',
+        website: 'https://i-coffee.ng',
+      },
+      shippingMethod: order.shippingMethod,
+      estimatedDelivery: order.estimated_delivery,
+      deliveryAddress: order.delivery_address
+        ? {
+            addressLine: order.delivery_address.address_line,
+            city: order.delivery_address.city,
+            state: order.delivery_address.state,
+            postalCode: order.delivery_address.pincode,
+            country: order.delivery_address.country || 'Nigeria',
+          }
+        : {},
+      recipientInfo: {
+        name: order.userId ? order.userId.name : 'Customer',
+        phone: order.delivery_address?.mobile,
+        email: order.userId ? order.userId.email : '',
+      },
+      packageInfo: {
+        weight: 1, // Default weight
+        fragile: false,
+        insured: order.totalAmt > 50000,
+        insuranceValue: order.totalAmt > 50000 ? order.totalAmt : 0,
+      },
+      shippingCost: order.shipping_cost || 0,
+      priority: 'NORMAL',
+      createdBy: userId,
+      updatedBy: userId,
+    };
+
+    const tracking = new ShippingTrackingModel(trackingData);
+    const savedTracking = await tracking.save();
+
+    // Add initial tracking event
+    await savedTracking.addTrackingEvent(
+      {
+        status: 'PENDING',
+        description: 'Order confirmed and ready for processing',
+        location: {
+          facility: 'I-Coffee Fulfillment Center',
+          city: 'Lagos',
+          state: 'Lagos',
+          country: 'Nigeria',
+        },
+      },
+      userId
+    );
+
+    // Update order with tracking number
+    await OrderModel.findByIdAndUpdate(order._id, {
+      tracking_number: savedTracking.trackingNumber,
+    });
+
+    return savedTracking;
+  } catch (error) {
+    console.error('Error creating tracking:', error);
+    return null;
   }
 };
 
@@ -108,8 +186,9 @@ export async function DirectBankTransferOrderController(request, response) {
 
     // Get shipping zone for the address
     let shippingZone = null;
+    let address = null;
     if (addressId) {
-      const address = await mongoose.model('address').findById(addressId);
+      address = await mongoose.model('address').findById(addressId);
       if (address) {
         shippingZone = await ShippingZoneModel.findZoneByCity(
           address.city,
@@ -167,18 +246,29 @@ export async function DirectBankTransferOrderController(request, response) {
     // Save orders
     const orders = await OrderModel.insertMany(orderItems);
 
+    // Create tracking for each order automatically
+    for (const order of orders) {
+      await createTrackingForOrder(order, userId);
+    }
+
     // Send order confirmation email
     try {
       const user = await UserModel.findById(userId);
-      const address = await mongoose.model('address').findById(addressId);
-
       await sendOrderConfirmationEmail({
         user,
         order: orders[0],
         items: orderItems,
         shippingAddress: address,
         shippingMethod,
-        trackingNumber: null,
+        trackingNumber: orders[0].tracking_number,
+      });
+
+      // Send notification to team
+      await sendOrderNotificationToTeam({
+        user,
+        order: orders[0],
+        items: orderItems,
+        orderType: 'Bank Transfer',
       });
     } catch (emailError) {
       console.error('Email sending failed:', emailError);
@@ -205,7 +295,7 @@ export async function DirectBankTransferOrderController(request, response) {
   }
 }
 
-// Updated Stripe/Flutterwave payment handlers to include shipping
+// Updated Stripe/Flutterwave payment handlers to include automatic tracking
 export async function paymentController(request, response) {
   try {
     const userId = request.userId;
@@ -342,7 +432,7 @@ export async function paymentController(request, response) {
   }
 }
 
-// Enhanced Stripe webhook handler
+// Enhanced Stripe webhook handler with automatic tracking
 export async function webhookStripe(request, response) {
   const event = request.body;
 
@@ -371,16 +461,11 @@ export async function webhookStripe(request, response) {
 
       const orders = await OrderModel.insertMany(orderProduct);
 
-      // Auto-create shipments for paid orders
+      // Auto-create tracking for paid orders
       if (orders.length > 0) {
         for (const order of orders) {
           try {
-            await order.createShipment({
-              createdBy: userId,
-              updatedBy: userId,
-              weight: 1,
-              priority: 'NORMAL',
-            });
+            await createTrackingForOrder(order, userId);
 
             // Send confirmation email
             const user = await UserModel.findById(userId);
@@ -398,6 +483,14 @@ export async function webhookStripe(request, response) {
               shippingAddress: address,
               shippingMethod,
               trackingNumber: order.tracking_number,
+            });
+
+            // Send notification to team
+            await sendOrderNotificationToTeam({
+              user,
+              order,
+              items: [order],
+              orderType: 'Stripe Payment',
             });
           } catch (trackingError) {
             console.error(
@@ -465,9 +558,10 @@ const getOrderProductItems = async ({
       const productId = product.metadata.productId;
 
       // Get full product details for shipping calculation
-      const fullProduct = await ProductModel.findById(productId).populate(
-        'category'
-      );
+      const fullProduct = await mongoose
+        .model('product')
+        .findById(productId)
+        .populate('category');
 
       // Convert amount back to base currency if needed
       let amountInBaseCurrency = item.amount_total / 100;
@@ -544,7 +638,7 @@ const getOrderProductItems = async ({
   return productList;
 };
 
-// Enhanced Flutterwave order creation with proper shipping handling
+// Enhanced Flutterwave order creation with automatic tracking
 export async function flutterwaveWebhookController(request, response) {
   try {
     const signature = request.headers['verif-hash'];
@@ -679,20 +773,32 @@ export async function flutterwaveWebhookController(request, response) {
       // Save orders
       const orders = await OrderModel.insertMany(orderItems);
 
-      // Auto-create shipments for paid orders
+      // Auto-create tracking for paid orders
       for (const order of orders) {
         try {
-          await order.createShipment({
-            createdBy: meta.userId,
-            updatedBy: meta.userId,
-            weight: order.shipping_details?.weight || 1,
-            priority: 'NORMAL',
-            carrier: {
-              name: 'I-Coffee Logistics',
-              code: 'ICF',
-              phone: '+234-800-ICOFFEE',
-              website: 'https://i-coffee.ng',
-            },
+          await createTrackingForOrder(order, meta.userId);
+
+          // Send confirmation email
+          const user = await UserModel.findById(meta.userId);
+          const address = await mongoose
+            .model('address')
+            .findById(meta.addressId);
+
+          await sendOrderConfirmationEmail({
+            user,
+            order,
+            items: [order],
+            shippingAddress: address,
+            shippingMethod,
+            trackingNumber: order.tracking_number,
+          });
+
+          // Send notification to team
+          await sendOrderNotificationToTeam({
+            user,
+            order,
+            items: [order],
+            orderType: 'Flutterwave Payment',
           });
         } catch (trackingError) {
           console.error(
@@ -745,7 +851,7 @@ export async function getOrderDetailsController(request, response) {
   }
 }
 
-// Flutterwave payment controller
+// Flutterwave payment controller with enhanced tracking
 export async function flutterwavePaymentController(request, response) {
   try {
     const userId = request.userId;
@@ -941,7 +1047,6 @@ export const getOrdersForShippingController = async (request, response) => {
     const query = {
       payment_status: 'PAID',
       order_status: status,
-      tracking_number: { $exists: false },
     };
 
     const skip = (page - 1) * limit;
