@@ -8,18 +8,24 @@ import { nigeriaStatesLgas } from '../data/nigeria-states-lgas.js';
 import mongoose from 'mongoose';
 
 // Helper function to generate unique zone code
-const generateZoneCode = async (name) => {
-  const baseCode = name.substring(0, 3).toUpperCase();
+async function generateZoneCode(name) {
+  const baseCode = name
+    .split(' ')
+    .map((word) => word.charAt(0).toUpperCase())
+    .join('')
+    .substring(0, 3);
+
   let code = baseCode;
   let counter = 1;
 
+  // Check if code already exists
   while (await ShippingZoneModel.findOne({ code })) {
-    code = baseCode + counter.toString().padStart(2, '0');
+    code = `${baseCode}${counter}`;
     counter++;
   }
 
   return code;
-};
+}
 
 // Helper function to generate unique method code
 const generateMethodCode = async (name, type) => {
@@ -48,6 +54,13 @@ export const createShippingZone = async (request, response) => {
     const userId = request.user._id;
     const { name, description, states, isActive, sortOrder } = request.body;
 
+    console.log('Creating shipping zone with data:', {
+      name,
+      description,
+      statesCount: states?.length,
+      states: JSON.stringify(states, null, 2),
+    });
+
     if (!name || !states || states.length === 0) {
       return response.status(400).json({
         message: 'Name and states are required',
@@ -68,9 +81,11 @@ export const createShippingZone = async (request, response) => {
       });
     }
 
-    // Process states with LGA coverage using Nigeria data
+    // Process states according to your model structure
     const processedStates = states.map((state) => {
-      // Find state in Nigeria data
+      console.log('Processing state:', state.name);
+
+      // Find state in Nigeria data for validation and LGA list
       const nigeriaState = nigeriaStatesLgas.find(
         (s) => s.state.toLowerCase() === state.name.toLowerCase()
       );
@@ -79,22 +94,56 @@ export const createShippingZone = async (request, response) => {
         throw new Error(`Invalid state: ${state.name}`);
       }
 
-      return {
+      // Process covered_lgas - convert object structure to string array
+      let processedCoveredLgas = [];
+
+      if (state.coverage_type === 'specific' && state.covered_lgas) {
+        processedCoveredLgas = state.covered_lgas
+          .map((lga) => {
+            // Handle different input formats
+            if (typeof lga === 'string') {
+              return lga.trim();
+            } else if (lga && typeof lga === 'object' && lga.name) {
+              return lga.name.trim();
+            }
+            return null;
+          })
+          .filter(Boolean); // Remove null entries
+      }
+
+      const processedState = {
         name: nigeriaState.state,
         code: state.code || nigeriaState.state.substring(0, 2).toUpperCase(),
         coverage_type: state.coverage_type || 'all',
-        available_lgas: nigeriaState.lga, // Use actual LGA data
+        available_lgas: [...nigeriaState.lga], // Use actual Nigeria LGA data
         covered_lgas:
-          state.coverage_type === 'specific'
-            ? state.covered_lgas || []
-            : nigeriaState.lga,
+          state.coverage_type === 'specific' ? processedCoveredLgas : [],
       };
+
+      console.log('Processed state:', {
+        name: processedState.name,
+        coverage_type: processedState.coverage_type,
+        available_lgas_count: processedState.available_lgas.length,
+        covered_lgas_count: processedState.covered_lgas.length,
+        covered_lgas: processedState.covered_lgas,
+      });
+
+      return processedState;
     });
 
+    console.log(
+      'All processed states:',
+      processedStates.map((s) => ({
+        name: s.name,
+        coverage_type: s.coverage_type,
+        covered_lgas_count: s.covered_lgas.length,
+      }))
+    );
+
     const newZone = new ShippingZoneModel({
-      name,
+      name: name.trim(),
       code,
-      description,
+      description: description?.trim() || '',
       states: processedStates,
       isActive: isActive !== undefined ? isActive : true,
       sortOrder: sortOrder || 0,
@@ -102,7 +151,18 @@ export const createShippingZone = async (request, response) => {
       updatedBy: userId,
     });
 
+    console.log(
+      'About to save zone with states:',
+      newZone.states.map((s) => ({
+        name: s.name,
+        coverage_type: s.coverage_type,
+        covered_lgas: s.covered_lgas?.length || 0,
+      }))
+    );
+
     const savedZone = await newZone.save();
+
+    console.log('Zone saved successfully');
 
     return response.json({
       message: 'Shipping zone created successfully',
@@ -111,6 +171,7 @@ export const createShippingZone = async (request, response) => {
       success: true,
     });
   } catch (error) {
+    console.error('Create shipping zone error:', error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
@@ -172,6 +233,13 @@ export const updateShippingZone = async (request, response) => {
     const { name, code, description, states, isActive, sortOrder } =
       request.body;
 
+    console.log('Updating shipping zone with data:', {
+      zoneId,
+      name,
+      statesCount: states?.length,
+      states: JSON.stringify(states, null, 2),
+    });
+
     const zone = await ShippingZoneModel.findById(zoneId);
     if (!zone) {
       return response.status(404).json({
@@ -182,28 +250,79 @@ export const updateShippingZone = async (request, response) => {
     }
 
     const updateData = { updatedBy: userId };
-    if (name) updateData.name = name;
-    if (code) updateData.code = code.toUpperCase();
-    if (description !== undefined) updateData.description = description;
-    if (states) {
-      // Process states with LGA coverage
-      updateData.states = states.map((state) => ({
-        ...state,
-        code: state.code || state.name.substring(0, 2).toUpperCase(),
-        coverage_type: state.coverage_type || 'all',
-        available_lgas: state.available_lgas || [],
-        covered_lgas:
-          state.coverage_type === 'specific' ? state.covered_lgas || [] : [],
-      }));
-    }
+
+    if (name) updateData.name = name.trim();
+    if (code) updateData.code = code.toUpperCase().trim();
+    if (description !== undefined)
+      updateData.description = description?.trim() || '';
     if (isActive !== undefined) updateData.isActive = isActive;
     if (sortOrder !== undefined) updateData.sortOrder = sortOrder;
+
+    if (states && Array.isArray(states)) {
+      // Process states for updates according to your model structure
+      updateData.states = states.map((state) => {
+        console.log('Processing state for update:', state.name);
+
+        // Find state in Nigeria data for validation
+        const nigeriaState = nigeriaStatesLgas.find(
+          (s) => s.state.toLowerCase() === state.name.toLowerCase()
+        );
+
+        // Process covered_lgas - convert object structure to string array
+        let processedCoveredLgas = [];
+
+        if (state.coverage_type === 'specific' && state.covered_lgas) {
+          processedCoveredLgas = state.covered_lgas
+            .map((lga) => {
+              if (typeof lga === 'string') {
+                return lga.trim();
+              } else if (lga && typeof lga === 'object' && lga.name) {
+                return lga.name.trim();
+              }
+              return null;
+            })
+            .filter(Boolean);
+        }
+
+        const processedState = {
+          name: state.name.trim(),
+          code:
+            state.code?.trim().toUpperCase() ||
+            state.name.substring(0, 2).toUpperCase(),
+          coverage_type: state.coverage_type || 'all',
+          available_lgas:
+            state.available_lgas || (nigeriaState ? [...nigeriaState.lga] : []),
+          covered_lgas:
+            state.coverage_type === 'specific' ? processedCoveredLgas : [],
+        };
+
+        console.log('Processed state for update:', {
+          name: processedState.name,
+          coverage_type: processedState.coverage_type,
+          covered_lgas_count: processedState.covered_lgas.length,
+          covered_lgas: processedState.covered_lgas,
+        });
+
+        return processedState;
+      });
+    }
+
+    console.log('Update data prepared:', {
+      ...updateData,
+      states: updateData.states?.map((s) => ({
+        name: s.name,
+        coverage_type: s.coverage_type,
+        covered_lgas_count: s.covered_lgas?.length || 0,
+      })),
+    });
 
     const updatedZone = await ShippingZoneModel.findByIdAndUpdate(
       zoneId,
       updateData,
-      { new: true }
+      { new: true, runValidators: true }
     ).populate('createdBy updatedBy', 'name email');
+
+    console.log('Zone updated successfully');
 
     return response.json({
       message: 'Shipping zone updated successfully',
@@ -212,6 +331,7 @@ export const updateShippingZone = async (request, response) => {
       success: true,
     });
   } catch (error) {
+    console.error('Update shipping zone error:', error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
