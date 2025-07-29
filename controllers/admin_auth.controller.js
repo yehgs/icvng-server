@@ -99,6 +99,8 @@ export async function adminLoginController(request, response) {
       subRole: user.subRole,
       avatar: user.avatar,
       last_login_date: new Date(),
+      ...(user.role === 'ADMIN' &&
+        user.subRole === 'SALES' && { userMode: user.userMode }),
     };
 
     return response.json({

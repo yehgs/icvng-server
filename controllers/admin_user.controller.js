@@ -87,7 +87,8 @@ export async function getAllUsersController(request, response) {
 // Create new user (Admin functionality)
 export async function createUserController(request, response) {
   try {
-    const { name, email, password, role, subRole, mobile } = request.body;
+    const { name, email, password, role, subRole, userMode, mobile, address } =
+      request.body;
     const adminUser = request.user; // From auth middleware
 
     // Validation
@@ -135,9 +136,15 @@ export async function createUserController(request, response) {
       role,
       subRole: subRole || null,
       mobile: mobile || null,
+      address: address || null,
       verify_email: true, // Admin created users are auto-verified
       status: 'Active',
     };
+
+    // Add userMode if provided and valid
+    if (userMode && role === 'ADMIN' && subRole === 'SALES') {
+      userPayload.userMode = userMode;
+    }
 
     const newUser = new UserModel(userPayload);
     const savedUser = await newUser.save();
@@ -153,6 +160,7 @@ export async function createUserController(request, response) {
           password, // Send temporary password
           role,
           subRole,
+          userMode,
           createdBy: adminUser.name,
         }),
       });
@@ -186,7 +194,8 @@ export async function createUserController(request, response) {
 export async function updateUserController(request, response) {
   try {
     const { userId } = request.params;
-    const { name, email, mobile, role, subRole, status } = request.body;
+    const { name, email, mobile, role, subRole, userMode, address, status } =
+      request.body;
     const adminUser = request.user;
 
     // Find user to update
@@ -217,9 +226,24 @@ export async function updateUserController(request, response) {
     if (name) updateData.name = name;
     if (email) updateData.email = email;
     if (mobile) updateData.mobile = mobile;
+    if (address !== undefined) updateData.address = address;
     if (status) updateData.status = status;
     if (role) updateData.role = role;
     if (subRole !== undefined) updateData.subRole = subRole;
+
+    // Handle userMode
+    if (userMode !== undefined) {
+      // If the new role/subRole combination supports userMode, set it
+      const newRole = role || userToUpdate.role;
+      const newSubRole = subRole !== undefined ? subRole : userToUpdate.subRole;
+
+      if (newRole === 'ADMIN' && newSubRole === 'SALES') {
+        updateData.userMode = userMode;
+      } else {
+        // Clear userMode if not ADMIN/SALES
+        updateData.userMode = null;
+      }
+    }
 
     const updatedUser = await UserModel.findByIdAndUpdate(userId, updateData, {
       new: true,

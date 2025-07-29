@@ -113,6 +113,25 @@ const userSchema = new mongoose.Schema(
         message: 'Invalid subRole for the given role',
       },
     },
+    userMode: {
+      type: String,
+      enum: ['ONLINE', 'OFFLINE', null],
+      default: null,
+      validate: {
+        validator: function (value) {
+          if (!value) return true;
+
+          const isAdminSales =
+            this.role === 'ADMIN' && this.subRole === 'SALES';
+          const isUserCustomer =
+            this.role === 'USER' && ['BTC', 'BTB'].includes(this.subRole);
+
+          return isAdminSales || isUserCustomer;
+        },
+        message:
+          'userMode is only allowed for ADMIN/SALES or USER with BTC or BTB subRole',
+      },
+    },
   },
   {
     timestamps: true,

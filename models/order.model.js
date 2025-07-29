@@ -194,6 +194,10 @@ const orderSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    isWebsiteOrder: {
+      type: Boolean,
+      default: false,
+    },
     refund_status: {
       type: String,
       enum: ['NONE', 'PENDING', 'PROCESSED', 'FAILED'],
