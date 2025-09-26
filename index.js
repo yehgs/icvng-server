@@ -34,6 +34,7 @@ import exchangeRateRouter from './route/exchange-rate.route.js';
 import warehouseRouter from './route/warehouse.route.js';
 import shippingRouter from './route/shipping.route.js';
 import blogRouter from './route/blog.route.js';
+import directPricingRouter from './route/direct-pricing.route.js';
 
 dotenv.config();
 
@@ -125,6 +126,7 @@ app.use('/api/exchange-rates', exchangeRateRouter);
 app.use('/api/warehouse', warehouseRouter);
 app.use('/api/shipping', shippingRouter);
 app.use('/api/blog', blogRouter);
+app.use('/api/direct-pricing', directPricingRouter);
 
 connectDB().then(() => {
   app.listen(PORT, () => {
