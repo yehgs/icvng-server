@@ -930,6 +930,83 @@ export const getProductsByAvailability = async (request, response) => {
   }
 };
 
+// Add this to your getProducts controller
+export const getProducts = async (request, response) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      search,
+      category,
+      brand,
+      productType,
+      excludeDirectPricing, // NEW PARAMETER
+    } = request.body || request.query;
+
+    const query = {};
+
+    // Your existing filters...
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { sku: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    if (category) {
+      query.category = category;
+    }
+
+    if (brand) {
+      query.brand = { $in: [brand] }; // Brand is an array
+    }
+
+    if (productType) {
+      query.productType = productType;
+    }
+
+    // NEW: Exclude products with direct pricing
+    if (excludeDirectPricing === 'true' || excludeDirectPricing === true) {
+      const DirectPricingModel = (
+        await import('../models/direct-pricing.model.js')
+      ).default;
+      const productsWithDirectPricing = await DirectPricingModel.find({
+        isActive: true,
+      }).distinct('product');
+
+      query._id = { $nin: productsWithDirectPricing };
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [products, totalCount] = await Promise.all([
+      ProductModel.find(query)
+        .populate('brand', 'name')
+        .populate('category', 'name')
+        .skip(skip)
+        .limit(parseInt(limit))
+        .sort({ createdAt: -1 }),
+      ProductModel.countDocuments(query),
+    ]);
+
+    return response.json({
+      message: 'Products retrieved successfully',
+      data: products,
+      totalCount,
+      totalNoPage: Math.ceil(totalCount / limit),
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    return response.status(500).json({
+      message: error.message || 'Failed to get products',
+      error: true,
+      success: false,
+    });
+  }
+};
+
 // Get products by SKU
 export const getProductBySKU = async (request, response) => {
   try {

@@ -1,6 +1,7 @@
 // controllers/directPricing.controller.js
 import DirectPricingModel from '../models/direct-pricing.model.js';
 import ProductModel from '../models/product.model.js';
+import mongoose from 'mongoose';
 
 // Create or update direct pricing for a specific product
 export const createOrUpdateDirectPricing = async (request, response) => {
@@ -136,6 +137,119 @@ export const createOrUpdateDirectPricing = async (request, response) => {
     console.error('Create/Update direct pricing error:', error);
     return response.status(500).json({
       message: error.message || 'Failed to update direct pricing',
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Get available products for direct pricing modal
+export const getAvailableProductsForDirectPricing = async (
+  request,
+  response
+) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      search,
+      category,
+      brand,
+      productType,
+    } = request.query;
+
+    console.log('=== AVAILABLE PRODUCTS REQUEST ===');
+    console.log('Filters:', {
+      search,
+      category,
+      brand,
+      productType,
+      page,
+      limit,
+    });
+
+    // Build match conditions for products
+    const productMatchConditions = {};
+
+    if (search && search.trim() !== '') {
+      productMatchConditions.$or = [
+        { name: { $regex: search.trim(), $options: 'i' } },
+        { sku: { $regex: search.trim(), $options: 'i' } },
+      ];
+    }
+
+    if (category && category.trim() !== '') {
+      try {
+        productMatchConditions.category = new mongoose.Types.ObjectId(category);
+      } catch (error) {
+        console.error('Invalid category ID:', category);
+      }
+    }
+
+    if (brand && brand.trim() !== '') {
+      try {
+        // Brand is an array in Product model
+        productMatchConditions.brand = new mongoose.Types.ObjectId(brand);
+      } catch (error) {
+        console.error('Invalid brand ID:', brand);
+      }
+    }
+
+    if (productType && productType.trim() !== '') {
+      productMatchConditions.productType = productType.trim();
+    }
+
+    console.log('Product match conditions:', productMatchConditions);
+
+    // Get all products with direct pricing to exclude them
+    const productsWithDirectPricing = await DirectPricingModel.find({
+      isActive: true,
+    }).distinct('product');
+
+    console.log(
+      'Products with direct pricing:',
+      productsWithDirectPricing.length
+    );
+
+    // Exclude products that already have direct pricing
+    productMatchConditions._id = { $nin: productsWithDirectPricing };
+
+    // Count total matching products
+    const totalCount = await ProductModel.countDocuments(
+      productMatchConditions
+    );
+    const totalPages = Math.ceil(totalCount / parseInt(limit));
+
+    // Get paginated products
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const products = await ProductModel.find(productMatchConditions)
+      .populate('brand', 'name')
+      .populate('category', 'name')
+      .select('name sku productType image price salePrice stock brand category')
+      .sort({ name: 1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    console.log('Found products:', products.length);
+    console.log('Total count:', totalCount);
+
+    return response.json({
+      message: 'Available products retrieved successfully',
+      data: products,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        totalCount,
+        limit: parseInt(limit),
+      },
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Get available products error:', error);
+    return response.status(500).json({
+      message: error.message || 'Failed to get available products',
       error: true,
       success: false,
     });
@@ -330,6 +444,14 @@ export const getDirectPricingList = async (request, response) => {
       sortOrder = 'desc',
     } = request.query;
 
+    console.log('Received filters:', {
+      search,
+      category,
+      brand,
+      productType,
+      updatedBy,
+    }); // Debug log
+
     // Build match conditions
     const matchConditions = { isActive: true };
 
@@ -349,75 +471,70 @@ export const getDirectPricingList = async (request, response) => {
       {
         $unwind: '$productDetails',
       },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'lastUpdatedBy',
+          foreignField: '_id',
+          as: 'lastUpdatedByDetails',
+        },
+      },
     ];
 
-    // Add category and brand lookups if filtering
-    if (category || brand) {
-      if (category) {
-        pipeline.push({
-          $lookup: {
-            from: 'categories',
-            localField: 'productDetails.category',
-            foreignField: '_id',
-            as: 'categoryDetails',
-          },
-        });
-      }
+    // Apply filters AFTER lookups
+    const filterConditions = [];
 
-      if (brand) {
-        pipeline.push({
-          $lookup: {
-            from: 'brands',
-            localField: 'productDetails.brand',
-            foreignField: '_id',
-            as: 'brandDetails',
-          },
+    if (search && search.trim() !== '') {
+      filterConditions.push({
+        $or: [
+          { 'productDetails.name': { $regex: search.trim(), $options: 'i' } },
+          { 'productDetails.sku': { $regex: search.trim(), $options: 'i' } },
+        ],
+      });
+    }
+
+    if (category && category.trim() !== '') {
+      try {
+        filterConditions.push({
+          'productDetails.category': new mongoose.Types.ObjectId(category),
         });
+      } catch (error) {
+        console.error('Invalid category ID:', category);
       }
     }
 
-    // Add user lookup
-    pipeline.push({
-      $lookup: {
-        from: 'users',
-        localField: 'lastUpdatedBy',
-        foreignField: '_id',
-        as: 'lastUpdatedByDetails',
-      },
-    });
-
-    // Apply filters
-    const filterConditions = {};
-
-    if (search) {
-      filterConditions['productDetails.name'] = {
-        $regex: search,
-        $options: 'i',
-      };
+    // Brand filter - brand is an array in Product model
+    if (brand && brand.trim() !== '') {
+      try {
+        filterConditions.push({
+          'productDetails.brand': {
+            $in: [new mongoose.Types.ObjectId(brand)],
+          },
+        });
+      } catch (error) {
+        console.error('Invalid brand ID:', brand);
+      }
     }
 
-    if (category) {
-      filterConditions['productDetails.category'] = new mongoose.Types.ObjectId(
-        category
-      );
+    if (productType && productType.trim() !== '') {
+      filterConditions.push({
+        'productDetails.productType': productType.trim(),
+      });
     }
 
-    if (brand) {
-      filterConditions['brandDetails._id'] = new mongoose.Types.ObjectId(brand);
+    if (updatedBy && updatedBy.trim() !== '') {
+      try {
+        filterConditions.push({
+          lastUpdatedBy: new mongoose.Types.ObjectId(updatedBy),
+        });
+      } catch (error) {
+        console.error('Invalid updatedBy ID:', updatedBy);
+      }
     }
 
-    if (productType) {
-      filterConditions['productDetails.productType'] = productType;
-    }
-
-    if (updatedBy) {
-      filterConditions['lastUpdatedBy'] = new mongoose.Types.ObjectId(
-        updatedBy
-      );
-    }
-
-    if (Object.keys(filterConditions).length > 0) {
-      pipeline.push({ $match: filterConditions });
+    // Add all filter conditions if there are any
+    if (filterConditions.length > 0) {
+      pipeline.push({ $match: { $and: filterConditions } });
     }
 
     // Add sorting
@@ -425,18 +542,20 @@ export const getDirectPricingList = async (request, response) => {
     sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
     pipeline.push({ $sort: sort });
 
-    // Count total documents
+    // Count total documents BEFORE pagination
     const countPipeline = [...pipeline, { $count: 'total' }];
     const countResult = await DirectPricingModel.aggregate(countPipeline);
     const totalCount = countResult[0]?.total || 0;
-    const totalPages = Math.ceil(totalCount / limit);
+    const totalPages = Math.ceil(totalCount / parseInt(limit));
 
     // Add pagination
-    const skip = (page - 1) * limit;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
     pipeline.push({ $skip: skip }, { $limit: parseInt(limit) });
 
     // Execute aggregation
     const results = await DirectPricingModel.aggregate(pipeline);
+
+    console.log('Query results:', results.length); // Debug log
 
     return response.json({
       message: 'Direct pricing list retrieved successfully',

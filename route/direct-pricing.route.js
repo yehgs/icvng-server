@@ -9,6 +9,7 @@ import {
   getPriceHistory,
   deleteDirectPricing,
   getDirectPricingStats,
+  getAvailableProductsForDirectPricing,
 } from '../controllers/directPricing.controller.js';
 
 const directPricingRouter = Router();
@@ -33,5 +34,11 @@ directPricingRouter.delete('/product/:productId', auth, deleteDirectPricing);
 
 // Get direct pricing statistics
 directPricingRouter.get('/stats', auth, getDirectPricingStats);
+// Get available products for direct pricing modal (with filters and pagination)
+directPricingRouter.get(
+  '/available-products',
+  auth,
+  getAvailableProductsForDirectPricing
+);
 
 export default directPricingRouter;
