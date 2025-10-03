@@ -305,7 +305,7 @@ export const getCategoryStructureController = async (request, response) => {
   }
 };
 
-export const getProductController = async (request, response) => {
+export const getProductControllerAdmin = async (request, response) => {
   try {
     let { page, limit, search } = request.body;
 
@@ -324,6 +324,75 @@ export const getProductController = async (request, response) => {
           },
         }
       : {};
+
+    const skip = (page - 1) * limit;
+
+    const [data, totalCount] = await Promise.all([
+      ProductModel.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate(
+          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy'
+        ),
+      ProductModel.countDocuments(query),
+    ]);
+
+    return response.json({
+      message: 'Product data',
+      error: false,
+      success: true,
+      totalCount: totalCount,
+      totalNoPage: Math.ceil(totalCount / limit),
+      data: data,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+export const getProductController = async (request, response) => {
+  try {
+    let { page, limit, search } = request.body;
+
+    if (!page) {
+      page = 1;
+    }
+
+    if (!limit) {
+      limit = 10;
+    }
+
+    // Build query with mandatory price filter
+    const query = {};
+
+    // CRITICAL: Only show products with at least one of the three prices set
+    const priceFilter = {
+      $or: [
+        { btcPrice: { $gt: 0 } },
+        { price3weeksDelivery: { $gt: 0 } },
+        { price5weeksDelivery: { $gt: 0 } },
+      ],
+    };
+
+    // If there's a search term, combine with price filter
+    if (search) {
+      query.$and = [
+        priceFilter,
+        {
+          $text: {
+            $search: search,
+          },
+        },
+      ];
+    } else {
+      // No search, just apply price filter
+      query.$or = priceFilter.$or;
+    }
 
     const skip = (page - 1) * limit;
 
@@ -532,7 +601,7 @@ export const deleteProductDetails = async (request, response) => {
   }
 };
 
-export const searchProduct = async (request, response) => {
+export const searchProductAdmin = async (request, response) => {
   try {
     let {
       search,
@@ -655,6 +724,242 @@ export const searchProduct = async (request, response) => {
           break;
         case 'price-high':
           sortOption = { price: -1 };
+          break;
+        case 'popularity':
+          sortOption = { averageRating: -1 };
+          break;
+        case 'alphabet':
+          sortOption = { name: 1 };
+          break;
+        case 'featured':
+          sortOption = { featured: -1, createdAt: -1 };
+          break;
+      }
+    }
+
+    // Execute query with all filters
+    const [data, dataCount] = await Promise.all([
+      ProductModel.find(query)
+        .sort(sortOption)
+        .skip(skip)
+        .limit(limit)
+        .populate(
+          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
+        ),
+      ProductModel.countDocuments(query),
+    ]);
+
+    return response.json({
+      message: 'Product data',
+      error: false,
+      success: true,
+      data: data,
+      totalCount: dataCount,
+      totalPage: Math.ceil(dataCount / limit),
+      page: page,
+      limit: limit,
+    });
+  } catch (error) {
+    console.error('Search product error:', error);
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+export const searchProduct = async (request, response) => {
+  try {
+    let {
+      search,
+      page,
+      limit,
+      category,
+      subCategory,
+      brand,
+      productType,
+      roastLevel,
+      intensity,
+      blend,
+      featured,
+      productAvailability,
+      minPrice,
+      maxPrice,
+      sort,
+    } = request.body;
+
+    // Default pagination values
+    if (!page) page = 1;
+    if (!limit) limit = 12;
+
+    // Build query object
+    const query = {};
+
+    // CRITICAL: Only show products with at least one of the three prices set
+    query.$or = [
+      { btcPrice: { $gt: 0 } },
+      { price3weeksDelivery: { $gt: 0 } },
+      { price5weeksDelivery: { $gt: 0 } },
+    ];
+
+    // Text search if provided - merge with existing $or
+    if (search) {
+      // Need to combine search with price filter
+      query.$and = [
+        {
+          $or: [
+            { btcPrice: { $gt: 0 } },
+            { price3weeksDelivery: { $gt: 0 } },
+            { price5weeksDelivery: { $gt: 0 } },
+          ],
+        },
+        { $text: { $search: search } },
+      ];
+      // Remove the standalone $or since we moved it to $and
+      delete query.$or;
+    }
+
+    // Category filter
+    if (category) {
+      query.category = category;
+    }
+
+    // Subcategory filter
+    if (subCategory) {
+      query.subCategory = subCategory;
+    }
+
+    // Brand filter
+    if (brand) {
+      // If brand is an array, query for any match
+      if (Array.isArray(brand)) {
+        query.brand = { $in: brand };
+      } else {
+        query.brand = brand;
+      }
+    }
+
+    // Product type filter
+    if (
+      productType &&
+      (Array.isArray(productType) ? productType.length > 0 : productType)
+    ) {
+      query.productType = Array.isArray(productType)
+        ? { $in: productType }
+        : productType;
+    }
+
+    // Roast level filter (for coffee products)
+    if (
+      roastLevel &&
+      (Array.isArray(roastLevel) ? roastLevel.length > 0 : roastLevel)
+    ) {
+      query.roastLevel = Array.isArray(roastLevel)
+        ? { $in: roastLevel }
+        : roastLevel;
+    }
+
+    // Intensity filter (for coffee products)
+    if (
+      intensity &&
+      (Array.isArray(intensity) ? intensity.length > 0 : intensity)
+    ) {
+      query.intensity = Array.isArray(intensity)
+        ? { $in: intensity }
+        : intensity;
+    }
+
+    // Blend filter (for coffee products)
+    if (blend && (Array.isArray(blend) ? blend.length > 0 : blend)) {
+      query.blend = Array.isArray(blend) ? { $in: blend } : blend;
+    }
+
+    // Featured filter
+    if (featured !== undefined) {
+      query.featured = featured;
+    }
+
+    // Product availability filter
+    if (productAvailability !== undefined) {
+      query.productAvailability = productAvailability;
+    }
+
+    // Price range filter - check against any of the three prices
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      const priceConditions = [];
+
+      if (minPrice !== undefined && maxPrice !== undefined) {
+        priceConditions.push(
+          {
+            btcPrice: {
+              $gte: Number(minPrice),
+              $lte: Number(maxPrice),
+            },
+          },
+          {
+            price3weeksDelivery: {
+              $gte: Number(minPrice),
+              $lte: Number(maxPrice),
+            },
+          },
+          {
+            price5weeksDelivery: {
+              $gte: Number(minPrice),
+              $lte: Number(maxPrice),
+            },
+          }
+        );
+      } else if (minPrice !== undefined) {
+        priceConditions.push(
+          { btcPrice: { $gte: Number(minPrice) } },
+          { price3weeksDelivery: { $gte: Number(minPrice) } },
+          { price5weeksDelivery: { $gte: Number(minPrice) } }
+        );
+      } else if (maxPrice !== undefined) {
+        priceConditions.push(
+          { btcPrice: { $lte: Number(maxPrice) } },
+          { price3weeksDelivery: { $lte: Number(maxPrice) } },
+          { price5weeksDelivery: { $lte: Number(maxPrice) } }
+        );
+      }
+
+      // Add price conditions to existing query
+      if (query.$and) {
+        query.$and.push({ $or: priceConditions });
+      } else {
+        query.$and = [{ $or: priceConditions }];
+        // Move the price filter from $or to $and
+        if (query.$or) {
+          query.$and.unshift({ $or: query.$or });
+          delete query.$or;
+        }
+      }
+    }
+
+    // Calculate skip for pagination
+    const skip = (page - 1) * limit;
+
+    // Determine sort order
+    let sortOption = { createdAt: -1 }; // Default sort by newest
+
+    if (sort) {
+      switch (sort) {
+        case 'price-low':
+          // Sort by lowest non-zero price across all three price types
+          sortOption = {
+            btcPrice: 1,
+            price3weeksDelivery: 1,
+            price5weeksDelivery: 1,
+          };
+          break;
+        case 'price-high':
+          // Sort by highest price across all three price types
+          sortOption = {
+            btcPrice: -1,
+            price3weeksDelivery: -1,
+            price5weeksDelivery: -1,
+          };
           break;
         case 'popularity':
           sortOption = { averageRating: -1 };
@@ -932,6 +1237,100 @@ export const getProductsByAvailability = async (request, response) => {
 
 // Add this to your getProducts controller
 export const getProducts = async (request, response) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      search,
+      category,
+      brand,
+      productType,
+      excludeDirectPricing,
+    } = request.body || request.query;
+
+    const query = {};
+
+    // CRITICAL: Only show products with at least one of the three prices set
+    const priceFilter = {
+      $or: [
+        { btcPrice: { $gt: 0 } },
+        { price3weeksDelivery: { $gt: 0 } },
+        { price5weeksDelivery: { $gt: 0 } },
+      ],
+    };
+
+    // Search filter
+    if (search) {
+      // Combine search with price filter using $and
+      query.$and = [
+        priceFilter,
+        {
+          $or: [
+            { name: { $regex: search, $options: 'i' } },
+            { sku: { $regex: search, $options: 'i' } },
+          ],
+        },
+      ];
+    } else {
+      // Just apply price filter
+      query.$or = priceFilter.$or;
+    }
+
+    if (category) {
+      query.category = category;
+    }
+
+    if (brand) {
+      query.brand = { $in: [brand] }; // Brand is an array
+    }
+
+    if (productType) {
+      query.productType = productType;
+    }
+
+    // Exclude products with direct pricing
+    if (excludeDirectPricing === 'true' || excludeDirectPricing === true) {
+      const DirectPricingModel = (
+        await import('../models/direct-pricing.model.js')
+      ).default;
+      const productsWithDirectPricing = await DirectPricingModel.find({
+        isActive: true,
+      }).distinct('product');
+
+      query._id = { $nin: productsWithDirectPricing };
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [products, totalCount] = await Promise.all([
+      ProductModel.find(query)
+        .populate('brand', 'name')
+        .populate('category', 'name')
+        .skip(skip)
+        .limit(parseInt(limit))
+        .sort({ createdAt: -1 }),
+      ProductModel.countDocuments(query),
+    ]);
+
+    return response.json({
+      message: 'Products retrieved successfully',
+      data: products,
+      totalCount,
+      totalNoPage: Math.ceil(totalCount / limit),
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    return response.status(500).json({
+      message: error.message || 'Failed to get products',
+      error: true,
+      success: false,
+    });
+  }
+};
+// Add this to your getProducts controller
+export const getProductsAdmin = async (request, response) => {
   try {
     const {
       page = 1,

@@ -11,10 +11,12 @@ import {
   getProductController,
   getProductDetails,
   searchProduct,
+  searchProductAdmin,
   updateProductDetails,
   getFeaturedProducts,
   getProductsByAvailability,
   getProductBySKU,
+  getProductControllerAdmin,
 } from '../controllers/product.controller.js';
 import { admin } from '../middleware/Admin.js';
 
@@ -27,6 +29,7 @@ productRouter.post('/create', auth, admin, createProductController);
 productRouter.get('/search', searchProductController);
 productRouter.get('/category-structure', getCategoryStructureController);
 productRouter.post('/get', getProductController);
+productRouter.post('/get-admin', getProductControllerAdmin);
 productRouter.post('/get-product-by-category', getProductByCategory);
 productRouter.post(
   '/get-product-by-category-and-subcategory',
@@ -42,6 +45,7 @@ productRouter.delete('/delete-product', auth, admin, deleteProductDetails);
 
 // Search product
 productRouter.post('/search-product', searchProduct);
+productRouter.post('/search-product-admin', searchProductAdmin);
 
 // Filter products by category
 productRouter.post('/get-product-by-category', getProductByCategory);
