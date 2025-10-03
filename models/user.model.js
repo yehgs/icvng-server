@@ -96,9 +96,10 @@ const userSchema = new mongoose.Schema(
           const adminRoles = [
             'IT',
             'DIRECTOR',
-            'SALES',
-            'HR',
             'MANAGER',
+            'SALES-MANAGER',
+            'HR',
+            'SALES',
             'WAREHOUSE',
             'ACCOUNTANT',
             'GRAPHICS',
