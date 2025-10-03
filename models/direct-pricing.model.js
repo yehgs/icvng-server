@@ -7,19 +7,11 @@ const directPricingSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Product',
       required: true,
-      unique: true, // One direct pricing record per product
+      unique: true,
     },
 
-    // Direct price entries (no calculations involved)
+    // Direct price entries (only BTC and delivery prices)
     directPrices: {
-      salePrice: {
-        type: Number,
-        default: 0,
-      },
-      btbPrice: {
-        type: Number,
-        default: 0,
-      },
       btcPrice: {
         type: Number,
         default: 0,
@@ -36,24 +28,6 @@ const directPricingSchema = new mongoose.Schema(
 
     // Track who updated each price type
     priceUpdatedBy: {
-      salePrice: {
-        updatedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
-        },
-        updatedAt: {
-          type: Date,
-        },
-      },
-      btbPrice: {
-        updatedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
-        },
-        updatedAt: {
-          type: Date,
-        },
-      },
       btcPrice: {
         updatedBy: {
           type: mongoose.Schema.Types.ObjectId,
@@ -83,19 +57,16 @@ const directPricingSchema = new mongoose.Schema(
       },
     },
 
-    // Overall tracking
     isActive: {
       type: Boolean,
       default: true,
     },
 
-    // Notes for this pricing entry
     notes: {
       type: String,
       default: '',
     },
 
-    // Last overall update tracking
     lastUpdatedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -107,10 +78,9 @@ const directPricingSchema = new mongoose.Schema(
       default: Date.now,
     },
 
-    // Approval tracking (optional, can be auto-approved for accountants)
     isApproved: {
       type: Boolean,
-      default: true, // Auto-approve for direct pricing
+      default: true,
     },
 
     approvedBy: {
@@ -123,21 +93,16 @@ const directPricingSchema = new mongoose.Schema(
       default: Date.now,
     },
 
-    // Price history for tracking all changes
     priceHistory: [
       {
         prices: {
-          salePrice: Number,
-          btbPrice: Number,
           btcPrice: Number,
           price3weeksDelivery: Number,
           price5weeksDelivery: Number,
         },
         priceType: {
-          type: String, // Which specific price was updated
+          type: String,
           enum: [
-            'salePrice',
-            'btbPrice',
             'btcPrice',
             'price3weeksDelivery',
             'price5weeksDelivery',
@@ -163,14 +128,12 @@ const directPricingSchema = new mongoose.Schema(
       },
     ],
 
-    // Pricing source identifier
     pricingSource: {
       type: String,
       enum: ['DIRECT_PRICING', 'CONFIG_BASED'],
       default: 'DIRECT_PRICING',
     },
 
-    // Override config-based pricing if both exist
     overrideConfigPricing: {
       type: Boolean,
       default: true,
@@ -181,13 +144,13 @@ const directPricingSchema = new mongoose.Schema(
   }
 );
 
-// Indexes for better performance
+// Indexes
 directPricingSchema.index({ product: 1 });
 directPricingSchema.index({ isActive: 1 });
 directPricingSchema.index({ lastUpdatedAt: -1 });
-directPricingSchema.index({ 'priceUpdatedBy.salePrice.updatedBy': 1 });
+directPricingSchema.index({ 'priceUpdatedBy.btcPrice.updatedBy': 1 });
 
-// Pre-save middleware to update tracking information
+// Pre-save middleware
 directPricingSchema.pre('save', function (next) {
   if (this.isModified()) {
     this.lastUpdatedAt = new Date();
@@ -217,8 +180,6 @@ directPricingSchema.methods.updateSpecificPrice = function (
   notes = ''
 ) {
   const validPriceTypes = [
-    'salePrice',
-    'btbPrice',
     'btcPrice',
     'price3weeksDelivery',
     'price5weeksDelivery',
@@ -230,16 +191,13 @@ directPricingSchema.methods.updateSpecificPrice = function (
 
   const previousValue = this.directPrices[priceType];
 
-  // Update the price
   this.directPrices[priceType] = newValue;
 
-  // Update tracking info for this specific price type
   this.priceUpdatedBy[priceType] = {
     updatedBy: updatedBy,
     updatedAt: new Date(),
   };
 
-  // Add to history
   this.priceHistory.push({
     prices: { ...this.directPrices },
     priceType: priceType,
@@ -251,7 +209,6 @@ directPricingSchema.methods.updateSpecificPrice = function (
     updateSource: 'DIRECT_ENTRY',
   });
 
-  // Update overall tracking
   this.lastUpdatedBy = updatedBy;
   this.lastUpdatedAt = new Date();
 };
@@ -262,21 +219,16 @@ directPricingSchema.methods.bulkUpdatePrices = function (
   updatedBy,
   notes = ''
 ) {
-  const previousPrices = { ...this.directPrices };
   const validPriceTypes = [
-    'salePrice',
-    'btbPrice',
     'btcPrice',
     'price3weeksDelivery',
     'price5weeksDelivery',
   ];
 
-  // Update all provided prices
   Object.entries(priceUpdates).forEach(([priceType, newValue]) => {
     if (validPriceTypes.includes(priceType) && newValue !== undefined) {
       this.directPrices[priceType] = newValue;
 
-      // Update tracking for each price type
       this.priceUpdatedBy[priceType] = {
         updatedBy: updatedBy,
         updatedAt: new Date(),
@@ -284,19 +236,17 @@ directPricingSchema.methods.bulkUpdatePrices = function (
     }
   });
 
-  // Add bulk update to history
   this.priceHistory.push({
     prices: { ...this.directPrices },
     priceType: 'bulk',
-    previousValue: null, // Not applicable for bulk updates
-    newValue: null, // Not applicable for bulk updates
+    previousValue: null,
+    newValue: null,
     updatedBy: updatedBy,
     updatedAt: new Date(),
     notes: notes,
     updateSource: 'BULK_UPDATE',
   });
 
-  // Update overall tracking
   this.lastUpdatedBy = updatedBy;
   this.lastUpdatedAt = new Date();
 };

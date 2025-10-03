@@ -8,7 +8,6 @@ export const createOrUpdateDirectPricing = async (request, response) => {
   try {
     const { productId, prices, notes } = request.body;
 
-    // Check user role - only Accountant, Director, or IT can manage direct pricing
     if (!['ACCOUNTANT', 'DIRECTOR', 'IT'].includes(request.user.subRole)) {
       return response.status(403).json({
         message: 'Only Accountant, Director, or IT can manage direct pricing',
@@ -17,7 +16,6 @@ export const createOrUpdateDirectPricing = async (request, response) => {
       });
     }
 
-    // Validate input
     if (!productId) {
       return response.status(400).json({
         message: 'Product ID is required',
@@ -36,8 +34,6 @@ export const createOrUpdateDirectPricing = async (request, response) => {
 
     // Validate that at least one price is provided and valid
     const validPriceTypes = [
-      'salePrice',
-      'btbPrice',
       'btcPrice',
       'price3weeksDelivery',
       'price5weeksDelivery',
@@ -63,7 +59,6 @@ export const createOrUpdateDirectPricing = async (request, response) => {
       });
     }
 
-    // Check if product exists
     const product = await ProductModel.findById(productId);
     if (!product) {
       return response.status(404).json({
@@ -73,20 +68,17 @@ export const createOrUpdateDirectPricing = async (request, response) => {
       });
     }
 
-    // Find or create direct pricing record
     let directPricing = await DirectPricingModel.findOrCreateForProduct(
       productId,
       request.user._id
     );
 
-    // Update prices using the model method
     directPricing.bulkUpdatePrices(
       providedPrices,
       request.user._id,
       notes || 'Direct price update'
     );
 
-    // Update notes if provided
     if (notes) {
       directPricing.notes = notes;
     }
@@ -98,13 +90,8 @@ export const createOrUpdateDirectPricing = async (request, response) => {
       updatedBy: request.user._id,
     };
 
-    // Only update prices that were provided
     Object.entries(providedPrices).forEach(([priceType, value]) => {
-      if (priceType === 'salePrice') {
-        productUpdateData.salePrice = value;
-      } else if (priceType === 'btbPrice') {
-        productUpdateData.btbPrice = value;
-      } else if (priceType === 'btcPrice') {
+      if (priceType === 'btcPrice') {
         productUpdateData.btcPrice = value;
       } else if (priceType === 'price3weeksDelivery') {
         productUpdateData.price3weeksDelivery = value;
@@ -115,7 +102,6 @@ export const createOrUpdateDirectPricing = async (request, response) => {
 
     await ProductModel.findByIdAndUpdate(productId, productUpdateData);
 
-    // Populate the response
     await directPricing.populate([
       { path: 'product', select: 'name sku productType' },
       { path: 'lastUpdatedBy', select: 'name email' },
@@ -158,17 +144,6 @@ export const getAvailableProductsForDirectPricing = async (
       productType,
     } = request.query;
 
-    console.log('=== AVAILABLE PRODUCTS REQUEST ===');
-    console.log('Filters:', {
-      search,
-      category,
-      brand,
-      productType,
-      page,
-      limit,
-    });
-
-    // Build match conditions for products
     const productMatchConditions = {};
 
     if (search && search.trim() !== '') {
@@ -188,7 +163,6 @@ export const getAvailableProductsForDirectPricing = async (
 
     if (brand && brand.trim() !== '') {
       try {
-        // Brand is an array in Product model
         productMatchConditions.brand = new mongoose.Types.ObjectId(brand);
       } catch (error) {
         console.error('Invalid brand ID:', brand);
@@ -199,40 +173,26 @@ export const getAvailableProductsForDirectPricing = async (
       productMatchConditions.productType = productType.trim();
     }
 
-    console.log('Product match conditions:', productMatchConditions);
-
-    // Get all products with direct pricing to exclude them
     const productsWithDirectPricing = await DirectPricingModel.find({
       isActive: true,
     }).distinct('product');
 
-    console.log(
-      'Products with direct pricing:',
-      productsWithDirectPricing.length
-    );
-
-    // Exclude products that already have direct pricing
     productMatchConditions._id = { $nin: productsWithDirectPricing };
 
-    // Count total matching products
     const totalCount = await ProductModel.countDocuments(
       productMatchConditions
     );
     const totalPages = Math.ceil(totalCount / parseInt(limit));
 
-    // Get paginated products
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const products = await ProductModel.find(productMatchConditions)
       .populate('brand', 'name')
       .populate('category', 'name')
-      .select('name sku productType image price salePrice stock brand category')
+      .select('name sku productType image price stock brand category')
       .sort({ name: 1 })
       .skip(skip)
       .limit(parseInt(limit));
-
-    console.log('Found products:', products.length);
-    console.log('Total count:', totalCount);
 
     return response.json({
       message: 'Available products retrieved successfully',
@@ -261,7 +221,6 @@ export const updateSinglePrice = async (request, response) => {
   try {
     const { productId, priceType, price, notes } = request.body;
 
-    // Check user role
     if (!['ACCOUNTANT', 'DIRECTOR', 'IT'].includes(request.user.subRole)) {
       return response.status(403).json({
         message: 'Only Accountant, Director, or IT can update direct pricing',
@@ -270,7 +229,6 @@ export const updateSinglePrice = async (request, response) => {
       });
     }
 
-    // Validate input
     if (!productId || !priceType) {
       return response.status(400).json({
         message: 'Product ID and price type are required',
@@ -280,12 +238,11 @@ export const updateSinglePrice = async (request, response) => {
     }
 
     const validPriceTypes = [
-      'salePrice',
-      'btbPrice',
       'btcPrice',
       'price3weeksDelivery',
       'price5weeksDelivery',
     ];
+
     if (!validPriceTypes.includes(priceType)) {
       return response.status(400).json({
         message: `Invalid price type. Must be one of: ${validPriceTypes.join(
@@ -305,7 +262,6 @@ export const updateSinglePrice = async (request, response) => {
       });
     }
 
-    // Check if product exists
     const product = await ProductModel.findById(productId);
     if (!product) {
       return response.status(404).json({
@@ -315,13 +271,11 @@ export const updateSinglePrice = async (request, response) => {
       });
     }
 
-    // Find or create direct pricing record
     let directPricing = await DirectPricingModel.findOrCreateForProduct(
       productId,
       request.user._id
     );
 
-    // Update the specific price
     directPricing.updateSpecificPrice(
       priceType,
       numPrice,
@@ -331,7 +285,6 @@ export const updateSinglePrice = async (request, response) => {
 
     await directPricing.save();
 
-    // Update the product model
     const productUpdateData = {
       [priceType]: numPrice,
       updatedBy: request.user._id,
@@ -339,7 +292,6 @@ export const updateSinglePrice = async (request, response) => {
 
     await ProductModel.findByIdAndUpdate(productId, productUpdateData);
 
-    // Populate the response
     await directPricing.populate([
       { path: 'product', select: 'name sku productType' },
       { path: 'lastUpdatedBy', select: 'name email' },
@@ -392,8 +344,6 @@ export const getDirectPricing = async (request, response) => {
       { path: 'product', select: 'name sku productType category brand' },
       { path: 'lastUpdatedBy', select: 'name email' },
       { path: 'approvedBy', select: 'name email' },
-      { path: 'priceUpdatedBy.salePrice.updatedBy', select: 'name email' },
-      { path: 'priceUpdatedBy.btbPrice.updatedBy', select: 'name email' },
       { path: 'priceUpdatedBy.btcPrice.updatedBy', select: 'name email' },
       {
         path: 'priceUpdatedBy.price3weeksDelivery.updatedBy',
@@ -444,18 +394,8 @@ export const getDirectPricingList = async (request, response) => {
       sortOrder = 'desc',
     } = request.query;
 
-    console.log('Received filters:', {
-      search,
-      category,
-      brand,
-      productType,
-      updatedBy,
-    }); // Debug log
-
-    // Build match conditions
     const matchConditions = { isActive: true };
 
-    // Build aggregation pipeline
     const pipeline = [
       {
         $match: matchConditions,
@@ -481,7 +421,6 @@ export const getDirectPricingList = async (request, response) => {
       },
     ];
 
-    // Apply filters AFTER lookups
     const filterConditions = [];
 
     if (search && search.trim() !== '') {
@@ -503,7 +442,6 @@ export const getDirectPricingList = async (request, response) => {
       }
     }
 
-    // Brand filter - brand is an array in Product model
     if (brand && brand.trim() !== '') {
       try {
         filterConditions.push({
@@ -532,30 +470,23 @@ export const getDirectPricingList = async (request, response) => {
       }
     }
 
-    // Add all filter conditions if there are any
     if (filterConditions.length > 0) {
       pipeline.push({ $match: { $and: filterConditions } });
     }
 
-    // Add sorting
     const sort = {};
     sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
     pipeline.push({ $sort: sort });
 
-    // Count total documents BEFORE pagination
     const countPipeline = [...pipeline, { $count: 'total' }];
     const countResult = await DirectPricingModel.aggregate(countPipeline);
     const totalCount = countResult[0]?.total || 0;
     const totalPages = Math.ceil(totalCount / parseInt(limit));
 
-    // Add pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
     pipeline.push({ $skip: skip }, { $limit: parseInt(limit) });
 
-    // Execute aggregation
     const results = await DirectPricingModel.aggregate(pipeline);
-
-    console.log('Query results:', results.length); // Debug log
 
     return response.json({
       message: 'Direct pricing list retrieved successfully',
@@ -609,7 +540,6 @@ export const getPriceHistory = async (request, response) => {
       });
     }
 
-    // Get latest price history entries
     const history = directPricing.priceHistory
       .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
       .slice(0, parseInt(limit));
@@ -640,7 +570,6 @@ export const deleteDirectPricing = async (request, response) => {
   try {
     const { productId } = request.params;
 
-    // Check user role - only Director or IT can delete
     if (!['DIRECTOR', 'IT'].includes(request.user.subRole)) {
       return response.status(403).json({
         message: 'Only Director or IT can delete direct pricing',
@@ -670,12 +599,10 @@ export const deleteDirectPricing = async (request, response) => {
       });
     }
 
-    // Soft delete - set as inactive
     directPricing.isActive = false;
     directPricing.lastUpdatedBy = request.user._id;
     directPricing.lastUpdatedAt = new Date();
 
-    // Add to history
     directPricing.priceHistory.push({
       prices: { ...directPricing.directPrices },
       priceType: 'bulk',
@@ -718,9 +645,9 @@ export const getDirectPricingStats = async (request, response) => {
         $group: {
           _id: null,
           totalProducts: { $sum: 1 },
-          averageSalePrice: { $avg: '$directPrices.salePrice' },
-          averageBtbPrice: { $avg: '$directPrices.btbPrice' },
           averageBtcPrice: { $avg: '$directPrices.btcPrice' },
+          average3WeeksPrice: { $avg: '$directPrices.price3weeksDelivery' },
+          average5WeeksPrice: { $avg: '$directPrices.price5weeksDelivery' },
           totalUpdatesToday: {
             $sum: {
               $cond: [
@@ -741,13 +668,12 @@ export const getDirectPricingStats = async (request, response) => {
 
     const result = stats[0] || {
       totalProducts: 0,
-      averageSalePrice: 0,
-      averageBtbPrice: 0,
       averageBtcPrice: 0,
+      average3WeeksPrice: 0,
+      average5WeeksPrice: 0,
       totalUpdatesToday: 0,
     };
 
-    // Get recent activity
     const recentActivity = await DirectPricingModel.find({ isActive: true })
       .sort({ lastUpdatedAt: -1 })
       .limit(10)
