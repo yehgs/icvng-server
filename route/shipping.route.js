@@ -1,4 +1,4 @@
-// route/shipping.route.js - Updated with category/product endpoints
+// routes/shipping.route.js - FIXED AND COMPLETE
 import { Router } from 'express';
 import auth from '../middleware/auth.js';
 import { requireRole } from '../middleware/roleAuth.js';
@@ -6,6 +6,7 @@ import {
   createShippingZone,
   getShippingZones,
   updateShippingZone,
+  getZoneDependencies,
   deleteShippingZone,
   createShippingMethod,
   getShippingMethods,
@@ -26,15 +27,18 @@ import {
 
 const shippingRouter = Router();
 
+// Logistics roles that can manage shipping
+const logisticsRoles = ['IT', 'DIRECTOR', 'LOGISTICS'];
+const deleteRoles = ['IT', 'DIRECTOR', 'LOGISTICS'];
+
 // ===== PUBLIC ROUTES =====
 shippingRouter.get('/track/:trackingNumber', getTrackingByNumber);
 shippingRouter.get('/methods/public', getPublicShippingMethods);
 shippingRouter.post('/calculate-checkout', calculateCheckoutShipping);
 
-// ===== ADMIN ROUTES WITH ROLE PROTECTION =====
-const logisticsRoles = ['IT', 'DIRECTOR', 'LOGISTICS'];
+// ===== ADMIN ROUTES =====
 
-// Dashboard stats
+// Dashboard
 shippingRouter.get(
   '/dashboard/stats',
   auth,
@@ -42,65 +46,79 @@ shippingRouter.get(
   getShippingDashboardStats
 );
 
-// Shipping zones
+// Shipping Zones
 shippingRouter.get(
   '/zones',
   auth,
   requireRole(logisticsRoles),
   getShippingZones
 );
+
 shippingRouter.post(
   '/zones',
   auth,
   requireRole(logisticsRoles),
   createShippingZone
 );
+
 shippingRouter.put(
   '/zones/:zoneId',
   auth,
   requireRole(logisticsRoles),
   updateShippingZone
 );
+
+shippingRouter.get(
+  '/zones/:zoneId/dependencies',
+  auth,
+  requireRole(logisticsRoles),
+  getZoneDependencies
+);
+
 shippingRouter.delete(
   '/zones/:zoneId',
   auth,
-  requireRole(['IT', 'DIRECTOR']), // Only IT and DIRECTOR can delete
+  requireRole(deleteRoles),
   deleteShippingZone
 );
 
-// Shipping methods
+// Shipping Methods
 shippingRouter.get(
   '/methods',
   auth,
   requireRole(logisticsRoles),
   getShippingMethods
 );
+
 shippingRouter.post(
   '/methods',
   auth,
   requireRole(logisticsRoles),
   createShippingMethod
 );
+
 shippingRouter.put(
   '/methods/:methodId',
   auth,
   requireRole(logisticsRoles),
   updateShippingMethod
 );
+
 shippingRouter.delete(
   '/methods/:methodId',
   auth,
-  requireRole(['IT', 'DIRECTOR']), // Only IT and DIRECTOR can delete
+  requireRole(deleteRoles),
   deleteShippingMethod
 );
 
-// NEW: Categories and Products for assignment
+// Categories and Products for Assignment
 shippingRouter.get(
   '/categories/for-assignment',
   auth,
   requireRole(logisticsRoles),
   getCategoriesForAssignment
 );
+
 shippingRouter.get(
   '/products/for-assignment',
   auth,
@@ -108,7 +126,7 @@ shippingRouter.get(
   getProductsForAssignment
 );
 
-// Orders ready for shipping
+// Orders Ready for Shipping
 shippingRouter.get(
   '/orders/ready-for-shipping',
   auth,
@@ -116,7 +134,7 @@ shippingRouter.get(
   getOrdersReadyForShipping
 );
 
-// Shipment creation
+// Shipment Creation
 shippingRouter.post(
   '/shipments',
   auth,
@@ -124,23 +142,26 @@ shippingRouter.post(
   createShipment
 );
 
-// Tracking management
+// Tracking Management
 shippingRouter.get(
   '/trackings',
   auth,
   requireRole(logisticsRoles),
   getAllTrackings
 );
+
 shippingRouter.put(
   '/trackings/:trackingId',
   auth,
   requireRole(logisticsRoles),
   updateTracking
 );
+
 shippingRouter.get(
   '/trackings/stats',
   auth,
   requireRole(logisticsRoles),
   getTrackingStats
 );
+
 export default shippingRouter;

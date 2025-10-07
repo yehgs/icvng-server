@@ -169,7 +169,7 @@ const shippingMethodSchema = new mongoose.Schema(
               },
               lga: {
                 type: String,
-                required: true, // FIXED: Make LGA required for Nigerian addresses
+                required: true,
               },
               postalCode: String,
               phone: String,
@@ -211,7 +211,7 @@ const shippingMethodSchema = new mongoose.Schema(
           },
           lga: {
             type: String,
-            required: true, // FIXED: Make LGA required for Nigerian addresses
+            required: true,
           },
           postalCode: String,
           phone: String,

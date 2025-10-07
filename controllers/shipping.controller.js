@@ -8,20 +8,35 @@ import { nigeriaStatesLgas } from '../data/nigeria-states-lgas.js';
 import mongoose from 'mongoose';
 
 // Helper function to generate unique zone code
+// controllers/shipping.controller.js
+
 async function generateZoneCode(name) {
-  const baseCode = name
-    .split(' ')
-    .map((word) => word.charAt(0).toUpperCase())
-    .join('')
-    .substring(0, 3);
+  const words = name.trim().split(/\s+/);
+
+  let baseCode;
+  if (words.length === 1) {
+    baseCode = words[0].substring(0, 3).toUpperCase();
+  } else {
+    baseCode = words
+      .slice(0, 3)
+      .map((word) => word.charAt(0).toUpperCase())
+      .join('');
+  }
+
+  if (baseCode.length < 2) {
+    baseCode = baseCode.padEnd(2, 'Z');
+  }
 
   let code = baseCode;
   let counter = 1;
 
-  // Check if code already exists
   while (await ShippingZoneModel.findOne({ code })) {
     code = `${baseCode}${counter}`;
     counter++;
+
+    if (counter > 999) {
+      throw new Error('Unable to generate unique zone code');
+    }
   }
 
   return code;
@@ -52,27 +67,42 @@ const generateMethodCode = async (name, type) => {
 export const createShippingZone = async (request, response) => {
   try {
     const userId = request.user._id;
-    const { name, description, states, isActive, sortOrder } = request.body;
-
-    console.log('Creating shipping zone with data:', {
+    const {
       name,
       description,
-      statesCount: states?.length,
-      states: JSON.stringify(states, null, 2),
-    });
+      states,
+      isActive,
+      sortOrder,
+      zone_type,
+      priority,
+      operational_notes,
+    } = request.body;
 
-    if (!name || !states || states.length === 0) {
+    console.log('=== CREATE SHIPPING ZONE ===');
+    console.log('Request body:', JSON.stringify(request.body, null, 2));
+
+    // Validate required fields
+    if (!name || !name.trim()) {
       return response.status(400).json({
-        message: 'Name and states are required',
+        message: 'Zone name is required',
         error: true,
         success: false,
       });
     }
 
-    // Auto-generate unique code if not provided
-    const code = await generateZoneCode(name);
+    if (!states || !Array.isArray(states) || states.length === 0) {
+      return response.status(400).json({
+        message: 'At least one state is required',
+        error: true,
+        success: false,
+      });
+    }
 
-    const existingZone = await ShippingZoneModel.findOne({ name });
+    // Check for duplicate zone name
+    const existingZone = await ShippingZoneModel.findOne({
+      name: name.trim(),
+    });
+
     if (existingZone) {
       return response.status(400).json({
         message: 'Shipping zone with this name already exists',
@@ -81,88 +111,107 @@ export const createShippingZone = async (request, response) => {
       });
     }
 
-    // Process states according to your model structure
-    const processedStates = states.map((state) => {
-      console.log('Processing state:', state.name);
+    // Auto-generate unique code
+    const code = await generateZoneCode(name);
+    console.log('Generated zone code:', code);
 
-      // Find state in Nigeria data for validation and LGA list
+    // Process and validate states
+    const processedStates = [];
+    const seenStates = new Set();
+
+    for (const state of states) {
+      console.log('Processing state:', state);
+
+      // Check for duplicate states
+      if (seenStates.has(state.name.toLowerCase())) {
+        return response.status(400).json({
+          message: `Duplicate state: ${state.name}`,
+          error: true,
+          success: false,
+        });
+      }
+      seenStates.add(state.name.toLowerCase());
+
+      // Validate against Nigeria data
       const nigeriaState = nigeriaStatesLgas.find(
         (s) => s.state.toLowerCase() === state.name.toLowerCase()
       );
 
       if (!nigeriaState) {
-        throw new Error(`Invalid state: ${state.name}`);
+        return response.status(400).json({
+          message: `Invalid Nigerian state: ${state.name}`,
+          error: true,
+          success: false,
+        });
       }
 
-      // Process covered_lgas - convert object structure to string array
+      // Process covered LGAs
       let processedCoveredLgas = [];
 
-      if (state.coverage_type === 'specific' && state.covered_lgas) {
+      if (state.coverage_type === 'specific') {
+        if (!state.covered_lgas || state.covered_lgas.length === 0) {
+          return response.status(400).json({
+            message: `Please select at least one LGA for ${state.name} or change coverage to 'All LGAs'`,
+            error: true,
+            success: false,
+          });
+        }
+
+        // Convert covered_lgas to string array
         processedCoveredLgas = state.covered_lgas
           .map((lga) => {
-            // Handle different input formats
-            if (typeof lga === 'string') {
-              return lga.trim();
-            } else if (lga && typeof lga === 'object' && lga.name) {
+            if (typeof lga === 'string') return lga.trim();
+            if (lga && typeof lga === 'object' && lga.name)
               return lga.name.trim();
-            }
             return null;
           })
-          .filter(Boolean); // Remove null entries
+          .filter(Boolean);
+
+        // Validate all covered LGAs exist
+        const invalidLgas = processedCoveredLgas.filter(
+          (lgaName) => !nigeriaState.lga.includes(lgaName)
+        );
+
+        if (invalidLgas.length > 0) {
+          return response.status(400).json({
+            message: `Invalid LGAs for ${state.name}: ${invalidLgas.join(
+              ', '
+            )}`,
+            error: true,
+            success: false,
+          });
+        }
       }
 
-      const processedState = {
+      processedStates.push({
         name: nigeriaState.state,
         code: state.code || nigeriaState.state.substring(0, 2).toUpperCase(),
         coverage_type: state.coverage_type || 'all',
-        available_lgas: [...nigeriaState.lga], // Use actual Nigeria LGA data
+        available_lgas: [...nigeriaState.lga],
         covered_lgas:
           state.coverage_type === 'specific' ? processedCoveredLgas : [],
-      };
-
-      console.log('Processed state:', {
-        name: processedState.name,
-        coverage_type: processedState.coverage_type,
-        available_lgas_count: processedState.available_lgas.length,
-        covered_lgas_count: processedState.covered_lgas.length,
-        covered_lgas: processedState.covered_lgas,
       });
+    }
 
-      return processedState;
-    });
+    console.log('Processed states:', JSON.stringify(processedStates, null, 2));
 
-    console.log(
-      'All processed states:',
-      processedStates.map((s) => ({
-        name: s.name,
-        coverage_type: s.coverage_type,
-        covered_lgas_count: s.covered_lgas.length,
-      }))
-    );
-
+    // Create new zone
     const newZone = new ShippingZoneModel({
       name: name.trim(),
       code,
       description: description?.trim() || '',
       states: processedStates,
+      zone_type: zone_type || 'mixed',
+      priority: priority || 'medium',
       isActive: isActive !== undefined ? isActive : true,
       sortOrder: sortOrder || 0,
+      operational_notes: operational_notes?.trim() || '',
       createdBy: userId,
       updatedBy: userId,
     });
 
-    console.log(
-      'About to save zone with states:',
-      newZone.states.map((s) => ({
-        name: s.name,
-        coverage_type: s.coverage_type,
-        covered_lgas: s.covered_lgas?.length || 0,
-      }))
-    );
-
     const savedZone = await newZone.save();
-
-    console.log('Zone saved successfully');
+    console.log('Zone created successfully:', savedZone._id);
 
     return response.json({
       message: 'Shipping zone created successfully',
@@ -173,7 +222,7 @@ export const createShippingZone = async (request, response) => {
   } catch (error) {
     console.error('Create shipping zone error:', error);
     return response.status(500).json({
-      message: error.message || error,
+      message: error.message || 'Failed to create shipping zone',
       error: true,
       success: false,
     });
@@ -226,19 +275,26 @@ export const getShippingZones = async (request, response) => {
   }
 };
 
+// controllers/shipping.controller.js - updateShippingZone
+// controllers/shipping.controller.js - Fixed updateShippingZone
 export const updateShippingZone = async (request, response) => {
   try {
     const userId = request.user._id;
     const { zoneId } = request.params;
-    const { name, code, description, states, isActive, sortOrder } =
-      request.body;
-
-    console.log('Updating shipping zone with data:', {
-      zoneId,
+    const {
       name,
-      statesCount: states?.length,
-      states: JSON.stringify(states, null, 2),
-    });
+      description,
+      states,
+      isActive,
+      sortOrder,
+      zone_type,
+      priority,
+      operational_notes,
+    } = request.body;
+
+    console.log('=== UPDATE SHIPPING ZONE ===');
+    console.log('Zone ID:', zoneId);
+    console.log('Update data:', JSON.stringify(request.body, null, 2));
 
     const zone = await ShippingZoneModel.findById(zoneId);
     if (!zone) {
@@ -251,70 +307,98 @@ export const updateShippingZone = async (request, response) => {
 
     const updateData = { updatedBy: userId };
 
-    if (name) updateData.name = name.trim();
-    if (code) updateData.code = code.toUpperCase().trim();
+    // Update basic fields
+    if (name) {
+      updateData.name = name.trim();
+
+      // Check for duplicate name (excluding current zone)
+      if (name.trim() !== zone.name) {
+        const existingZone = await ShippingZoneModel.findOne({
+          _id: { $ne: zoneId },
+          name: name.trim(),
+        });
+
+        if (existingZone) {
+          return response.status(400).json({
+            message: 'A zone with this name already exists',
+            error: true,
+            success: false,
+          });
+        }
+      }
+    }
+
     if (description !== undefined)
       updateData.description = description?.trim() || '';
     if (isActive !== undefined) updateData.isActive = isActive;
     if (sortOrder !== undefined) updateData.sortOrder = sortOrder;
+    if (zone_type) updateData.zone_type = zone_type;
+    if (priority) updateData.priority = priority;
+    if (operational_notes !== undefined)
+      updateData.operational_notes = operational_notes?.trim() || '';
 
+    // Process states if provided
     if (states && Array.isArray(states)) {
-      // Process states for updates according to your model structure
-      updateData.states = states.map((state) => {
-        console.log('Processing state for update:', state.name);
+      const processedStates = [];
 
-        // Find state in Nigeria data for validation
+      for (const state of states) {
         const nigeriaState = nigeriaStatesLgas.find(
           (s) => s.state.toLowerCase() === state.name.toLowerCase()
         );
 
-        // Process covered_lgas - convert object structure to string array
+        if (!nigeriaState) {
+          throw new Error(`Invalid state: ${state.name}`);
+        }
+
+        // Process covered LGAs
         let processedCoveredLgas = [];
 
-        if (state.coverage_type === 'specific' && state.covered_lgas) {
+        if (state.coverage_type === 'specific') {
+          if (!state.covered_lgas || state.covered_lgas.length === 0) {
+            return response.status(400).json({
+              message: `Please select at least one LGA for ${state.name} or change coverage to 'All LGAs'`,
+              error: true,
+              success: false,
+            });
+          }
+
           processedCoveredLgas = state.covered_lgas
             .map((lga) => {
-              if (typeof lga === 'string') {
-                return lga.trim();
-              } else if (lga && typeof lga === 'object' && lga.name) {
+              if (typeof lga === 'string') return lga.trim();
+              if (lga && typeof lga === 'object' && lga.name)
                 return lga.name.trim();
-              }
               return null;
             })
             .filter(Boolean);
+
+          // Validate all covered LGAs exist
+          const invalidLgas = processedCoveredLgas.filter(
+            (lgaName) => !nigeriaState.lga.includes(lgaName)
+          );
+
+          if (invalidLgas.length > 0) {
+            throw new Error(
+              `Invalid LGAs for ${state.name}: ${invalidLgas.join(', ')}`
+            );
+          }
         }
 
-        const processedState = {
-          name: state.name.trim(),
-          code:
-            state.code?.trim().toUpperCase() ||
-            state.name.substring(0, 2).toUpperCase(),
+        processedStates.push({
+          name: nigeriaState.state,
+          code: state.code || nigeriaState.state.substring(0, 2).toUpperCase(),
           coverage_type: state.coverage_type || 'all',
-          available_lgas:
-            state.available_lgas || (nigeriaState ? [...nigeriaState.lga] : []),
+          available_lgas: [...nigeriaState.lga],
           covered_lgas:
             state.coverage_type === 'specific' ? processedCoveredLgas : [],
-        };
-
-        console.log('Processed state for update:', {
-          name: processedState.name,
-          coverage_type: processedState.coverage_type,
-          covered_lgas_count: processedState.covered_lgas.length,
-          covered_lgas: processedState.covered_lgas,
         });
+      }
 
-        return processedState;
-      });
+      updateData.states = processedStates;
+      console.log(
+        'Processed states for update:',
+        JSON.stringify(processedStates, null, 2)
+      );
     }
-
-    console.log('Update data prepared:', {
-      ...updateData,
-      states: updateData.states?.map((s) => ({
-        name: s.name,
-        coverage_type: s.coverage_type,
-        covered_lgas_count: s.covered_lgas?.length || 0,
-      })),
-    });
 
     const updatedZone = await ShippingZoneModel.findByIdAndUpdate(
       zoneId,
@@ -322,7 +406,7 @@ export const updateShippingZone = async (request, response) => {
       { new: true, runValidators: true }
     ).populate('createdBy updatedBy', 'name email');
 
-    console.log('Zone updated successfully');
+    console.log('Zone updated successfully:', updatedZone._id);
 
     return response.json({
       message: 'Shipping zone updated successfully',
@@ -333,31 +417,23 @@ export const updateShippingZone = async (request, response) => {
   } catch (error) {
     console.error('Update shipping zone error:', error);
     return response.status(500).json({
-      message: error.message || error,
+      message: error.message || 'Failed to update shipping zone',
       error: true,
       success: false,
     });
   }
 };
 
-export const deleteShippingZone = async (request, response) => {
+// controllers/shipping.controller.js
+
+// Add this new function before deleteShippingZone
+export const getZoneDependencies = async (request, response) => {
   try {
     const { zoneId } = request.params;
 
-    const methodsUsingZone = await ShippingMethodModel.findOne({
-      'tableShipping.zoneRates.zone': zoneId,
-    });
-
-    if (methodsUsingZone) {
-      return response.status(400).json({
-        message: 'Cannot delete zone that is being used by shipping methods',
-        error: true,
-        success: false,
-      });
-    }
-
-    const deletedZone = await ShippingZoneModel.findByIdAndDelete(zoneId);
-    if (!deletedZone) {
+    // Find zone
+    const zone = await ShippingZoneModel.findById(zoneId);
+    if (!zone) {
       return response.status(404).json({
         message: 'Shipping zone not found',
         error: true,
@@ -365,12 +441,128 @@ export const deleteShippingZone = async (request, response) => {
       });
     }
 
+    // Find all methods using this zone
+    const methodsUsingZone = await ShippingMethodModel.find({
+      $or: [
+        { 'tableShipping.zoneRates.zone': zoneId },
+        { 'flatRate.zoneRates.zone': zoneId },
+        { 'pickup.zoneLocations.zone': zoneId },
+      ],
+    }).select('_id name code type description isActive');
+
     return response.json({
-      message: 'Shipping zone deleted successfully',
+      message: 'Zone dependencies retrieved successfully',
+      data: {
+        zone: {
+          _id: zone._id,
+          name: zone.name,
+          code: zone.code,
+        },
+        dependentMethods: methodsUsingZone,
+        hasDependencies: methodsUsingZone.length > 0,
+      },
       error: false,
       success: true,
     });
   } catch (error) {
+    console.error('Get zone dependencies error:', error);
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Update deleteShippingZone to support cascade deletion
+export const deleteShippingZone = async (request, response) => {
+  try {
+    const { zoneId } = request.params;
+    const { cascadeDelete } = request.query; // New parameter
+
+    // Find zone first
+    const zone = await ShippingZoneModel.findById(zoneId);
+    if (!zone) {
+      return response.status(404).json({
+        message: 'Shipping zone not found',
+        error: true,
+        success: false,
+      });
+    }
+
+    // Check if zone is being used in any shipping method
+    const methodsUsingZone = await ShippingMethodModel.find({
+      $or: [
+        { 'tableShipping.zoneRates.zone': zoneId },
+        { 'flatRate.zoneRates.zone': zoneId },
+        { 'pickup.zoneLocations.zone': zoneId },
+      ],
+    });
+
+    if (methodsUsingZone.length > 0) {
+      // If cascade delete is requested, delete all dependent methods first
+      if (cascadeDelete === 'true') {
+        console.log(
+          `Cascade deleting ${methodsUsingZone.length} shipping methods...`
+        );
+
+        // Delete all dependent methods
+        const deletedMethodIds = [];
+        for (const method of methodsUsingZone) {
+          await ShippingMethodModel.findByIdAndDelete(method._id);
+          deletedMethodIds.push(method._id);
+          console.log(`Deleted method: ${method.name} (${method.code})`);
+        }
+
+        // Now delete the zone
+        const deletedZone = await ShippingZoneModel.findByIdAndDelete(zoneId);
+
+        return response.json({
+          message: `Zone and ${methodsUsingZone.length} dependent shipping method(s) deleted successfully`,
+          data: {
+            deletedZone,
+            deletedMethods: methodsUsingZone.map((m) => ({
+              _id: m._id,
+              name: m.name,
+              code: m.code,
+            })),
+          },
+          error: false,
+          success: true,
+        });
+      }
+
+      // If cascade delete not requested, return error with dependent methods
+      return response.status(400).json({
+        message: `Cannot delete zone. It is being used by ${methodsUsingZone.length} shipping method(s).`,
+        error: true,
+        success: false,
+        data: {
+          methodNames: methodsUsingZone.map((m) => m.name),
+          methodCodes: methodsUsingZone.map((m) => m.code),
+          methodCount: methodsUsingZone.length,
+          dependentMethods: methodsUsingZone.map((m) => ({
+            _id: m._id,
+            name: m.name,
+            code: m.code,
+            type: m.type,
+            isActive: m.isActive,
+          })),
+        },
+      });
+    }
+
+    // No dependencies, safe to delete
+    const deletedZone = await ShippingZoneModel.findByIdAndDelete(zoneId);
+
+    return response.json({
+      message: 'Shipping zone deleted successfully',
+      data: deletedZone,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Delete shipping zone error:', error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
@@ -380,14 +572,25 @@ export const deleteShippingZone = async (request, response) => {
 };
 
 // ===== SHIPPING METHODS =====
+// ===== COMPLETE FIXED createShippingMethod =====
 export const createShippingMethod = async (request, response) => {
   try {
     const userId = request.user._id;
     const methodData = request.body;
 
-    if (!methodData.name || !methodData.code || !methodData.type) {
+    console.log('=== CREATE SHIPPING METHOD ===');
+    console.log('Received method data:', {
+      name: methodData.name,
+      type: methodData.type,
+      hasPickup: !!methodData.pickup,
+      hasFlatRate: !!methodData.flatRate,
+      hasTableShipping: !!methodData.tableShipping,
+    });
+
+    // Validate basic required fields
+    if (!methodData.name || !methodData.type) {
       return response.status(400).json({
-        message: 'Name, code, and type are required',
+        message: 'Name and type are required',
         error: true,
         success: false,
       });
@@ -403,8 +606,12 @@ export const createShippingMethod = async (request, response) => {
       });
     }
 
+    // ALWAYS auto-generate unique code
+    const code = await generateMethodCode(methodData.name, methodData.type);
+    console.log('Generated code:', code);
+
     const existingMethod = await ShippingMethodModel.findOne({
-      code: methodData.code.toUpperCase(),
+      code: code.toUpperCase(),
     });
 
     if (existingMethod) {
@@ -418,7 +625,7 @@ export const createShippingMethod = async (request, response) => {
     // Clean up data based on type to prevent validation errors
     const processedMethodData = {
       ...methodData,
-      code: methodData.code.toUpperCase(),
+      code: code,
       createdBy: userId,
       updatedBy: userId,
     };
@@ -434,78 +641,12 @@ export const createShippingMethod = async (request, response) => {
       delete processedMethodData.tableShipping;
     }
 
-    // Special handling for pickup method
+    // ===== PICKUP METHOD HANDLING =====
     if (methodData.type === 'pickup' && processedMethodData.pickup) {
+      console.log('Processing PICKUP method');
       const pickupConfig = processedMethodData.pickup;
 
-      // Clean up zoneLocations - remove empty zones and invalid locations
-      if (pickupConfig.zoneLocations) {
-        pickupConfig.zoneLocations = pickupConfig.zoneLocations.filter(
-          (zoneLocation) => {
-            // Remove if no zone selected
-            if (!zoneLocation.zone || zoneLocation.zone.trim() === '') {
-              return false;
-            }
-
-            // Filter out invalid locations within this zone
-            if (zoneLocation.locations) {
-              zoneLocation.locations = zoneLocation.locations.filter(
-                (location) => {
-                  return (
-                    location.name &&
-                    location.name.trim() !== '' &&
-                    location.address &&
-                    location.address.trim() !== '' &&
-                    location.city &&
-                    location.city.trim() !== '' &&
-                    location.state &&
-                    location.state.trim() !== ''
-                  );
-                }
-              );
-            }
-
-            // Keep zone location only if it has valid locations
-            return zoneLocation.locations && zoneLocation.locations.length > 0;
-          }
-        );
-      }
-
-      // Clean up defaultLocations - remove invalid ones
-      if (pickupConfig.defaultLocations) {
-        pickupConfig.defaultLocations = pickupConfig.defaultLocations.filter(
-          (location) => {
-            return (
-              location.name &&
-              location.name.trim() !== '' &&
-              location.address &&
-              location.address.trim() !== '' &&
-              location.city &&
-              location.city.trim() !== '' &&
-              location.state &&
-              location.state.trim() !== ''
-            );
-          }
-        );
-      }
-
-      // Ensure at least one valid location exists (either zone-specific or default)
-      const hasZoneLocations =
-        pickupConfig.zoneLocations && pickupConfig.zoneLocations.length > 0;
-      const hasDefaultLocations =
-        pickupConfig.defaultLocations &&
-        pickupConfig.defaultLocations.length > 0;
-
-      if (!hasZoneLocations && !hasDefaultLocations) {
-        return response.status(400).json({
-          message:
-            'At least one valid pickup location is required with name, address, city, and state',
-          error: true,
-          success: false,
-        });
-      }
-
-      // If no assignment specified, default to all products
+      // Ensure assignment defaults
       if (!pickupConfig.assignment) {
         pickupConfig.assignment = 'all_products';
       }
@@ -517,13 +658,151 @@ export const createShippingMethod = async (request, response) => {
       if (pickupConfig.assignment !== 'specific_products') {
         pickupConfig.products = [];
       }
+
+      // FIXED: Clean up zoneLocations with CONSISTENT LGA validation
+      if (
+        pickupConfig.zoneLocations &&
+        Array.isArray(pickupConfig.zoneLocations)
+      ) {
+        console.log(
+          'Cleaning zone locations:',
+          pickupConfig.zoneLocations.length
+        );
+
+        pickupConfig.zoneLocations = pickupConfig.zoneLocations.filter(
+          (zoneLocation) => {
+            // Remove if no zone selected
+            if (!zoneLocation.zone || zoneLocation.zone.trim() === '') {
+              console.log('Filtering out zone location: no zone selected');
+              return false;
+            }
+
+            // Filter out invalid locations within this zone
+            if (
+              zoneLocation.locations &&
+              Array.isArray(zoneLocation.locations)
+            ) {
+              zoneLocation.locations = zoneLocation.locations.filter(
+                (location) => {
+                  const isValid =
+                    location.name &&
+                    location.name.trim() !== '' &&
+                    location.address &&
+                    location.address.trim() !== '' &&
+                    location.city &&
+                    location.city.trim() !== '' &&
+                    location.state &&
+                    location.state.trim() !== '' &&
+                    location.lga && // FIXED: LGA now required
+                    location.lga.trim() !== '';
+
+                  if (!isValid) {
+                    console.log('Invalid zone location filtered:', {
+                      name: location.name || 'missing',
+                      hasAddress: !!location.address,
+                      hasCity: !!location.city,
+                      hasState: !!location.state,
+                      hasLga: !!location.lga,
+                    });
+                  }
+
+                  return isValid;
+                }
+              );
+            }
+
+            // Keep zone location only if it has valid locations
+            const hasValidLocations =
+              zoneLocation.locations && zoneLocation.locations.length > 0;
+            if (!hasValidLocations) {
+              console.log('Filtering out zone location: no valid locations');
+            }
+            return hasValidLocations;
+          }
+        );
+
+        console.log(
+          'Zone locations after cleaning:',
+          pickupConfig.zoneLocations.length
+        );
+      }
+
+      // FIXED: Clean up defaultLocations with CONSISTENT LGA validation
+      if (
+        pickupConfig.defaultLocations &&
+        Array.isArray(pickupConfig.defaultLocations)
+      ) {
+        console.log(
+          'Cleaning default locations:',
+          pickupConfig.defaultLocations.length
+        );
+
+        pickupConfig.defaultLocations = pickupConfig.defaultLocations.filter(
+          (location) => {
+            const isValid =
+              location.name &&
+              location.name.trim() !== '' &&
+              location.address &&
+              location.address.trim() !== '' &&
+              location.city &&
+              location.city.trim() !== '' &&
+              location.state &&
+              location.state.trim() !== '' &&
+              location.lga && // FIXED: LGA now required
+              location.lga.trim() !== '';
+
+            if (!isValid) {
+              console.log('Invalid default location filtered:', {
+                name: location.name || 'missing',
+                hasAddress: !!location.address,
+                hasCity: !!location.city,
+                hasState: !!location.state,
+                hasLga: !!location.lga,
+              });
+            }
+
+            return isValid;
+          }
+        );
+
+        console.log(
+          'Default locations after cleaning:',
+          pickupConfig.defaultLocations.length
+        );
+      }
+
+      // Validate at least one valid location exists
+      const hasZoneLocations =
+        pickupConfig.zoneLocations && pickupConfig.zoneLocations.length > 0;
+      const hasDefaultLocations =
+        pickupConfig.defaultLocations &&
+        pickupConfig.defaultLocations.length > 0;
+
+      console.log('Pickup validation:', {
+        hasZoneLocations,
+        hasDefaultLocations,
+        zoneLocationsCount: pickupConfig.zoneLocations?.length || 0,
+        defaultLocationsCount: pickupConfig.defaultLocations?.length || 0,
+      });
+
+      if (!hasZoneLocations && !hasDefaultLocations) {
+        return response.status(400).json({
+          message:
+            'At least one valid pickup location is required with name, address, city, state, and LGA.',
+          error: true,
+          success: false,
+        });
+      }
+
+      processedMethodData.pickup = pickupConfig;
     }
 
-    // Handle flat_rate method
+    // ===== FLAT RATE METHOD HANDLING =====
     if (methodData.type === 'flat_rate' && processedMethodData.flatRate) {
+      console.log('Processing FLAT RATE method');
       const flatRateConfig = processedMethodData.flatRate;
 
-      // If no assignment specified, default to all products
+      // Ensure assignment defaults
       if (!flatRateConfig.assignment) {
         flatRateConfig.assignment = 'all_products';
       }
@@ -537,23 +816,40 @@ export const createShippingMethod = async (request, response) => {
       }
 
       // Clean up zone rates - remove empty zones
-      if (flatRateConfig.zoneRates) {
+      if (flatRateConfig.zoneRates && Array.isArray(flatRateConfig.zoneRates)) {
         flatRateConfig.zoneRates = flatRateConfig.zoneRates.filter(
           (zoneRate) => {
             return zoneRate.zone && zoneRate.zone.trim() !== '';
           }
         );
+        console.log(
+          'Flat rate zone rates after cleaning:',
+          flatRateConfig.zoneRates.length
+        );
       }
+
+      // Ensure numeric values
+      flatRateConfig.defaultCost =
+        Number(flatRateConfig.defaultCost) || Number(flatRateConfig.cost) || 0;
+      flatRateConfig.cost = Number(flatRateConfig.cost) || 0;
+
+      if (flatRateConfig.freeShipping) {
+        flatRateConfig.freeShipping.minimumOrderAmount =
+          Number(flatRateConfig.freeShipping.minimumOrderAmount) || 0;
+      }
+
+      processedMethodData.flatRate = flatRateConfig;
     }
 
-    // Handle table_shipping method
+    // ===== TABLE SHIPPING METHOD HANDLING =====
     if (
       methodData.type === 'table_shipping' &&
       processedMethodData.tableShipping
     ) {
+      console.log('Processing TABLE SHIPPING method');
       const tableShippingConfig = processedMethodData.tableShipping;
 
-      // If no assignment specified, default to all products
+      // Ensure assignment defaults
       if (!tableShippingConfig.assignment) {
         tableShippingConfig.assignment = 'all_products';
       }
@@ -567,11 +863,18 @@ export const createShippingMethod = async (request, response) => {
       }
 
       // Clean up zone rates - remove empty zones
-      if (tableShippingConfig.zoneRates) {
+      if (
+        tableShippingConfig.zoneRates &&
+        Array.isArray(tableShippingConfig.zoneRates)
+      ) {
         tableShippingConfig.zoneRates = tableShippingConfig.zoneRates.filter(
           (zoneRate) => {
             return zoneRate.zone && zoneRate.zone.trim() !== '';
           }
+        );
+        console.log(
+          'Table shipping zone rates after cleaning:',
+          tableShippingConfig.zoneRates.length
         );
       }
 
@@ -587,10 +890,39 @@ export const createShippingMethod = async (request, response) => {
           success: false,
         });
       }
+
+      // Validate weight ranges exist for each zone
+      for (let i = 0; i < tableShippingConfig.zoneRates.length; i++) {
+        const zoneRate = tableShippingConfig.zoneRates[i];
+        if (!zoneRate.weightRanges || zoneRate.weightRanges.length === 0) {
+          return response.status(400).json({
+            message: `Weight ranges are required for zone rate #${i + 1}`,
+            error: true,
+            success: false,
+          });
+        }
+      }
+
+      processedMethodData.tableShipping = tableShippingConfig;
     }
 
+    console.log('Final processed data structure:', {
+      type: processedMethodData.type,
+      code: processedMethodData.code,
+      hasPickup: !!processedMethodData.pickup,
+      hasFlatRate: !!processedMethodData.flatRate,
+      hasTableShipping: !!processedMethodData.tableShipping,
+      pickupZoneLocations:
+        processedMethodData.pickup?.zoneLocations?.length || 0,
+      pickupDefaultLocations:
+        processedMethodData.pickup?.defaultLocations?.length || 0,
+    });
+
+    // Create and save the shipping method
     const newMethod = new ShippingMethodModel(processedMethodData);
     const savedMethod = await newMethod.save();
+
+    console.log('✅ Shipping method created successfully:', savedMethod._id);
 
     return response.json({
       message: 'Shipping method created successfully',
@@ -599,9 +931,28 @@ export const createShippingMethod = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Create shipping method error:', error);
+    console.error('❌ Create shipping method error:', error);
+
+    // Enhanced error reporting
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.keys(error.errors).map((key) => ({
+        field: key,
+        message: error.errors[key].message,
+        value: error.errors[key].value,
+      }));
+
+      console.error('Validation errors:', validationErrors);
+
+      return response.status(400).json({
+        message: 'Validation failed',
+        errors: validationErrors,
+        error: true,
+        success: false,
+      });
+    }
+
     return response.status(500).json({
-      message: error.message || error,
+      message: error.message || 'Failed to create shipping method',
       error: true,
       success: false,
     });
@@ -673,49 +1024,321 @@ export const updateShippingMethod = async (request, response) => {
       });
     }
 
-    if (updateData.code && updateData.code !== method.code) {
-      const existingMethod = await ShippingMethodModel.findOne({
-        _id: { $ne: methodId },
-        code: updateData.code.toUpperCase(),
+    // Prevent type changes
+    if (updateData.type && updateData.type !== method.type) {
+      return response.status(400).json({
+        message: 'Method type cannot be changed after creation',
+        error: true,
+        success: false,
       });
+    }
 
-      if (existingMethod) {
+    // Build clean update data with only relevant fields
+    const finalUpdateData = {
+      updatedBy: userId,
+      type: method.type,
+    };
+
+    // Update basic fields if provided
+    if (updateData.name !== undefined) finalUpdateData.name = updateData.name;
+    if (updateData.description !== undefined)
+      finalUpdateData.description = updateData.description;
+    if (updateData.isActive !== undefined)
+      finalUpdateData.isActive = updateData.isActive;
+    if (updateData.sortOrder !== undefined)
+      finalUpdateData.sortOrder = updateData.sortOrder;
+    if (updateData.estimatedDelivery !== undefined)
+      finalUpdateData.estimatedDelivery = updateData.estimatedDelivery;
+
+    // Code is immutable, remove it
+    delete finalUpdateData.code;
+
+    // Handle method-specific configuration based on current method type
+    if (method.type === 'pickup') {
+      console.log('Processing pickup method update');
+
+      if (!updateData.pickup) {
         return response.status(400).json({
-          message: 'Another method with this code already exists',
+          message: 'Pickup configuration is required for pickup method',
           error: true,
           success: false,
         });
       }
+
+      const pickupConfig = { ...updateData.pickup };
+
+      // Ensure assignment defaults
+      if (!pickupConfig.assignment) {
+        pickupConfig.assignment = 'all_products';
+      }
+
+      // Clean up categories and products based on assignment
+      if (pickupConfig.assignment !== 'categories') {
+        pickupConfig.categories = [];
+      }
+      if (pickupConfig.assignment !== 'specific_products') {
+        pickupConfig.products = [];
+      }
+
+      // Clean up zoneLocations with proper validation
+      if (
+        pickupConfig.zoneLocations &&
+        Array.isArray(pickupConfig.zoneLocations)
+      ) {
+        pickupConfig.zoneLocations = pickupConfig.zoneLocations.filter(
+          (zoneLocation) => {
+            if (!zoneLocation.zone || zoneLocation.zone.trim() === '') {
+              console.log('Filtering out zone location without zone');
+              return false;
+            }
+
+            if (
+              zoneLocation.locations &&
+              Array.isArray(zoneLocation.locations)
+            ) {
+              zoneLocation.locations = zoneLocation.locations.filter(
+                (location) => {
+                  const isValid =
+                    location.name &&
+                    location.name.trim() !== '' &&
+                    location.address &&
+                    location.address.trim() !== '' &&
+                    location.city &&
+                    location.city.trim() !== '' &&
+                    location.state &&
+                    location.state.trim() !== '' &&
+                    location.lga &&
+                    location.lga.trim() !== '';
+
+                  if (!isValid) {
+                    console.log('Invalid zone location filtered:', {
+                      name: location.name || 'missing',
+                      hasLga: !!location.lga,
+                      hasState: !!location.state,
+                    });
+                  }
+
+                  return isValid;
+                }
+              );
+            }
+
+            return zoneLocation.locations && zoneLocation.locations.length > 0;
+          }
+        );
+      } else {
+        pickupConfig.zoneLocations = [];
+      }
+
+      // Clean up defaultLocations with proper validation
+      if (
+        pickupConfig.defaultLocations &&
+        Array.isArray(pickupConfig.defaultLocations)
+      ) {
+        pickupConfig.defaultLocations = pickupConfig.defaultLocations.filter(
+          (location) => {
+            const isValid =
+              location.name &&
+              location.name.trim() !== '' &&
+              location.address &&
+              location.address.trim() !== '' &&
+              location.city &&
+              location.city.trim() !== '' &&
+              location.state &&
+              location.state.trim() !== '' &&
+              location.lga &&
+              location.lga.trim() !== '';
+
+            if (!isValid) {
+              console.log('Invalid default location filtered:', {
+                name: location.name || 'missing',
+                hasLga: !!location.lga,
+                hasState: !!location.state,
+              });
+            }
+
+            return isValid;
+          }
+        );
+      } else {
+        pickupConfig.defaultLocations = [];
+      }
+
+      // Validate at least one valid location exists
+      const hasZoneLocations = pickupConfig.zoneLocations.length > 0;
+      const hasDefaultLocations = pickupConfig.defaultLocations.length > 0;
+
+      if (!hasZoneLocations && !hasDefaultLocations) {
+        return response.status(400).json({
+          message:
+            'At least one valid pickup location is required. All locations must have name, address, city, state, and LGA.',
+          error: true,
+          success: false,
+        });
+      }
+
+      finalUpdateData.pickup = pickupConfig;
+      // Explicitly unset other method configs
+      finalUpdateData.flatRate = undefined;
+      finalUpdateData.tableShipping = undefined;
+
+      console.log(
+        `Pickup config validated: ${
+          hasZoneLocations ? pickupConfig.zoneLocations.length : 0
+        } zone locations, ${
+          hasDefaultLocations ? pickupConfig.defaultLocations.length : 0
+        } default locations`
+      );
+    } else if (method.type === 'flat_rate') {
+      console.log('Processing flat_rate method update');
+
+      if (!updateData.flatRate) {
+        return response.status(400).json({
+          message: 'Flat rate configuration is required for flat rate method',
+          error: true,
+          success: false,
+        });
+      }
+
+      const flatRateConfig = { ...updateData.flatRate };
+
+      // Ensure assignment defaults
+      if (!flatRateConfig.assignment) {
+        flatRateConfig.assignment = 'all_products';
+      }
+
+      // Clean up categories and products based on assignment
+      if (flatRateConfig.assignment !== 'categories') {
+        flatRateConfig.categories = [];
+      }
+      if (flatRateConfig.assignment !== 'specific_products') {
+        flatRateConfig.products = [];
+      }
+
+      // Clean up zone rates
+      if (flatRateConfig.zoneRates && Array.isArray(flatRateConfig.zoneRates)) {
+        flatRateConfig.zoneRates = flatRateConfig.zoneRates.filter(
+          (zoneRate) => {
+            return zoneRate.zone && zoneRate.zone.trim() !== '';
+          }
+        );
+      } else {
+        flatRateConfig.zoneRates = [];
+      }
+
+      // Ensure numeric values
+      flatRateConfig.defaultCost =
+        Number(flatRateConfig.defaultCost) || Number(flatRateConfig.cost) || 0;
+      flatRateConfig.cost = Number(flatRateConfig.cost) || 0;
+
+      if (flatRateConfig.freeShipping) {
+        flatRateConfig.freeShipping.minimumOrderAmount =
+          Number(flatRateConfig.freeShipping.minimumOrderAmount) || 0;
+      }
+
+      finalUpdateData.flatRate = flatRateConfig;
+      // Explicitly unset other method configs
+      finalUpdateData.pickup = undefined;
+      finalUpdateData.tableShipping = undefined;
+    } else if (method.type === 'table_shipping') {
+      console.log('Processing table_shipping method update');
+
+      if (!updateData.tableShipping) {
+        return response.status(400).json({
+          message:
+            'Table shipping configuration is required for table shipping method',
+          error: true,
+          success: false,
+        });
+      }
+
+      const tableShippingConfig = { ...updateData.tableShipping };
+
+      // Ensure assignment defaults
+      if (!tableShippingConfig.assignment) {
+        tableShippingConfig.assignment = 'all_products';
+      }
+
+      // Clean up categories and products based on assignment
+      if (tableShippingConfig.assignment !== 'categories') {
+        tableShippingConfig.categories = [];
+      }
+      if (tableShippingConfig.assignment !== 'specific_products') {
+        tableShippingConfig.products = [];
+      }
+
+      // Clean up zone rates
+      if (
+        tableShippingConfig.zoneRates &&
+        Array.isArray(tableShippingConfig.zoneRates)
+      ) {
+        tableShippingConfig.zoneRates = tableShippingConfig.zoneRates.filter(
+          (zoneRate) => {
+            return zoneRate.zone && zoneRate.zone.trim() !== '';
+          }
+        );
+      } else {
+        tableShippingConfig.zoneRates = [];
+      }
+
+      // Validate at least one zone rate
+      if (tableShippingConfig.zoneRates.length === 0) {
+        return response.status(400).json({
+          message:
+            'At least one zone rate is required for table shipping method',
+          error: true,
+          success: false,
+        });
+      }
+
+      finalUpdateData.tableShipping = tableShippingConfig;
+      // Explicitly unset other method configs
+      finalUpdateData.pickup = undefined;
+      finalUpdateData.flatRate = undefined;
     }
 
-    const finalUpdateData = {
-      ...updateData,
-      updatedBy: userId,
-    };
+    console.log('Attempting update with data structure:', {
+      type: finalUpdateData.type,
+      hasPickup: !!finalUpdateData.pickup,
+      hasFlatRate: !!finalUpdateData.flatRate,
+      hasTableShipping: !!finalUpdateData.tableShipping,
+    });
 
-    if (updateData.code) {
-      finalUpdateData.code = updateData.code.toUpperCase();
-    }
-
-    // Clean up data based on type to prevent validation errors
-    if (method.type !== 'pickup' && updateData.type !== 'pickup') {
-      delete finalUpdateData.pickup;
-    }
-    if (method.type !== 'flat_rate' && updateData.type !== 'flat_rate') {
-      delete finalUpdateData.flatRate;
-    }
-    if (
-      method.type !== 'table_shipping' &&
-      updateData.type !== 'table_shipping'
-    ) {
-      delete finalUpdateData.tableShipping;
+    // Perform the update with explicit $set and $unset
+    const unsetFields = {};
+    if (method.type === 'pickup') {
+      unsetFields.flatRate = '';
+      unsetFields.tableShipping = '';
+    } else if (method.type === 'flat_rate') {
+      unsetFields.pickup = '';
+      unsetFields.tableShipping = '';
+    } else if (method.type === 'table_shipping') {
+      unsetFields.pickup = '';
+      unsetFields.flatRate = '';
     }
 
     const updatedMethod = await ShippingMethodModel.findByIdAndUpdate(
       methodId,
-      finalUpdateData,
-      { new: true }
+      {
+        $set: finalUpdateData,
+        $unset: unsetFields,
+      },
+      {
+        new: true,
+        runValidators: true,
+        context: 'query',
+      }
     ).populate('createdBy updatedBy', 'name email');
+
+    if (!updatedMethod) {
+      return response.status(404).json({
+        message: 'Failed to update shipping method',
+        error: true,
+        success: false,
+      });
+    }
+
+    console.log('Shipping method updated successfully:', updatedMethod._id);
 
     return response.json({
       message: 'Shipping method updated successfully',
@@ -724,8 +1347,35 @@ export const updateShippingMethod = async (request, response) => {
       success: true,
     });
   } catch (error) {
+    console.error('Update shipping method error:', error);
+
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.keys(error.errors).map((key) => ({
+        field: key,
+        message: error.errors[key].message,
+        value: error.errors[key].value,
+      }));
+
+      return response.status(400).json({
+        message: 'Validation failed',
+        errors: validationErrors,
+        error: true,
+        success: false,
+      });
+    }
+
+    // Handle cast errors (invalid ObjectId, etc.)
+    if (error.name === 'CastError') {
+      return response.status(400).json({
+        message: `Invalid ${error.path}: ${error.value}`,
+        error: true,
+        success: false,
+      });
+    }
+
     return response.status(500).json({
-      message: error.message || error,
+      message: error.message || 'Failed to update shipping method',
       error: true,
       success: false,
     });

@@ -489,7 +489,7 @@ export const migrateGuestCartController = async (request, response) => {
 
     for (const guestItem of guestCartItems) {
       try {
-        const { productId, quantity, priceOption } = guestItem;
+        const { productId, quantity, priceOption = 'regular' } = guestItem;
 
         // Verify product exists and is available
         const product = await ProductModel.findById(productId);
@@ -498,11 +498,11 @@ export const migrateGuestCartController = async (request, response) => {
           continue;
         }
 
-        // Check if item already exists in user's cart
+        // Check if item already exists in user's cart with SAME priceOption
         const existingItem = await CartProductModel.findOne({
           userId: userId,
           productId: productId,
-          priceOption: priceOption || 'regular',
+          priceOption: priceOption, // This now matches the unique index
         });
 
         if (existingItem) {
@@ -516,7 +516,7 @@ export const migrateGuestCartController = async (request, response) => {
             userId: userId,
             productId: productId,
             quantity: quantity,
-            priceOption: priceOption || 'regular',
+            priceOption: priceOption,
           });
 
           await newCartItem.updatePriceFromProduct();

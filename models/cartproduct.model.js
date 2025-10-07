@@ -49,8 +49,12 @@ const cartProductSchema = new mongoose.Schema(
   }
 );
 
-// Create compound index for user and product
-cartProductSchema.index({ userId: 1, productId: 1 }, { unique: true });
+// FIXED: Create compound index for user, product AND priceOption
+// This allows the same product with different price options
+cartProductSchema.index(
+  { userId: 1, productId: 1, priceOption: 1 },
+  { unique: true }
+);
 
 // Create index for faster user cart queries
 cartProductSchema.index({ userId: 1, createdAt: -1 });
@@ -84,17 +88,30 @@ cartProductSchema.methods.updatePriceFromProduct = async function () {
     throw new Error('Product not found');
   }
 
+  const priceOption = this.priceOption || 'regular';
   let price;
-  switch (this.priceOption) {
+
+  // Get base price based on price option
+  switch (priceOption) {
     case '3weeks':
-      price = this.productId.price3weeksDelivery || this.productId.price;
+      price =
+        this.productId.price3weeksDelivery ||
+        this.productId.btcPrice ||
+        this.productId.price;
       break;
     case '5weeks':
-      price = this.productId.price5weeksDelivery || this.productId.price;
+      price =
+        this.productId.price5weeksDelivery ||
+        this.productId.btcPrice ||
+        this.productId.price;
       break;
     case 'regular':
     default:
-      price = this.productId.price;
+      // For regular, use btcPrice first, then price
+      price =
+        this.productId.btcPrice && this.productId.btcPrice > 0
+          ? this.productId.btcPrice
+          : this.productId.price;
       break;
   }
 
