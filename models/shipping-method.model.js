@@ -39,7 +39,6 @@ const shippingMethodSchema = new mongoose.Schema(
         type: Number,
         default: 0,
       },
-      // Zone-specific pricing (if empty, applies to all zones)
       zoneRates: [
         {
           zone: {
@@ -57,7 +56,6 @@ const shippingMethodSchema = new mongoose.Schema(
           },
         },
       ],
-      // Default settings (used when no zone-specific rates)
       defaultCost: {
         type: Number,
         default: 0,
@@ -112,7 +110,6 @@ const shippingMethodSchema = new mongoose.Schema(
           ref: 'Product',
         },
       ],
-      // Zone-based weight rates
       zoneRates: [
         {
           zone: {
@@ -122,9 +119,9 @@ const shippingMethodSchema = new mongoose.Schema(
           },
           weightRanges: [
             {
-              minWeight: { type: Number, required: true }, // in kg
-              maxWeight: { type: Number, required: true }, // in kg
-              shippingCost: { type: Number, required: true }, // fixed cost for this range
+              minWeight: { type: Number, required: true },
+              maxWeight: { type: Number, required: true },
+              shippingCost: { type: Number, required: true },
             },
           ],
         },
@@ -141,7 +138,6 @@ const shippingMethodSchema = new mongoose.Schema(
 
     // Pickup configuration
     pickup: {
-      // Zone-specific locations (if empty, applies to all zones)
       zoneLocations: [
         {
           zone: {
@@ -151,26 +147,11 @@ const shippingMethodSchema = new mongoose.Schema(
           },
           locations: [
             {
-              name: {
-                type: String,
-                required: true,
-              },
-              address: {
-                type: String,
-                required: true,
-              },
-              city: {
-                type: String,
-                required: true,
-              },
-              state: {
-                type: String,
-                required: true,
-              },
-              lga: {
-                type: String,
-                required: true,
-              },
+              name: { type: String, required: true },
+              address: { type: String, required: true },
+              city: { type: String, required: true },
+              state: { type: String, required: true },
+              lga: { type: String, required: true },
               postalCode: String,
               phone: String,
               operatingHours: {
@@ -182,37 +163,18 @@ const shippingMethodSchema = new mongoose.Schema(
                 saturday: { open: String, close: String },
                 sunday: { open: String, close: String },
               },
-              isActive: {
-                type: Boolean,
-                default: true,
-              },
+              isActive: { type: Boolean, default: true },
             },
           ],
         },
       ],
-      // Default locations (used when no zone-specific locations)
       defaultLocations: [
         {
-          name: {
-            type: String,
-            required: true,
-          },
-          address: {
-            type: String,
-            required: true,
-          },
-          city: {
-            type: String,
-            required: true,
-          },
-          state: {
-            type: String,
-            required: true,
-          },
-          lga: {
-            type: String,
-            required: true,
-          },
+          name: { type: String, required: true },
+          address: { type: String, required: true },
+          city: { type: String, required: true },
+          state: { type: String, required: true },
+          lga: { type: String, required: true },
           postalCode: String,
           phone: String,
           operatingHours: {
@@ -224,10 +186,7 @@ const shippingMethodSchema = new mongoose.Schema(
             saturday: { open: String, close: String },
             sunday: { open: String, close: String },
           },
-          isActive: {
-            type: Boolean,
-            default: true,
-          },
+          isActive: { type: Boolean, default: true },
         },
       ],
       cost: {
@@ -287,22 +246,28 @@ shippingMethodSchema.index({ type: 1 });
 shippingMethodSchema.index({ isActive: 1 });
 shippingMethodSchema.index({ sortOrder: 1 });
 
-// FIXED: Enhanced method to check if method is currently valid
+// Check if method is currently valid
 shippingMethodSchema.methods.isCurrentlyValid = function () {
   const now = new Date();
-  const config = this[this.type];
 
-  if (!config) {
-    return true; // If no config exists, consider it valid
-  }
+  // Get the correct config based on type
+  const configKeyMap = {
+    flat_rate: 'flatRate',
+    table_shipping: 'tableShipping',
+    pickup: 'pickup',
+  };
 
-  // Check validity period
+  const configKey = configKeyMap[this.type];
+  const config = this[configKey];
+
+  if (!config) return true; // If no config, consider it valid
+
   if (config.validFrom && now < config.validFrom) {
-    return false; // Not yet valid
+    return false;
   }
 
   if (config.validUntil && now > config.validUntil) {
-    return false; // Expired
+    return false;
   }
 
   return true;
@@ -310,7 +275,14 @@ shippingMethodSchema.methods.isCurrentlyValid = function () {
 
 // Get assignment display text
 shippingMethodSchema.methods.getAssignmentDisplay = function () {
-  const config = this[this.type];
+  const configKeyMap = {
+    flat_rate: 'flatRate',
+    table_shipping: 'tableShipping',
+    pickup: 'pickup',
+  };
+
+  const configKey = configKeyMap[this.type];
+  const config = this[configKey];
 
   if (!config) return 'All Products';
 
@@ -326,303 +298,217 @@ shippingMethodSchema.methods.getAssignmentDisplay = function () {
   }
 };
 
-// FIXED: Enhanced calculateShippingCost method
-shippingMethodSchema.methods.calculateShippingCost = function (orderData) {
-  const { weight, orderValue, zone, items } = orderData;
+// ✅ KEEP ONLY THIS ONE - Enhanced calculateShippingCost method
+shippingMethodSchema.methods.calculateShippingCost = function ({
+  weight,
+  orderValue,
+  zone,
+  items = [],
+}) {
+  // CRITICAL FIX: Map type to correct config key
+  const configKeyMap = {
+    flat_rate: 'flatRate',
+    table_shipping: 'tableShipping',
+    pickup: 'pickup',
+  };
 
-  console.log(`🧮 Calculating shipping cost for method: ${this.name}`);
-  console.log(`Parameters:`, { weight, orderValue, zone: zone.toString() });
+  const configKey = configKeyMap[this.type] || this.type;
+  const config = this[configKey];
 
-  if (!this.isActive || !this.isCurrentlyValid()) {
-    console.log('❌ Method not active or not valid');
-    return { eligible: false, reason: 'Shipping method not available' };
+  console.log(`💰 calculateShippingCost called for ${this.name}`);
+  console.log(
+    `Type: ${this.type}, Config Key: ${configKey}, Has Config: ${!!config}`
+  );
+
+  if (!config) {
+    console.log('❌ No config found!');
+    return {
+      eligible: false,
+      cost: 0,
+      reason: 'Invalid method configuration',
+    };
   }
 
-  let cost = 0;
-  let eligible = true;
-  let reason = '';
+  try {
+    // PICKUP METHOD
+    if (this.type === 'pickup') {
+      const hasDefaultLocations = config.defaultLocations?.length > 0;
+      const hasZoneLocations = config.zoneLocations?.length > 0;
 
-  switch (this.type) {
-    case 'flat_rate':
-      console.log('📦 Processing flat rate method');
-      const flatConfig = this.flatRate;
+      if (hasDefaultLocations || hasZoneLocations) {
+        return {
+          eligible: true,
+          cost: config.cost || 0,
+          reason: 'Free pickup available',
+        };
+      }
 
-      // Check for zone-specific rate first
-      const zoneRate = flatConfig.zoneRates?.find(
-        (zr) => zr.zone.toString() === zone.toString()
+      return {
+        eligible: false,
+        cost: 0,
+        reason: 'No pickup locations available',
+      };
+    }
+
+    // FLAT_RATE METHOD
+    if (this.type === 'flat_rate') {
+      let baseCost = config.defaultCost || config.cost || 0;
+
+      console.log(`💵 Flat rate base cost: ${baseCost}`);
+
+      // Check for zone-specific rate
+      if (zone && config.zoneRates?.length > 0) {
+        const zoneRate = config.zoneRates.find(
+          (zr) => zr.zone && zr.zone.toString() === zone.toString()
+        );
+        if (zoneRate) {
+          baseCost = zoneRate.cost;
+          console.log(`💵 Using zone-specific rate: ${baseCost}`);
+        }
+      }
+
+      // Check free shipping threshold
+      if (
+        config.freeShipping?.enabled &&
+        orderValue >= config.freeShipping.minimumOrderAmount
+      ) {
+        return {
+          eligible: true,
+          cost: 0,
+          reason: `Free shipping (order over ${config.freeShipping.minimumOrderAmount})`,
+        };
+      }
+
+      return {
+        eligible: true,
+        cost: baseCost,
+        reason:
+          baseCost === 0 ? 'Free flat rate shipping' : 'Flat rate shipping',
+      };
+    }
+
+    // TABLE_SHIPPING METHOD
+    if (this.type === 'table_shipping') {
+      console.log(`📊 Table shipping - checking zone: ${zone}`);
+
+      if (!zone) {
+        return {
+          eligible: false,
+          cost: 0,
+          reason: 'Zone required for table shipping',
+        };
+      }
+
+      // Find zone rate configuration
+      const zoneRate = config.zoneRates?.find(
+        (zr) => zr.zone && zr.zone.toString() === zone.toString()
       );
 
       console.log(`Zone rate found: ${!!zoneRate}`);
 
-      if (zoneRate) {
-        console.log(`Using zone-specific rate: ${zoneRate.cost}`);
-        // Use zone-specific rate
-        if (
-          zoneRate.freeShipping?.enabled &&
-          orderValue >= zoneRate.freeShipping.minimumOrderAmount
-        ) {
-          cost = 0;
-          reason = `Free shipping on orders over ₦${zoneRate.freeShipping.minimumOrderAmount} in this zone`;
-          console.log('✅ Free shipping applied (zone-specific)');
-        } else {
-          cost = zoneRate.cost;
-          console.log(`✅ Zone rate applied: ₦${cost}`);
-        }
-      } else if (!flatConfig.zoneRates || flatConfig.zoneRates.length === 0) {
-        console.log('Using default rate for all zones');
-        // No zone-specific rates, use default for all zones
-        if (
-          flatConfig.freeShipping?.enabled &&
-          orderValue >= flatConfig.freeShipping.minimumOrderAmount
-        ) {
-          cost = 0;
-          reason = `Free shipping on orders over ₦${flatConfig.freeShipping.minimumOrderAmount}`;
-          console.log('✅ Free shipping applied (default)');
-        } else {
-          cost = flatConfig.defaultCost || flatConfig.cost || 0;
-          console.log(`✅ Default rate applied: ₦${cost}`);
-        }
-      } else {
-        console.log(
-          '❌ Zone-specific rates exist but this zone is not covered'
-        );
-        // Zone-specific rates exist but this zone is not covered
-        eligible = false;
-        reason = 'Flat rate shipping not available to your zone';
-      }
-      break;
-
-    case 'table_shipping':
-      console.log('📊 Processing table shipping method');
-      const tableConfig = this.tableShipping;
-      const tableZoneRate = tableConfig.zoneRates?.find(
-        (zr) => zr.zone.toString() === zone.toString()
-      );
-
-      console.log(`Table zone rate found: ${!!tableZoneRate}`);
-
-      if (!tableZoneRate) {
-        console.log('❌ No zone rate found for table shipping');
-        eligible = false;
-        reason = 'Table shipping not available to your zone';
-        break;
+      if (!zoneRate || !zoneRate.weightRanges?.length) {
+        return {
+          eligible: false,
+          cost: 0,
+          reason: 'No shipping rates configured for this zone',
+        };
       }
 
-      console.log(
-        `Weight ranges available: ${tableZoneRate.weightRanges?.length || 0}`
-      );
-
-      const weightRange = tableZoneRate.weightRanges?.find(
-        (range) => weight >= range.minWeight && weight <= range.maxWeight
+      // Find matching weight range
+      console.log(`Looking for weight range for ${weight}kg`);
+      const weightRange = zoneRate.weightRanges.find(
+        (wr) => weight >= wr.minWeight && weight <= wr.maxWeight
       );
 
       if (!weightRange) {
         console.log(`❌ No weight range found for ${weight}kg`);
-
-        // Try to find the next higher range
-        const higherRange = tableZoneRate.weightRanges
-          ?.filter((range) => weight < range.minWeight)
-          .sort((a, b) => a.minWeight - b.minWeight)[0];
-
-        if (higherRange) {
-          cost = higherRange.shippingCost;
-          reason = `Weight ${weight}kg exceeds standard range, using next tier (₦${cost})`;
-          console.log(`✅ Using higher weight tier: ₦${cost}`);
-        } else {
-          eligible = false;
-          reason = `No shipping rate available for weight ${weight}kg in your zone`;
-          console.log('❌ No suitable weight range found');
-        }
-      } else {
-        cost = weightRange.shippingCost;
-        reason = `Weight-based rate for ${weight}kg (${weightRange.minWeight}-${weightRange.maxWeight}kg range)`;
-        console.log(
-          `✅ Weight range matched: ${weightRange.minWeight}-${weightRange.maxWeight}kg, cost: ₦${cost}`
-        );
+        return {
+          eligible: false,
+          cost: 0,
+          reason: `No shipping rate for weight ${weight}kg`,
+        };
       }
-      break;
 
-    case 'pickup':
-      console.log('🏪 Processing pickup method');
-      const pickupConfig = this.pickup;
-      cost = 0; // Always free for pickup
-
-      // Check for zone-specific locations first
-      const zoneLocations = pickupConfig.zoneLocations?.find(
-        (zl) => zl.zone.toString() === zone.toString()
+      console.log(
+        `✅ Found weight range: ${weightRange.minWeight}-${weightRange.maxWeight}kg = ${weightRange.shippingCost}`
       );
 
-      console.log(`Zone-specific locations found: ${!!zoneLocations}`);
+      return {
+        eligible: true,
+        cost: weightRange.shippingCost,
+        reason: `Table rate for ${weight}kg`,
+      };
+    }
 
-      if (zoneLocations) {
-        // Use zone-specific locations
-        const activeLocations =
-          zoneLocations.locations?.filter((loc) => loc.isActive !== false) ||
-          [];
-
-        console.log(`Active zone locations: ${activeLocations.length}`);
-
-        if (activeLocations.length === 0) {
-          eligible = false;
-          reason = 'No active pickup locations in your zone';
-          console.log('❌ No active locations in zone');
-        } else {
-          reason = `${activeLocations.length} pickup location(s) available in your zone`;
-          console.log(
-            `✅ ${activeLocations.length} pickup locations available`
-          );
-        }
-      } else if (
-        !pickupConfig.zoneLocations ||
-        pickupConfig.zoneLocations.length === 0
-      ) {
-        console.log('Using default locations for all zones');
-        // No zone-specific locations, use default for all zones
-        const activeLocations =
-          pickupConfig.defaultLocations?.filter(
-            (loc) => loc.isActive !== false
-          ) || [];
-
-        console.log(`Active default locations: ${activeLocations.length}`);
-
-        if (activeLocations.length === 0) {
-          eligible = false;
-          reason = 'No active pickup locations available';
-          console.log('❌ No active default locations');
-        } else {
-          reason = `${activeLocations.length} pickup location(s) available`;
-          console.log(
-            `✅ ${activeLocations.length} default pickup locations available`
-          );
-        }
-      } else {
-        console.log(
-          '❌ Zone-specific locations exist but this zone is not covered'
-        );
-        // Zone-specific locations exist but this zone is not covered
-        eligible = false;
-        reason = 'Pickup not available in your zone';
-      }
-      break;
-
-    default:
-      console.log(`❌ Invalid method type: ${this.type}`);
-      eligible = false;
-      reason = 'Invalid shipping method type';
+    return {
+      eligible: false,
+      cost: 0,
+      reason: 'Unknown shipping method type',
+    };
+  } catch (error) {
+    console.error('Error calculating shipping cost:', error);
+    return {
+      eligible: false,
+      cost: 0,
+      reason: 'Error calculating shipping cost',
+    };
   }
-
-  const result = {
-    eligible,
-    cost: Math.round(cost * 100) / 100,
-    reason,
-    weightUsed: weight,
-    orderValueUsed: orderValue,
-    methodType: this.type,
-  };
-
-  console.log(`🧮 Calculation result:`, result);
-  return result;
 };
 
-// FIXED: Enhanced method to check if method applies to specific products
+// Enhanced method to check if method applies to specific products
 shippingMethodSchema.methods.appliesToProducts = function (productIds) {
-  const config = this[this.type];
+  const configKeyMap = {
+    flat_rate: 'flatRate',
+    table_shipping: 'tableShipping',
+    pickup: 'pickup',
+  };
 
-  console.log(`🎯 Checking if method ${this.name} applies to products`);
-  console.log(`Product IDs to check: ${productIds.length}`);
+  const configKey = configKeyMap[this.type];
+  const config = this[configKey];
 
   if (!config) {
-    console.log('✅ No config found, applying to all products');
     return true;
   }
 
-  console.log(`Assignment type: ${config.assignment}`);
-  console.log(`Assigned products count: ${config.products?.length || 0}`);
-
-  // If assignment is all_products OR no specific assignment configured, apply to all
   if (
     config.assignment === 'all_products' ||
     (!config.assignment &&
       !config.categories?.length &&
       !config.products?.length)
   ) {
-    console.log('✅ Applies to all products');
     return true;
   }
 
   if (config.assignment === 'specific_products') {
-    // If no products specified, apply to all products
     if (!config.products || config.products.length === 0) {
-      console.log('✅ No specific products assigned, applies to all');
       return true;
     }
 
-    const matches = productIds.some((id) =>
+    return productIds.some((id) =>
       config.products.some(
         (productId) => productId.toString() === id.toString()
       )
     );
-
-    console.log(`Product assignment match: ${matches}`);
-    return matches;
   }
 
-  console.log('❌ Does not apply based on product assignment');
   return false;
 };
 
+// Enhanced method to check if method applies to categories
 shippingMethodSchema.methods.appliesToCategories = function (categoryIds) {
-  const config = this[this.type];
+  const configKeyMap = {
+    flat_rate: 'flatRate',
+    table_shipping: 'tableShipping',
+    pickup: 'pickup',
+  };
 
-  console.log(`🎯 Checking if method ${this.name} applies to categories`);
-  console.log(`Category IDs to check: ${categoryIds.length}`);
+  const configKey = configKeyMap[this.type];
+  const config = this[configKey];
 
   if (!config) {
-    console.log('✅ No config found, applying to all products');
     return true;
   }
 
-  console.log(`Assignment type: ${config.assignment}`);
-  console.log(`Assigned categories count: ${config.categories?.length || 0}`);
-
-  // If assignment is all_products OR no specific assignment configured, apply to all
-  if (
-    config.assignment === 'all_products' ||
-    (!config.assignment &&
-      !config.categories?.length &&
-      !config.products?.length)
-  ) {
-    console.log('✅ Applies to all products/categories');
-    return true;
-  }
-
-  if (config.assignment === 'categories') {
-    // If no categories specified, apply to all products
-    if (!config.categories || config.categories.length === 0) {
-      console.log('✅ No specific categories assigned, applies to all');
-      return true;
-    }
-
-    const matches = categoryIds.some((id) =>
-      config.categories.some((catId) => catId.toString() === id.toString())
-    );
-
-    console.log(`Category assignment match: ${matches}`);
-    return matches;
-  }
-
-  console.log('❌ Does not apply based on category assignment');
-  return false;
-};
-// FIXED: Enhanced method to check if method applies to categories
-shippingMethodSchema.methods.appliesToCategories = function (categoryIds) {
-  const config = this[this.type];
-
-  if (!config) {
-    return true; // If no config, apply to all products
-  }
-
-  // FIXED: If assignment is all_products OR no specific assignment configured, apply to all
   if (
     config.assignment === 'all_products' ||
     (!config.assignment &&
@@ -633,7 +519,6 @@ shippingMethodSchema.methods.appliesToCategories = function (categoryIds) {
   }
 
   if (config.assignment === 'categories') {
-    // FIXED: If no categories specified, apply to all products
     if (!config.categories || config.categories.length === 0) {
       return true;
     }
@@ -647,147 +532,91 @@ shippingMethodSchema.methods.appliesToCategories = function (categoryIds) {
 
 // Get pickup locations for a specific zone
 shippingMethodSchema.methods.getPickupLocationsForZone = function (zoneId) {
-  if (this.type !== 'pickup') return [];
-
-  const pickupConfig = this.pickup;
-
-  // Check for zone-specific locations first
-  const zoneLocations = pickupConfig.zoneLocations.find(
-    (zl) => zl.zone.toString() === zoneId.toString()
-  );
-
-  if (zoneLocations) {
-    return zoneLocations.locations.filter((loc) => loc.isActive);
-  } else if (pickupConfig.zoneLocations.length === 0) {
-    // No zone-specific locations, return default locations for all zones
-    return pickupConfig.defaultLocations.filter((loc) => loc.isActive);
-  } else {
-    // Zone-specific locations exist but this zone is not covered
+  if (this.type !== 'pickup') {
     return [];
   }
+
+  const config = this.pickup;
+  if (!config) {
+    return [];
+  }
+
+  const locations = [];
+
+  if (zoneId && config.zoneLocations?.length > 0) {
+    const zoneLocation = config.zoneLocations.find(
+      (zl) => zl.zone && zl.zone.toString() === zoneId.toString()
+    );
+
+    if (zoneLocation?.locations?.length > 0) {
+      locations.push(...zoneLocation.locations);
+    }
+  }
+
+  if (config.defaultLocations?.length > 0) {
+    locations.push(...config.defaultLocations);
+  }
+
+  return locations;
 };
 
-// FIXED: Enhanced method to check if method is available in a specific zone
+// Enhanced method to check if method is available in a specific zone
 shippingMethodSchema.methods.isAvailableInZone = function (zoneId) {
-  if (!this.isActive) {
-    console.log(`Method ${this.name} is not active`);
+  const configKeyMap = {
+    flat_rate: 'flatRate',
+    table_shipping: 'tableShipping',
+    pickup: 'pickup',
+  };
+
+  const configKey = configKeyMap[this.type] || this.type;
+  const config = this[configKey];
+
+  if (!config) {
     return false;
   }
 
-  const zoneIdStr = zoneId.toString();
-  console.log(
-    `Checking if method ${this.name} (${this.type}) is available in zone ${zoneIdStr}`
-  );
+  if (this.type === 'pickup') {
+    const hasDefaultLocations = config.defaultLocations?.length > 0;
+    const hasZoneLocations = config.zoneLocations?.length > 0;
 
-  switch (this.type) {
-    case 'flat_rate':
-      const flatConfig = this.flatRate;
+    if (hasDefaultLocations) {
+      return true;
+    }
 
-      console.log(
-        `Flat rate zone rates count: ${flatConfig.zoneRates?.length || 0}`
+    if (hasZoneLocations && zoneId) {
+      const zoneLocation = config.zoneLocations.find(
+        (zl) => zl.zone && zl.zone.toString() === zoneId.toString()
       );
+      return zoneLocation && zoneLocation.locations?.length > 0;
+    }
 
-      if (!flatConfig.zoneRates || flatConfig.zoneRates.length === 0) {
-        console.log('✅ No zone-specific rates, available in all zones');
-        return true; // Available in all zones when no zone-specific rates
-      }
-
-      const flatRateMatch = flatConfig.zoneRates.some((zr) => {
-        const match = zr.zone.toString() === zoneIdStr;
-        console.log(
-          `Checking zone rate: ${zr.zone} === ${zoneIdStr} = ${match}`
-        );
-        return match;
-      });
-
-      console.log(`Flat rate zone match result: ${flatRateMatch}`);
-      return flatRateMatch;
-
-    case 'table_shipping':
-      const tableConfig = this.tableShipping;
-
-      console.log(
-        `Table shipping zone rates count: ${tableConfig.zoneRates?.length || 0}`
-      );
-
-      if (!tableConfig.zoneRates || tableConfig.zoneRates.length === 0) {
-        console.log('❌ Table shipping requires zone rates but none found');
-        return false; // Table shipping requires zone rates
-      }
-
-      const tableShippingMatch = tableConfig.zoneRates.some((zr) => {
-        const match = zr.zone.toString() === zoneIdStr;
-        console.log(
-          `Checking table zone rate: ${zr.zone} === ${zoneIdStr} = ${match}`
-        );
-
-        // Also check if zone has valid weight ranges
-        if (match && (!zr.weightRanges || zr.weightRanges.length === 0)) {
-          console.log('❌ Zone rate found but no weight ranges configured');
-          return false;
-        }
-
-        return match;
-      });
-
-      console.log(`Table shipping zone match result: ${tableShippingMatch}`);
-      return tableShippingMatch;
-
-    case 'pickup':
-      const pickupConfig = this.pickup;
-
-      console.log(
-        `Pickup zone locations count: ${
-          pickupConfig.zoneLocations?.length || 0
-        }`
-      );
-      console.log(
-        `Pickup default locations count: ${
-          pickupConfig.defaultLocations?.length || 0
-        }`
-      );
-
-      if (
-        !pickupConfig.zoneLocations ||
-        pickupConfig.zoneLocations.length === 0
-      ) {
-        // No zone-specific locations, check if default locations exist
-        const hasActiveDefaultLocations =
-          pickupConfig.defaultLocations &&
-          pickupConfig.defaultLocations.some((loc) => loc.isActive !== false);
-
-        console.log(
-          `Has active default locations: ${hasActiveDefaultLocations}`
-        );
-        return hasActiveDefaultLocations;
-      }
-
-      // Check if zone has specific locations
-      const pickupZoneMatch = pickupConfig.zoneLocations.some((zl) => {
-        const match = zl.zone.toString() === zoneIdStr;
-        console.log(
-          `Checking pickup zone location: ${zl.zone} === ${zoneIdStr} = ${match}`
-        );
-
-        if (match) {
-          // Check if zone has active locations
-          const hasActiveLocations =
-            zl.locations && zl.locations.some((loc) => loc.isActive !== false);
-          console.log(`Zone has active locations: ${hasActiveLocations}`);
-          return hasActiveLocations;
-        }
-
-        return false;
-      });
-
-      console.log(`Pickup zone match result: ${pickupZoneMatch}`);
-      return pickupZoneMatch;
-
-    default:
-      console.log(`❌ Unknown method type: ${this.type}`);
-      return false;
+    return false;
   }
+
+  if (this.type === 'flat_rate') {
+    if (!zoneId) return false;
+
+    const hasZoneRate = config.zoneRates?.some(
+      (zr) => zr.zone && zr.zone.toString() === zoneId.toString()
+    );
+
+    const hasDefaultCost =
+      config.defaultCost !== undefined && config.defaultCost !== null;
+
+    return hasZoneRate || hasDefaultCost;
+  }
+
+  if (this.type === 'table_shipping') {
+    if (!zoneId) return false;
+
+    return config.zoneRates?.some(
+      (zr) => zr.zone && zr.zone.toString() === zoneId.toString()
+    );
+  }
+
+  return false;
 };
+
 const ShippingMethodModel = mongoose.model(
   'ShippingMethod',
   shippingMethodSchema

@@ -572,7 +572,6 @@ export const deleteShippingZone = async (request, response) => {
 };
 
 // ===== SHIPPING METHODS =====
-// ===== COMPLETE FIXED createShippingMethod =====
 export const createShippingMethod = async (request, response) => {
   try {
     const userId = request.user._id;
@@ -622,232 +621,27 @@ export const createShippingMethod = async (request, response) => {
       });
     }
 
-    // Clean up data based on type to prevent validation errors
+    // FIXED: Build processedMethodData with ONLY relevant fields for the type
     const processedMethodData = {
-      ...methodData,
+      name: methodData.name,
       code: code,
+      description: methodData.description || '',
+      type: methodData.type,
+      isActive: methodData.isActive !== undefined ? methodData.isActive : true,
+      sortOrder: methodData.sortOrder || 0,
+      estimatedDelivery: methodData.estimatedDelivery || {
+        minDays: 1,
+        maxDays: 7,
+      },
       createdBy: userId,
       updatedBy: userId,
     };
 
-    // Remove unused configurations based on type
-    if (methodData.type !== 'pickup') {
-      delete processedMethodData.pickup;
-    }
-    if (methodData.type !== 'flat_rate') {
-      delete processedMethodData.flatRate;
-    }
-    if (methodData.type !== 'table_shipping') {
-      delete processedMethodData.tableShipping;
-    }
-
-    // ===== PICKUP METHOD HANDLING =====
-    if (methodData.type === 'pickup' && processedMethodData.pickup) {
-      console.log('Processing PICKUP method');
-      const pickupConfig = processedMethodData.pickup;
-
-      // Ensure assignment defaults
-      if (!pickupConfig.assignment) {
-        pickupConfig.assignment = 'all_products';
-      }
-
-      // Clean up categories and products arrays if not using them
-      if (pickupConfig.assignment !== 'categories') {
-        pickupConfig.categories = [];
-      }
-      if (pickupConfig.assignment !== 'specific_products') {
-        pickupConfig.products = [];
-      }
-
-      // FIXED: Clean up zoneLocations with CONSISTENT LGA validation
-      if (
-        pickupConfig.zoneLocations &&
-        Array.isArray(pickupConfig.zoneLocations)
-      ) {
-        console.log(
-          'Cleaning zone locations:',
-          pickupConfig.zoneLocations.length
-        );
-
-        pickupConfig.zoneLocations = pickupConfig.zoneLocations.filter(
-          (zoneLocation) => {
-            // Remove if no zone selected
-            if (!zoneLocation.zone || zoneLocation.zone.trim() === '') {
-              console.log('Filtering out zone location: no zone selected');
-              return false;
-            }
-
-            // Filter out invalid locations within this zone
-            if (
-              zoneLocation.locations &&
-              Array.isArray(zoneLocation.locations)
-            ) {
-              zoneLocation.locations = zoneLocation.locations.filter(
-                (location) => {
-                  const isValid =
-                    location.name &&
-                    location.name.trim() !== '' &&
-                    location.address &&
-                    location.address.trim() !== '' &&
-                    location.city &&
-                    location.city.trim() !== '' &&
-                    location.state &&
-                    location.state.trim() !== '' &&
-                    location.lga && // FIXED: LGA now required
-                    location.lga.trim() !== '';
-
-                  if (!isValid) {
-                    console.log('Invalid zone location filtered:', {
-                      name: location.name || 'missing',
-                      hasAddress: !!location.address,
-                      hasCity: !!location.city,
-                      hasState: !!location.state,
-                      hasLga: !!location.lga,
-                    });
-                  }
-
-                  return isValid;
-                }
-              );
-            }
-
-            // Keep zone location only if it has valid locations
-            const hasValidLocations =
-              zoneLocation.locations && zoneLocation.locations.length > 0;
-            if (!hasValidLocations) {
-              console.log('Filtering out zone location: no valid locations');
-            }
-            return hasValidLocations;
-          }
-        );
-
-        console.log(
-          'Zone locations after cleaning:',
-          pickupConfig.zoneLocations.length
-        );
-      }
-
-      // FIXED: Clean up defaultLocations with CONSISTENT LGA validation
-      if (
-        pickupConfig.defaultLocations &&
-        Array.isArray(pickupConfig.defaultLocations)
-      ) {
-        console.log(
-          'Cleaning default locations:',
-          pickupConfig.defaultLocations.length
-        );
-
-        pickupConfig.defaultLocations = pickupConfig.defaultLocations.filter(
-          (location) => {
-            const isValid =
-              location.name &&
-              location.name.trim() !== '' &&
-              location.address &&
-              location.address.trim() !== '' &&
-              location.city &&
-              location.city.trim() !== '' &&
-              location.state &&
-              location.state.trim() !== '' &&
-              location.lga && // FIXED: LGA now required
-              location.lga.trim() !== '';
-
-            if (!isValid) {
-              console.log('Invalid default location filtered:', {
-                name: location.name || 'missing',
-                hasAddress: !!location.address,
-                hasCity: !!location.city,
-                hasState: !!location.state,
-                hasLga: !!location.lga,
-              });
-            }
-
-            return isValid;
-          }
-        );
-
-        console.log(
-          'Default locations after cleaning:',
-          pickupConfig.defaultLocations.length
-        );
-      }
-
-      // Validate at least one valid location exists
-      const hasZoneLocations =
-        pickupConfig.zoneLocations && pickupConfig.zoneLocations.length > 0;
-      const hasDefaultLocations =
-        pickupConfig.defaultLocations &&
-        pickupConfig.defaultLocations.length > 0;
-
-      console.log('Pickup validation:', {
-        hasZoneLocations,
-        hasDefaultLocations,
-        zoneLocationsCount: pickupConfig.zoneLocations?.length || 0,
-        defaultLocationsCount: pickupConfig.defaultLocations?.length || 0,
-      });
-
-      if (!hasZoneLocations && !hasDefaultLocations) {
-        return response.status(400).json({
-          message:
-            'At least one valid pickup location is required with name, address, city, state, and LGA.',
-          error: true,
-          success: false,
-        });
-      }
-
-      processedMethodData.pickup = pickupConfig;
-    }
-
-    // ===== FLAT RATE METHOD HANDLING =====
-    if (methodData.type === 'flat_rate' && processedMethodData.flatRate) {
-      console.log('Processing FLAT RATE method');
-      const flatRateConfig = processedMethodData.flatRate;
-
-      // Ensure assignment defaults
-      if (!flatRateConfig.assignment) {
-        flatRateConfig.assignment = 'all_products';
-      }
-
-      // Clean up categories and products arrays if not using them
-      if (flatRateConfig.assignment !== 'categories') {
-        flatRateConfig.categories = [];
-      }
-      if (flatRateConfig.assignment !== 'specific_products') {
-        flatRateConfig.products = [];
-      }
-
-      // Clean up zone rates - remove empty zones
-      if (flatRateConfig.zoneRates && Array.isArray(flatRateConfig.zoneRates)) {
-        flatRateConfig.zoneRates = flatRateConfig.zoneRates.filter(
-          (zoneRate) => {
-            return zoneRate.zone && zoneRate.zone.trim() !== '';
-          }
-        );
-        console.log(
-          'Flat rate zone rates after cleaning:',
-          flatRateConfig.zoneRates.length
-        );
-      }
-
-      // Ensure numeric values
-      flatRateConfig.defaultCost =
-        Number(flatRateConfig.defaultCost) || Number(flatRateConfig.cost) || 0;
-      flatRateConfig.cost = Number(flatRateConfig.cost) || 0;
-
-      if (flatRateConfig.freeShipping) {
-        flatRateConfig.freeShipping.minimumOrderAmount =
-          Number(flatRateConfig.freeShipping.minimumOrderAmount) || 0;
-      }
-
-      processedMethodData.flatRate = flatRateConfig;
-    }
-
+    // FIXED: Only add the configuration for the specific type
     // ===== TABLE SHIPPING METHOD HANDLING =====
-    if (
-      methodData.type === 'table_shipping' &&
-      processedMethodData.tableShipping
-    ) {
+    if (methodData.type === 'table_shipping') {
       console.log('Processing TABLE SHIPPING method');
-      const tableShippingConfig = processedMethodData.tableShipping;
+      const tableShippingConfig = methodData.tableShipping || {};
 
       // Ensure assignment defaults
       if (!tableShippingConfig.assignment) {
@@ -903,7 +697,208 @@ export const createShippingMethod = async (request, response) => {
         }
       }
 
+      // ONLY add tableShipping config
       processedMethodData.tableShipping = tableShippingConfig;
+    }
+    // ===== FLAT RATE METHOD HANDLING =====
+    else if (methodData.type === 'flat_rate') {
+      console.log('Processing FLAT RATE method');
+      const flatRateConfig = methodData.flatRate || {};
+
+      // Ensure assignment defaults
+      if (!flatRateConfig.assignment) {
+        flatRateConfig.assignment = 'all_products';
+      }
+
+      // Clean up categories and products arrays if not using them
+      if (flatRateConfig.assignment !== 'categories') {
+        flatRateConfig.categories = [];
+      }
+      if (flatRateConfig.assignment !== 'specific_products') {
+        flatRateConfig.products = [];
+      }
+
+      // Clean up zone rates - remove empty zones
+      if (flatRateConfig.zoneRates && Array.isArray(flatRateConfig.zoneRates)) {
+        flatRateConfig.zoneRates = flatRateConfig.zoneRates.filter(
+          (zoneRate) => {
+            return zoneRate.zone && zoneRate.zone.trim() !== '';
+          }
+        );
+        console.log(
+          'Flat rate zone rates after cleaning:',
+          flatRateConfig.zoneRates.length
+        );
+      }
+
+      // Ensure numeric values
+      flatRateConfig.defaultCost =
+        Number(flatRateConfig.defaultCost) || Number(flatRateConfig.cost) || 0;
+      flatRateConfig.cost = Number(flatRateConfig.cost) || 0;
+
+      if (flatRateConfig.freeShipping) {
+        flatRateConfig.freeShipping.minimumOrderAmount =
+          Number(flatRateConfig.freeShipping.minimumOrderAmount) || 0;
+      }
+
+      // ONLY add flatRate config
+      processedMethodData.flatRate = flatRateConfig;
+    }
+    // ===== PICKUP METHOD HANDLING =====
+    else if (methodData.type === 'pickup') {
+      console.log('Processing PICKUP method');
+      const pickupConfig = methodData.pickup || {};
+
+      // Ensure assignment defaults
+      if (!pickupConfig.assignment) {
+        pickupConfig.assignment = 'all_products';
+      }
+
+      // Clean up categories and products arrays if not using them
+      if (pickupConfig.assignment !== 'categories') {
+        pickupConfig.categories = [];
+      }
+      if (pickupConfig.assignment !== 'specific_products') {
+        pickupConfig.products = [];
+      }
+
+      // Clean up zoneLocations with CONSISTENT LGA validation
+      if (
+        pickupConfig.zoneLocations &&
+        Array.isArray(pickupConfig.zoneLocations)
+      ) {
+        console.log(
+          'Cleaning zone locations:',
+          pickupConfig.zoneLocations.length
+        );
+
+        pickupConfig.zoneLocations = pickupConfig.zoneLocations.filter(
+          (zoneLocation) => {
+            // Remove if no zone selected
+            if (!zoneLocation.zone || zoneLocation.zone.trim() === '') {
+              console.log('Filtering out zone location: no zone selected');
+              return false;
+            }
+
+            // Filter out invalid locations within this zone
+            if (
+              zoneLocation.locations &&
+              Array.isArray(zoneLocation.locations)
+            ) {
+              zoneLocation.locations = zoneLocation.locations.filter(
+                (location) => {
+                  const isValid =
+                    location.name &&
+                    location.name.trim() !== '' &&
+                    location.address &&
+                    location.address.trim() !== '' &&
+                    location.city &&
+                    location.city.trim() !== '' &&
+                    location.state &&
+                    location.state.trim() !== '' &&
+                    location.lga &&
+                    location.lga.trim() !== '';
+
+                  if (!isValid) {
+                    console.log('Invalid zone location filtered:', {
+                      name: location.name || 'missing',
+                      hasAddress: !!location.address,
+                      hasCity: !!location.city,
+                      hasState: !!location.state,
+                      hasLga: !!location.lga,
+                    });
+                  }
+
+                  return isValid;
+                }
+              );
+            }
+
+            // Keep zone location only if it has valid locations
+            const hasValidLocations =
+              zoneLocation.locations && zoneLocation.locations.length > 0;
+            if (!hasValidLocations) {
+              console.log('Filtering out zone location: no valid locations');
+            }
+            return hasValidLocations;
+          }
+        );
+
+        console.log(
+          'Zone locations after cleaning:',
+          pickupConfig.zoneLocations.length
+        );
+      }
+
+      // Clean up defaultLocations with CONSISTENT LGA validation
+      if (
+        pickupConfig.defaultLocations &&
+        Array.isArray(pickupConfig.defaultLocations)
+      ) {
+        console.log(
+          'Cleaning default locations:',
+          pickupConfig.defaultLocations.length
+        );
+
+        pickupConfig.defaultLocations = pickupConfig.defaultLocations.filter(
+          (location) => {
+            const isValid =
+              location.name &&
+              location.name.trim() !== '' &&
+              location.address &&
+              location.address.trim() !== '' &&
+              location.city &&
+              location.city.trim() !== '' &&
+              location.state &&
+              location.state.trim() !== '' &&
+              location.lga &&
+              location.lga.trim() !== '';
+
+            if (!isValid) {
+              console.log('Invalid default location filtered:', {
+                name: location.name || 'missing',
+                hasAddress: !!location.address,
+                hasCity: !!location.city,
+                hasState: !!location.state,
+                hasLga: !!location.lga,
+              });
+            }
+
+            return isValid;
+          }
+        );
+
+        console.log(
+          'Default locations after cleaning:',
+          pickupConfig.defaultLocations.length
+        );
+      }
+
+      // Validate at least one valid location exists
+      const hasZoneLocations =
+        pickupConfig.zoneLocations && pickupConfig.zoneLocations.length > 0;
+      const hasDefaultLocations =
+        pickupConfig.defaultLocations &&
+        pickupConfig.defaultLocations.length > 0;
+
+      console.log('Pickup validation:', {
+        hasZoneLocations,
+        hasDefaultLocations,
+        zoneLocationsCount: pickupConfig.zoneLocations?.length || 0,
+        defaultLocationsCount: pickupConfig.defaultLocations?.length || 0,
+      });
+
+      if (!hasZoneLocations && !hasDefaultLocations) {
+        return response.status(400).json({
+          message:
+            'At least one valid pickup location is required with name, address, city, state, and LGA.',
+          error: true,
+          success: false,
+        });
+      }
+
+      // ONLY add pickup config
+      processedMethodData.pickup = pickupConfig;
     }
 
     console.log('Final processed data structure:', {
@@ -912,10 +907,7 @@ export const createShippingMethod = async (request, response) => {
       hasPickup: !!processedMethodData.pickup,
       hasFlatRate: !!processedMethodData.flatRate,
       hasTableShipping: !!processedMethodData.tableShipping,
-      pickupZoneLocations:
-        processedMethodData.pickup?.zoneLocations?.length || 0,
-      pickupDefaultLocations:
-        processedMethodData.pickup?.defaultLocations?.length || 0,
+      keys: Object.keys(processedMethodData),
     });
 
     // Create and save the shipping method
@@ -1517,10 +1509,19 @@ export const getProductsForAssignment = async (request, response) => {
 
 // ===== SHIPPING COST CALCULATION - UPDATED FOR SIMPLIFIED TABLE SHIPPING =====
 
-// controllers/shipping.controller.js - Fixed
+// controllers/shipping.controller.js
+// FIXED calculateCheckoutShipping function
 export const calculateCheckoutShipping = async (request, response) => {
   try {
     const { addressId, items, orderValue, totalWeight } = request.body;
+
+    console.log('=== CALCULATE CHECKOUT SHIPPING ===');
+    console.log('Request:', {
+      addressId,
+      itemCount: items?.length,
+      orderValue,
+      totalWeight,
+    });
 
     if (!addressId || !items || items.length === 0) {
       return response.status(400).json({
@@ -1544,35 +1545,21 @@ export const calculateCheckoutShipping = async (request, response) => {
       });
     }
 
-    console.log('Address details:', {
+    console.log('Address:', {
       state: address.state,
       lga: address.lga,
       city: address.city,
-      existingZone: address.shipping_zone?._id,
+      hasZone: !!address.shipping_zone,
     });
 
-    // FIXED: Enhanced zone finding with better state/LGA matching
+    // Find zone for address if not already assigned
     let zone = address.shipping_zone;
 
     if (!zone) {
-      console.log('No existing zone found, searching for matching zone...');
-
-      // Find zone by state and LGA with better matching logic
+      console.log('Searching for matching zone...');
       const zones = await ShippingZoneModel.find({ isActive: true });
 
-      console.log(`Found ${zones.length} active zones to check`);
-
       for (const testZone of zones) {
-        console.log(`Checking zone: ${testZone.name} (${testZone.code})`);
-        console.log(
-          'Zone states:',
-          testZone.states.map((s) => ({
-            name: s.name,
-            coverage: s.coverage_type,
-            coveredLgas: s.covered_lgas,
-          }))
-        );
-
         const stateMatch = testZone.states.find(
           (state) =>
             state.name.toLowerCase().trim() ===
@@ -1582,75 +1569,41 @@ export const calculateCheckoutShipping = async (request, response) => {
         if (stateMatch) {
           console.log(`State match found: ${stateMatch.name}`);
           console.log(`Coverage type: ${stateMatch.coverage_type}`);
-          console.log(
-            `Available LGAs: ${stateMatch.available_lgas?.length || 0}`
-          );
-          console.log(`Covered LGAs: ${stateMatch.covered_lgas?.length || 0}`);
 
-          // FIXED: Enhanced LGA coverage checking
           let lgaCovered = false;
 
-          if (stateMatch.coverage_type === 'all') {
+          // FIXED: If coverage_type is 'all' OR no covered_lgas specified, cover all LGAs
+          if (
+            stateMatch.coverage_type === 'all' ||
+            !stateMatch.covered_lgas ||
+            stateMatch.covered_lgas.length === 0
+          ) {
             lgaCovered = true;
-            console.log('Zone covers all LGAs in state');
+            console.log('✅ Zone covers ALL LGAs in state');
           } else if (stateMatch.coverage_type === 'specific') {
-            // Check if the address LGA is in the covered LGAs list
+            // Only check specific LGAs if explicitly set to specific AND has covered_lgas
             lgaCovered = stateMatch.covered_lgas?.some(
               (lga) =>
                 lga.toLowerCase().trim() === address.lga.toLowerCase().trim()
             );
             console.log(`LGA ${address.lga} covered: ${lgaCovered}`);
-            console.log('Covered LGAs:', stateMatch.covered_lgas);
-          } else {
-            // Fallback: check if LGA exists in available LGAs (for backward compatibility)
-            lgaCovered = stateMatch.available_lgas?.some(
-              (lga) =>
-                lga.toLowerCase().trim() === address.lga.toLowerCase().trim()
-            );
-            console.log(`LGA ${address.lga} in available list: ${lgaCovered}`);
           }
 
           if (lgaCovered) {
             zone = testZone;
-            console.log(`✅ Zone match found: ${zone.name}`);
-
-            // Update address with found zone for future use
+            console.log(`✅ Zone assigned: ${zone.name}`);
             await mongoose.model('address').findByIdAndUpdate(addressId, {
               shipping_zone: zone._id,
             });
             break;
-          } else {
-            console.log(
-              `❌ LGA ${address.lga} not covered by zone ${testZone.name}`
-            );
           }
-        } else {
-          console.log(
-            `❌ State ${address.state} not found in zone ${testZone.name}`
-          );
         }
       }
-    } else {
-      console.log(`✅ Using existing zone: ${zone.name}`);
     }
 
-    if (!zone) {
-      console.log('❌ No shipping zone found for address');
-      return response.status(400).json({
-        message: `No shipping zone found for ${address.city}, ${address.lga}, ${address.state}. Please contact support.`,
-        error: true,
-        success: false,
-        debug: {
-          address: {
-            state: address.state,
-            lga: address.lga,
-            city: address.city,
-          },
-        },
-      });
-    }
+    console.log('Zone result:', zone ? `Found: ${zone.name}` : 'Not found');
 
-    // Get product details for items
+    // Get product details
     const productIds = items.map((item) => item.productId || item._id);
     const products = await ProductModel.find({
       _id: { $in: productIds },
@@ -1671,14 +1624,12 @@ export const calculateCheckoutShipping = async (request, response) => {
       ...new Set(products.map((p) => p.category?._id).filter(Boolean)),
     ];
 
-    console.log('Cart analysis:', {
+    console.log('Cart:', {
       productCount: products.length,
       categoryCount: categoryIds.length,
-      productIds: productIds.slice(0, 3), // Log first 3 for debugging
-      categoryIds: categoryIds.slice(0, 3),
     });
 
-    // Calculate total weight if not provided
+    // Calculate total weight
     let calculatedWeight = totalWeight || 0;
     if (!calculatedWeight) {
       for (const item of items) {
@@ -1688,14 +1639,14 @@ export const calculateCheckoutShipping = async (request, response) => {
         if (product && product.weight) {
           calculatedWeight += product.weight * item.quantity;
         } else {
-          calculatedWeight += 1 * item.quantity; // Default 1kg per item
+          calculatedWeight += 1 * item.quantity;
         }
       }
     }
 
-    console.log(`Calculated weight: ${calculatedWeight}kg`);
+    console.log(`Total weight: ${calculatedWeight}kg`);
 
-    // FIXED: Get all active shipping methods and apply proper filtering
+    // Get ALL active shipping methods
     const shippingMethods = await ShippingMethodModel.find({
       isActive: true,
     }).sort({ sortOrder: 1 });
@@ -1706,176 +1657,267 @@ export const calculateCheckoutShipping = async (request, response) => {
 
     for (const method of shippingMethods) {
       try {
-        console.log(`\n🔍 Checking method: ${method.name} (${method.type})`);
+        console.log(`\n🔍 Evaluating: ${method.name} (${method.type})`);
 
-        // Check if method is currently valid
+        // Check if method is currently valid (date-based validity)
         if (!method.isCurrentlyValid()) {
-          console.log(`❌ Method ${method.name} is not currently valid`);
+          console.log(`❌ Not currently valid (date restrictions)`);
           continue;
         }
 
-        // FIXED: Enhanced zone availability checking
-        const isAvailableInZone = method.isAvailableInZone(zone._id);
-        if (!isAvailableInZone) {
+        // FIXED: Map type to correct config key (database uses camelCase)
+        const configKeyMap = {
+          flat_rate: 'flatRate',
+          table_shipping: 'tableShipping',
+          pickup: 'pickup',
+        };
+
+        const configKey = configKeyMap[method.type] || method.type;
+        const config = method[configKey];
+
+        if (!config) {
           console.log(
-            `❌ Method ${method.name} is not available in zone ${zone.name}`
+            `❌ No configuration found for type: ${method.type} (tried key: ${configKey})`
           );
-          console.log('Method zone configuration:', {
-            type: method.type,
-            hasZoneRates: method[method.type]?.zoneRates?.length > 0,
-            hasZoneLocations: method[method.type]?.zoneLocations?.length > 0,
-            hasDefaultLocations:
-              method[method.type]?.defaultLocations?.length > 0,
-          });
+          console.log(
+            `Available keys:`,
+            Object.keys(method.toObject ? method.toObject() : method)
+          );
           continue;
         }
 
         console.log(
-          `✅ Method ${method.name} is available in zone ${zone.name}`
+          `✅ Found config for ${method.type} using key: ${configKey}`
         );
 
-        // FIXED: Enhanced product/category matching
+        // STEP 1: Check product/category assignment
         let appliesToItems = false;
-        const config = method[method.type];
 
-        if (!config) {
-          console.log('No config found, applying to all products');
-          appliesToItems = true;
-        } else {
-          console.log(`Method assignment: ${config.assignment}`);
-          console.log(`Categories assigned: ${config.categories?.length || 0}`);
-          console.log(`Products assigned: ${config.products?.length || 0}`);
+        console.log(`Assignment type: ${config.assignment}`);
 
-          switch (config.assignment) {
-            case 'all_products':
+        // FIXED: Default to all_products if assignment is undefined or null
+        const assignment = config.assignment || 'all_products';
+
+        switch (assignment) {
+          case 'all_products':
+            appliesToItems = true;
+            console.log('✅ Applies to all products');
+            break;
+
+          case 'categories':
+            if (!config.categories || config.categories.length === 0) {
               appliesToItems = true;
-              console.log('✅ Applies to all products');
-              break;
-
-            case 'categories':
-              if (!config.categories || config.categories.length === 0) {
-                appliesToItems = true; // No categories specified = all products
-                console.log(
-                  '✅ No categories specified, applies to all products'
-                );
-              } else {
-                appliesToItems = categoryIds.some((catId) =>
-                  config.categories.some(
-                    (methodCatId) => methodCatId.toString() === catId.toString()
-                  )
-                );
-                console.log(`Category match result: ${appliesToItems}`);
-                if (appliesToItems) {
-                  const matchedCategories = categoryIds.filter((catId) =>
-                    config.categories.some(
-                      (methodCatId) =>
-                        methodCatId.toString() === catId.toString()
-                    )
-                  );
-                  console.log('✅ Matched categories:', matchedCategories);
-                }
-              }
-              break;
-
-            case 'specific_products':
-              if (!config.products || config.products.length === 0) {
-                appliesToItems = true; // No products specified = all products
-                console.log(
-                  '✅ No products specified, applies to all products'
-                );
-              } else {
-                appliesToItems = productIds.some((prodId) =>
-                  config.products.some(
-                    (methodProdId) =>
-                      methodProdId.toString() === prodId.toString()
-                  )
-                );
-                console.log(`Product match result: ${appliesToItems}`);
-                if (appliesToItems) {
-                  const matchedProducts = productIds.filter((prodId) =>
-                    config.products.some(
-                      (methodProdId) =>
-                        methodProdId.toString() === prodId.toString()
-                    )
-                  );
-                  console.log('✅ Matched products:', matchedProducts);
-                }
-              }
-              break;
-
-            default:
+              console.log('✅ No categories specified, applies to all');
+            } else if (categoryIds.length === 0) {
+              // IMPORTANT: If cart has no categories but method requires categories,
+              // still apply it (customer might have products without categories)
               appliesToItems = true;
-              console.log('✅ Default case, applies to all products');
-          }
+              console.log('✅ Cart has no categories, applies to all');
+            } else {
+              appliesToItems = categoryIds.some((catId) =>
+                config.categories.some(
+                  (methodCatId) => methodCatId.toString() === catId.toString()
+                )
+              );
+              console.log(`Category match: ${appliesToItems}`, {
+                cartCategories: categoryIds.map((c) => c.toString()),
+                methodCategories: config.categories.map((c) => c.toString()),
+              });
+            }
+            break;
+
+          case 'specific_products':
+            if (!config.products || config.products.length === 0) {
+              appliesToItems = true;
+              console.log('✅ No products specified, applies to all');
+            } else {
+              appliesToItems = productIds.some((prodId) =>
+                config.products.some(
+                  (methodProdId) =>
+                    methodProdId.toString() === prodId.toString()
+                )
+              );
+              console.log(`Product match: ${appliesToItems}`);
+            }
+            break;
+
+          default:
+            appliesToItems = true;
         }
 
         if (!appliesToItems) {
-          console.log(`❌ Method ${method.name} does not apply to cart items`);
+          console.log(`❌ Does not apply to cart items`);
           continue;
         }
 
-        console.log(`✅ Method ${method.name} applies to cart items`);
+        // STEP 2: Check zone availability and calculate cost
+        let isAvailableForAddress = false;
+        let calculationResult = null;
 
-        // Calculate shipping cost
-        const calculation = method.calculateShippingCost({
-          weight: calculatedWeight,
-          orderValue: orderValue || 0,
-          zone: zone._id,
-          items: items,
+        if (method.type === 'pickup') {
+          // PICKUP METHODS: Check both zone-specific and default locations
+          const hasZoneLocations = config.zoneLocations?.length > 0;
+          const hasDefaultLocations = config.defaultLocations?.length > 0;
+
+          console.log('Pickup availability:', {
+            hasZoneLocations,
+            hasDefaultLocations,
+            hasZone: !!zone,
+          });
+
+          if (hasZoneLocations && zone) {
+            // Check if this zone has locations
+            const zoneLocation = config.zoneLocations.find(
+              (zl) => zl.zone && zl.zone.toString() === zone._id.toString()
+            );
+            if (zoneLocation && zoneLocation.locations?.length > 0) {
+              isAvailableForAddress = true;
+              console.log('✅ Zone-specific pickup locations available');
+            }
+          }
+
+          // Always check default locations for pickup
+          if (!isAvailableForAddress && hasDefaultLocations) {
+            isAvailableForAddress = true;
+            console.log('✅ Default pickup locations available');
+          }
+
+          // Calculate cost for pickup (usually free)
+          if (isAvailableForAddress) {
+            calculationResult = method.calculateShippingCost({
+              weight: calculatedWeight,
+              orderValue: orderValue || 0,
+              zone: zone?._id,
+              items: items,
+            });
+          }
+        } else if (method.type === 'flat_rate') {
+          // FLAT_RATE: Check zone rates OR default cost
+          const hasZoneRate =
+            zone &&
+            config.zoneRates?.some(
+              (zr) => zr.zone && zr.zone.toString() === zone._id.toString()
+            );
+          const hasDefaultCost =
+            config.defaultCost !== undefined && config.defaultCost !== null;
+
+          console.log('Flat rate availability:', {
+            hasZone: !!zone,
+            hasZoneRate,
+            hasDefaultCost,
+            defaultCost: config.defaultCost,
+          });
+
+          // FIXED: Available if has zone rate OR has default cost OR no zone required
+          if (hasZoneRate || hasDefaultCost || !zone) {
+            isAvailableForAddress = true;
+            console.log('✅ Flat rate available');
+
+            calculationResult = method.calculateShippingCost({
+              weight: calculatedWeight,
+              orderValue: orderValue || 0,
+              zone: zone?._id,
+              items: items,
+            });
+          }
+        } else if (method.type === 'table_shipping') {
+          // TABLE_SHIPPING: Must have zone and zone rate
+          if (!zone) {
+            console.log(`❌ No zone found for table shipping`);
+            continue;
+          }
+
+          const hasZoneRate = config.zoneRates?.some(
+            (zr) => zr.zone && zr.zone.toString() === zone._id.toString()
+          );
+
+          console.log('Table shipping availability:', {
+            hasZone: !!zone,
+            hasZoneRate,
+          });
+
+          if (hasZoneRate) {
+            isAvailableForAddress = true;
+            console.log('✅ Table shipping available');
+
+            calculationResult = method.calculateShippingCost({
+              weight: calculatedWeight,
+              orderValue: orderValue || 0,
+              zone: zone._id,
+              items: items,
+            });
+          }
+        }
+
+        if (!isAvailableForAddress) {
+          console.log(`❌ Not available for this address/zone`);
+          continue;
+        }
+
+        console.log('Calculation result:', {
+          eligible: calculationResult?.eligible,
+          cost: calculationResult?.cost,
+          reason: calculationResult?.reason,
         });
 
-        console.log(`Calculation result:`, {
-          eligible: calculation.eligible,
-          cost: calculation.cost,
-          reason: calculation.reason,
-        });
-
-        if (calculation.eligible) {
+        if (calculationResult && calculationResult.eligible) {
           const methodData = {
             _id: method._id,
             name: method.name,
             code: method.code,
             type: method.type,
             description: method.description,
-            cost: calculation.cost,
+            cost: calculationResult.cost,
             estimatedDelivery: method.estimatedDelivery,
-            reason: calculation.reason,
+            reason: calculationResult.reason,
           };
 
           // Add pickup locations for pickup methods
           if (method.type === 'pickup') {
-            methodData.pickupLocations = method.getPickupLocationsForZone(
-              zone._id
-            );
+            const locations = [];
+
+            // Add zone-specific locations if available
+            if (zone && config.zoneLocations) {
+              const zoneLocation = config.zoneLocations.find(
+                (zl) => zl.zone && zl.zone.toString() === zone._id.toString()
+              );
+              if (zoneLocation?.locations) {
+                locations.push(...zoneLocation.locations);
+              }
+            }
+
+            // Add default locations
+            if (config.defaultLocations) {
+              locations.push(...config.defaultLocations);
+            }
+
+            methodData.pickupLocations = locations;
           }
 
-          methodData.zoneInfo = {
-            zoneId: zone._id,
-            zoneName: zone.name,
-            zoneCode: zone.code,
-          };
+          if (zone) {
+            methodData.zoneInfo = {
+              zoneId: zone._id,
+              zoneName: zone.name,
+              zoneCode: zone.code,
+            };
+          }
 
           availableMethods.push(methodData);
-          console.log(`✅ Added method ${method.name} to available methods`);
+          console.log(`✅ Added to available methods`);
         } else {
           console.log(
-            `❌ Method ${method.name} calculation not eligible: ${calculation.reason}`
+            `❌ Not eligible: ${calculationResult?.reason || 'Unknown reason'}`
           );
         }
       } catch (methodError) {
-        console.error(
-          `❌ Error processing method ${method.name}:`,
-          methodError
-        );
+        console.error(`❌ Error processing ${method.name}:`, methodError);
         continue;
       }
     }
 
-    console.log(
-      `\n📊 Final result: ${availableMethods.length} methods available`
-    );
+    console.log(`\n📊 Final: ${availableMethods.length} methods available`);
 
-    // Sort methods by cost (free first, then by price)
+    // Sort methods: free first, then by price
     availableMethods.sort((a, b) => {
       if (a.cost === 0 && b.cost !== 0) return -1;
       if (a.cost !== 0 && b.cost === 0) return 1;
@@ -1885,12 +1927,13 @@ export const calculateCheckoutShipping = async (request, response) => {
     return response.json({
       message: 'Shipping methods calculated successfully',
       data: {
-        zone: {
-          _id: zone._id,
-          name: zone.name,
-          code: zone.code,
-          coverage: 'full',
-        },
+        zone: zone
+          ? {
+              _id: zone._id,
+              name: zone.name,
+              code: zone.code,
+            }
+          : null,
         methods: availableMethods,
         calculatedWeight,
         address: {
@@ -1899,14 +1942,18 @@ export const calculateCheckoutShipping = async (request, response) => {
           lga: address.lga,
           country: address.country,
         },
-        productCategories: categoryIds.length,
-        applicableProducts: products.length,
+        debug: {
+          hasZone: !!zone,
+          productCount: products.length,
+          categoryCount: categoryIds.length,
+          totalMethodsChecked: shippingMethods.length,
+        },
       },
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('❌ Error calculating shipping:', error);
+    console.error('❌ Calculate shipping error:', error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
