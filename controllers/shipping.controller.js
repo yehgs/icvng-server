@@ -229,54 +229,7 @@ export const createShippingZone = async (request, response) => {
   }
 };
 
-export const getShippingZones = async (request, response) => {
-  try {
-    const { page = 1, limit = 10, search, isActive } = request.query;
-
-    const query = {};
-    if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { code: { $regex: search, $options: 'i' } },
-        { 'states.name': { $regex: search, $options: 'i' } },
-      ];
-    }
-    if (isActive !== undefined) {
-      query.isActive = isActive === 'true';
-    }
-
-    const skip = (page - 1) * limit;
-
-    const [zones, totalCount] = await Promise.all([
-      ShippingZoneModel.find(query)
-        .populate('createdBy', 'name email')
-        .populate('updatedBy', 'name email')
-        .sort({ sortOrder: 1, name: 1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      ShippingZoneModel.countDocuments(query),
-    ]);
-
-    return response.json({
-      message: 'Shipping zones retrieved successfully',
-      data: zones,
-      totalCount,
-      totalPages: Math.ceil(totalCount / limit),
-      currentPage: parseInt(page),
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-};
-
 // controllers/shipping.controller.js - updateShippingZone
-// controllers/shipping.controller.js - Fixed updateShippingZone
 export const updateShippingZone = async (request, response) => {
   try {
     const userId = request.user._id;
@@ -945,56 +898,6 @@ export const createShippingMethod = async (request, response) => {
 
     return response.status(500).json({
       message: error.message || 'Failed to create shipping method',
-      error: true,
-      success: false,
-    });
-  }
-};
-
-export const getShippingMethods = async (request, response) => {
-  try {
-    const { page = 1, limit = 10, search, type, isActive } = request.query;
-
-    const query = {};
-    if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { code: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-      ];
-    }
-    if (type) {
-      query.type = type;
-    }
-    if (isActive !== undefined) {
-      query.isActive = isActive === 'true';
-    }
-
-    const skip = (page - 1) * limit;
-
-    const [methods, totalCount] = await Promise.all([
-      ShippingMethodModel.find(query)
-        .populate('createdBy', 'name email')
-        .populate('updatedBy', 'name email')
-        .sort({ sortOrder: 1, name: 1 })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .lean(),
-      ShippingMethodModel.countDocuments(query),
-    ]);
-
-    return response.json({
-      message: 'Shipping methods retrieved successfully',
-      data: methods,
-      totalCount,
-      totalPages: Math.ceil(totalCount / limit),
-      currentPage: parseInt(page),
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
       error: true,
       success: false,
     });
@@ -2292,68 +2195,6 @@ export const getTrackingByNumber = async (request, response) => {
   }
 };
 
-export const getAllTrackings = async (request, response) => {
-  try {
-    const {
-      page = 1,
-      limit = 10,
-      status,
-      carrier,
-      priority,
-      overdue,
-      search,
-    } = request.query;
-
-    const query = {};
-
-    if (status) query.status = status;
-    if (carrier) query['carrier.code'] = carrier.toUpperCase();
-    if (priority) query.priority = priority;
-
-    if (overdue === 'true') {
-      query.estimatedDelivery = { $lt: new Date() };
-      query.status = { $nin: ['DELIVERED', 'RETURNED', 'LOST', 'CANCELLED'] };
-    }
-
-    if (search) {
-      query.$or = [
-        { trackingNumber: { $regex: search, $options: 'i' } },
-        { 'carrier.name': { $regex: search, $options: 'i' } },
-        { 'recipientInfo.name': { $regex: search, $options: 'i' } },
-      ];
-    }
-
-    const skip = (page - 1) * limit;
-
-    const [trackings, totalCount] = await Promise.all([
-      ShippingTrackingModel.find(query)
-        .populate('orderId', 'orderId payment_status totalAmt')
-        .populate('shippingMethod', 'name type')
-        .populate('createdBy', 'name email')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      ShippingTrackingModel.countDocuments(query),
-    ]);
-
-    return response.json({
-      message: 'Trackings retrieved successfully',
-      data: trackings,
-      totalCount,
-      totalPages: Math.ceil(totalCount / limit),
-      currentPage: parseInt(page),
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-};
-
 export const getTrackingStats = async (request, response) => {
   try {
     const stats = await ShippingTrackingModel.aggregate([
@@ -2473,57 +2314,6 @@ export const getPublicShippingMethods = async (request, response) => {
   }
 };
 
-export const getOrdersReadyForShipping = async (request, response) => {
-  try {
-    const { page = 1, limit = 20, search } = request.query;
-
-    const query = {
-      payment_status: 'PAID',
-      order_status: { $in: ['CONFIRMED', 'PROCESSING'] },
-    };
-
-    // Add search functionality
-    if (search) {
-      query.$or = [
-        { orderId: { $regex: search, $options: 'i' } },
-        { 'userId.name': { $regex: search, $options: 'i' } },
-        { 'userId.email': { $regex: search, $options: 'i' } },
-      ];
-    }
-
-    const skip = (page - 1) * limit;
-
-    const [orders, totalCount] = await Promise.all([
-      OrderModel.find(query)
-        .populate('delivery_address')
-        .populate('userId', 'name email mobile')
-        .populate('productId', 'name image weight')
-        .populate('shippingMethod', 'name type')
-        .populate('shippingZone', 'name')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      OrderModel.countDocuments(query),
-    ]);
-
-    return response.json({
-      message: 'Orders ready for shipping retrieved successfully',
-      data: orders,
-      totalCount,
-      totalPages: Math.ceil(totalCount / limit),
-      currentPage: parseInt(page),
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-};
-
 export const getShippingDashboardStats = async (request, response) => {
   try {
     const today = new Date();
@@ -2576,6 +2366,234 @@ export const getShippingDashboardStats = async (request, response) => {
         totalZones,
         totalMethods,
       },
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+export const getShippingZones = async (request, response) => {
+  try {
+    const { page = 1, limit = 10, search, isActive } = request.query;
+
+    const query = {};
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { code: { $regex: search, $options: 'i' } },
+        { 'states.name': { $regex: search, $options: 'i' } },
+      ];
+    }
+    if (isActive !== undefined) {
+      query.isActive = isActive === 'true';
+    }
+
+    // Convert to integers and set max limit
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit))); // Max 50 per page
+    const skip = (pageNum - 1) * limitNum;
+
+    const [zones, totalCount] = await Promise.all([
+      ShippingZoneModel.find(query)
+        .populate('createdBy', 'name email')
+        .populate('updatedBy', 'name email')
+        .sort({ sortOrder: 1, name: 1 })
+        .skip(skip)
+        .limit(limitNum),
+      ShippingZoneModel.countDocuments(query),
+    ]);
+
+    return response.json({
+      message: 'Shipping zones retrieved successfully',
+      data: zones,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limitNum),
+      currentPage: pageNum,
+      itemsPerPage: limitNum,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Update getShippingMethods function
+export const getShippingMethods = async (request, response) => {
+  try {
+    const { page = 1, limit = 10, search, type, isActive } = request.query;
+
+    const query = {};
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { code: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+      ];
+    }
+    if (type) {
+      query.type = type;
+    }
+    if (isActive !== undefined) {
+      query.isActive = isActive === 'true';
+    }
+
+    // Convert to integers and set max limit
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit))); // Max 50 per page
+    const skip = (pageNum - 1) * limitNum;
+
+    const [methods, totalCount] = await Promise.all([
+      ShippingMethodModel.find(query)
+        .populate('createdBy', 'name email')
+        .populate('updatedBy', 'name email')
+        .sort({ sortOrder: 1, name: 1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      ShippingMethodModel.countDocuments(query),
+    ]);
+
+    return response.json({
+      message: 'Shipping methods retrieved successfully',
+      data: methods,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limitNum),
+      currentPage: pageNum,
+      itemsPerPage: limitNum,
+      error: false,
+      success: false,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Update getAllTrackings function (bonus - for tracking page)
+export const getAllTrackings = async (request, response) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      status,
+      carrier,
+      priority,
+      overdue,
+      search,
+    } = request.query;
+
+    const query = {};
+
+    if (status) query.status = status;
+    if (carrier) query['carrier.code'] = carrier.toUpperCase();
+    if (priority) query.priority = priority;
+
+    if (overdue === 'true') {
+      query.estimatedDelivery = { $lt: new Date() };
+      query.status = { $nin: ['DELIVERED', 'RETURNED', 'LOST', 'CANCELLED'] };
+    }
+
+    if (search) {
+      query.$or = [
+        { trackingNumber: { $regex: search, $options: 'i' } },
+        { 'carrier.name': { $regex: search, $options: 'i' } },
+        { 'recipientInfo.name': { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    // Convert to integers and set max limit
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit))); // Max 50 per page
+    const skip = (pageNum - 1) * limitNum;
+
+    const [trackings, totalCount] = await Promise.all([
+      ShippingTrackingModel.find(query)
+        .populate('orderId', 'orderId payment_status totalAmt')
+        .populate('shippingMethod', 'name type')
+        .populate('createdBy', 'name email')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum),
+      ShippingTrackingModel.countDocuments(query),
+    ]);
+
+    return response.json({
+      message: 'Trackings retrieved successfully',
+      data: trackings,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limitNum),
+      currentPage: pageNum,
+      itemsPerPage: limitNum,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Update getOrdersReadyForShipping function (bonus - for shipment creation)
+export const getOrdersReadyForShipping = async (request, response) => {
+  try {
+    const { page = 1, limit = 20, search } = request.query;
+
+    const query = {
+      payment_status: 'PAID',
+      order_status: { $in: ['CONFIRMED', 'PROCESSING'] },
+    };
+
+    // Add search functionality
+    if (search) {
+      query.$or = [
+        { orderId: { $regex: search, $options: 'i' } },
+        { 'userId.name': { $regex: search, $options: 'i' } },
+        { 'userId.email': { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    // Convert to integers and set max limit
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit))); // Max 50 per page
+    const skip = (pageNum - 1) * limitNum;
+
+    const [orders, totalCount] = await Promise.all([
+      OrderModel.find(query)
+        .populate('delivery_address')
+        .populate('userId', 'name email mobile')
+        .populate('productId', 'name image weight')
+        .populate('shippingMethod', 'name type')
+        .populate('shippingZone', 'name')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum),
+      OrderModel.countDocuments(query),
+    ]);
+
+    return response.json({
+      message: 'Orders ready for shipping retrieved successfully',
+      data: orders,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limitNum),
+      currentPage: pageNum,
+      itemsPerPage: limitNum,
       error: false,
       success: true,
     });
