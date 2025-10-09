@@ -2314,120 +2314,6 @@ export const getPublicShippingMethods = async (request, response) => {
   }
 };
 
-export const getShippingDashboardStats = async (request, response) => {
-  try {
-    const today = new Date();
-    const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(today.setHours(23, 59, 59, 999));
-
-    const [
-      readyForShipping,
-      inTransit,
-      delivered,
-      overdue,
-      todayShipments,
-      todayDeliveries,
-      totalZones,
-      totalMethods,
-    ] = await Promise.all([
-      OrderModel.countDocuments({
-        payment_status: 'PAID',
-        order_status: { $in: ['CONFIRMED', 'PROCESSING'] },
-      }),
-      ShippingTrackingModel.countDocuments({
-        status: { $in: ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY'] },
-      }),
-      ShippingTrackingModel.countDocuments({
-        status: 'DELIVERED',
-      }),
-      ShippingTrackingModel.countDocuments({
-        estimatedDelivery: { $lt: new Date() },
-        status: { $nin: ['DELIVERED', 'RETURNED', 'LOST', 'CANCELLED'] },
-      }),
-      ShippingTrackingModel.countDocuments({
-        createdAt: { $gte: startOfDay, $lte: endOfDay },
-      }),
-      ShippingTrackingModel.countDocuments({
-        actualDelivery: { $gte: startOfDay, $lte: endOfDay },
-      }),
-      ShippingZoneModel.countDocuments({ isActive: true }),
-      ShippingMethodModel.countDocuments({ isActive: true }),
-    ]);
-
-    return response.json({
-      message: 'Shipping dashboard stats retrieved successfully',
-      data: {
-        readyForShipping,
-        inTransit,
-        delivered,
-        overdue,
-        todayShipments,
-        todayDeliveries,
-        totalZones,
-        totalMethods,
-      },
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-};
-
-export const getShippingZones = async (request, response) => {
-  try {
-    const { page = 1, limit = 10, search, isActive } = request.query;
-
-    const query = {};
-    if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { code: { $regex: search, $options: 'i' } },
-        { 'states.name': { $regex: search, $options: 'i' } },
-      ];
-    }
-    if (isActive !== undefined) {
-      query.isActive = isActive === 'true';
-    }
-
-    // Convert to integers and set max limit
-    const pageNum = Math.max(1, parseInt(page));
-    const limitNum = Math.min(50, Math.max(1, parseInt(limit))); // Max 50 per page
-    const skip = (pageNum - 1) * limitNum;
-
-    const [zones, totalCount] = await Promise.all([
-      ShippingZoneModel.find(query)
-        .populate('createdBy', 'name email')
-        .populate('updatedBy', 'name email')
-        .sort({ sortOrder: 1, name: 1 })
-        .skip(skip)
-        .limit(limitNum),
-      ShippingZoneModel.countDocuments(query),
-    ]);
-
-    return response.json({
-      message: 'Shipping zones retrieved successfully',
-      data: zones,
-      totalCount,
-      totalPages: Math.ceil(totalCount / limitNum),
-      currentPage: pageNum,
-      itemsPerPage: limitNum,
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-};
-
 // Update getShippingMethods function
 export const getShippingMethods = async (request, response) => {
   try {
@@ -2472,7 +2358,7 @@ export const getShippingMethods = async (request, response) => {
       currentPage: pageNum,
       itemsPerPage: limitNum,
       error: false,
-      success: false,
+      success: true, // FIXED: was false before
     });
   } catch (error) {
     return response.status(500).json({
@@ -2598,6 +2484,229 @@ export const getOrdersReadyForShipping = async (request, response) => {
       success: true,
     });
   } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// controllers/shipping.controller.js - ADD THIS NEW FUNCTION
+
+// ===== NEW: GET ALL ZONES (NO PAGINATION) =====
+export const getAllShippingZones = async (request, response) => {
+  try {
+    const { isActive, search } = request.query;
+
+    const query = {};
+
+    // Filter by active status if provided
+    if (isActive !== undefined) {
+      query.isActive = isActive === 'true';
+    }
+
+    // Add search functionality
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { code: { $regex: search, $options: 'i' } },
+        { 'states.name': { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    // Fetch ALL zones without pagination
+    const zones = await ShippingZoneModel.find(query)
+      .populate('createdBy', 'name email')
+      .populate('updatedBy', 'name email')
+      .sort({ sortOrder: 1, name: 1 })
+      .lean(); // Use lean() for better performance
+
+    // Calculate total LGAs covered for each zone
+    const zonesWithLGACount = zones.map((zone) => {
+      let totalLgasCovered = 0;
+
+      zone.states.forEach((state) => {
+        if (state.coverage_type === 'all') {
+          totalLgasCovered += state.available_lgas?.length || 0;
+        } else if (state.coverage_type === 'specific') {
+          totalLgasCovered += state.covered_lgas?.length || 0;
+        }
+      });
+
+      return {
+        ...zone,
+        total_lgas_covered: totalLgasCovered,
+      };
+    });
+
+    console.log(`✅ Fetched ${zonesWithLGACount.length} zones (no pagination)`);
+
+    return response.json({
+      message: 'All shipping zones retrieved successfully',
+      data: zonesWithLGACount,
+      totalCount: zonesWithLGACount.length,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Get all shipping zones error:', error);
+    return response.status(500).json({
+      message: error.message || 'Failed to retrieve shipping zones',
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// ===== FIXED: GET SHIPPING ZONES (WITH PAGINATION) =====
+export const getShippingZones = async (request, response) => {
+  try {
+    const { page = 1, limit = 10, search, isActive } = request.query;
+
+    const query = {};
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { code: { $regex: search, $options: 'i' } },
+        { 'states.name': { $regex: search, $options: 'i' } },
+      ];
+    }
+    if (isActive !== undefined) {
+      query.isActive = isActive === 'true';
+    }
+
+    // Convert to integers and set max limit
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
+    const [zones, totalCount] = await Promise.all([
+      ShippingZoneModel.find(query)
+        .populate('createdBy', 'name email')
+        .populate('updatedBy', 'name email')
+        .sort({ sortOrder: 1, name: 1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      ShippingZoneModel.countDocuments(query),
+    ]);
+
+    // Calculate total LGAs covered for each zone
+    const zonesWithLGACount = zones.map((zone) => {
+      let totalLgasCovered = 0;
+
+      zone.states.forEach((state) => {
+        if (state.coverage_type === 'all') {
+          totalLgasCovered += state.available_lgas?.length || 0;
+        } else if (state.coverage_type === 'specific') {
+          totalLgasCovered += state.covered_lgas?.length || 0;
+        }
+      });
+
+      return {
+        ...zone,
+        total_lgas_covered: totalLgasCovered,
+      };
+    });
+
+    console.log(
+      `✅ Fetched ${
+        zonesWithLGACount.length
+      } zones (page ${pageNum}/${Math.ceil(totalCount / limitNum)})`
+    );
+
+    return response.json({
+      message: 'Shipping zones retrieved successfully',
+      data: zonesWithLGACount,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limitNum),
+      currentPage: pageNum,
+      itemsPerPage: limitNum,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Get shipping zones error:', error);
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// ===== FIXED: GET SHIPPING DASHBOARD STATS =====
+export const getShippingDashboardStats = async (request, response) => {
+  try {
+    const today = new Date();
+    const startOfDay = new Date(today.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(today.setHours(23, 59, 59, 999));
+
+    const [
+      readyForShipping,
+      inTransit,
+      delivered,
+      overdue,
+      todayShipments,
+      todayDeliveries,
+      totalZones,
+      activeZones,
+      totalMethods,
+      activeMethods,
+    ] = await Promise.all([
+      OrderModel.countDocuments({
+        payment_status: 'PAID',
+        order_status: { $in: ['CONFIRMED', 'PROCESSING'] },
+      }),
+      ShippingTrackingModel.countDocuments({
+        status: { $in: ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY'] },
+      }),
+      ShippingTrackingModel.countDocuments({
+        status: 'DELIVERED',
+      }),
+      ShippingTrackingModel.countDocuments({
+        estimatedDelivery: { $lt: new Date() },
+        status: { $nin: ['DELIVERED', 'RETURNED', 'LOST', 'CANCELLED'] },
+      }),
+      ShippingTrackingModel.countDocuments({
+        createdAt: { $gte: startOfDay, $lte: endOfDay },
+      }),
+      ShippingTrackingModel.countDocuments({
+        actualDelivery: { $gte: startOfDay, $lte: endOfDay },
+      }),
+      ShippingZoneModel.countDocuments({}), // Total zones
+      ShippingZoneModel.countDocuments({ isActive: true }), // Active zones only
+      ShippingMethodModel.countDocuments({}), // Total methods
+      ShippingMethodModel.countDocuments({ isActive: true }), // Active methods only
+    ]);
+
+    console.log('📊 Dashboard Stats:', {
+      totalZones,
+      activeZones,
+      totalMethods,
+      activeMethods,
+    });
+
+    return response.json({
+      message: 'Shipping dashboard stats retrieved successfully',
+      data: {
+        readyForShipping,
+        inTransit,
+        delivered,
+        overdue,
+        todayShipments,
+        todayDeliveries,
+        totalZones,
+        activeZones, // NEW: Separate active zones count
+        totalMethods,
+        activeMethods, // NEW: Separate active methods count
+      },
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Get dashboard stats error:', error);
     return response.status(500).json({
       message: error.message || error,
       error: true,

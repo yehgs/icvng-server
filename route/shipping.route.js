@@ -1,10 +1,11 @@
-// routes/shipping.route.js - FIXED AND COMPLETE
+// routes/shipping.route.js - COMPLETE WITH FIX
 import { Router } from 'express';
 import auth from '../middleware/auth.js';
 import { requireRole } from '../middleware/roleAuth.js';
 import {
   createShippingZone,
   getShippingZones,
+  getAllShippingZones, // NEW: Get all zones without pagination
   updateShippingZone,
   getZoneDependencies,
   deleteShippingZone,
@@ -47,6 +48,13 @@ shippingRouter.get(
 );
 
 // Shipping Zones
+shippingRouter.get(
+  '/zones/all',
+  auth,
+  requireRole(logisticsRoles),
+  getAllShippingZones
+);
+
 shippingRouter.get(
   '/zones',
   auth,
