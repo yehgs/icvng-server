@@ -1,4 +1,4 @@
-// controllers/order.controller.js - Enhanced with auto tracking generation
+// controllers/order.controller.js - Updated with Paystack integration
 import OrderModel from '../models/order.model.js';
 import CartProductModel from '../models/cartproduct.model.js';
 import UserModel from '../models/user.model.js';
@@ -8,6 +8,7 @@ import ShippingMethodModel from '../models/shipping-method.model.js';
 import ShippingTrackingModel from '../models/shipping-tracking.model.js';
 import mongoose from 'mongoose';
 import Stripe from '../config/stripe.js';
+import crypto from 'crypto';
 import {
   sendOrderConfirmationEmail,
   sendShippingNotificationEmail,
@@ -39,7 +40,7 @@ const convertCurrency = async (amount, fromCurrency, toCurrency) => {
     if (rate) {
       return amount * rate;
     }
-    return amount; // Return original if no rate found
+    return amount;
   } catch (error) {
     console.error('Currency conversion error:', error);
     return amount;
@@ -62,7 +63,6 @@ const getProductPrice = (product, priceOption = 'regular') => {
 // Helper function to create tracking automatically
 const createTrackingForOrder = async (order, userId) => {
   try {
-    // Check if tracking already exists
     const existingTracking = await ShippingTrackingModel.findOne({
       orderId: order._id,
     });
@@ -95,7 +95,7 @@ const createTrackingForOrder = async (order, userId) => {
         email: order.userId ? order.userId.email : '',
       },
       packageInfo: {
-        weight: 1, // Default weight
+        weight: 1,
         fragile: false,
         insured: order.totalAmt > 50000,
         insuranceValue: order.totalAmt > 50000 ? order.totalAmt : 0,
@@ -109,7 +109,6 @@ const createTrackingForOrder = async (order, userId) => {
     const tracking = new ShippingTrackingModel(trackingData);
     const savedTracking = await tracking.save();
 
-    // Add initial tracking event
     await savedTracking.addTrackingEvent(
       {
         status: 'PENDING',
@@ -124,7 +123,6 @@ const createTrackingForOrder = async (order, userId) => {
       userId
     );
 
-    // Update order with tracking number
     await OrderModel.findByIdAndUpdate(order._id, {
       tracking_number: savedTracking.trackingNumber,
     });
@@ -136,6 +134,7 @@ const createTrackingForOrder = async (order, userId) => {
   }
 };
 
+// Direct Bank Transfer Controller (unchanged)
 export async function DirectBankTransferOrderController(request, response) {
   try {
     const userId = request.userId;
@@ -150,7 +149,6 @@ export async function DirectBankTransferOrderController(request, response) {
       bankDetails,
     } = request.body;
 
-    // Bank transfer only available for NGN
     if (currency !== 'NGN') {
       return response.status(400).json({
         message: 'Direct Bank Transfer is only available for NGN currency',
@@ -159,7 +157,6 @@ export async function DirectBankTransferOrderController(request, response) {
       });
     }
 
-    // Validate shipping method if provided
     let shippingMethod = null;
     if (shippingMethodId) {
       shippingMethod = await ShippingMethodModel.findById(shippingMethodId);
@@ -172,7 +169,6 @@ export async function DirectBankTransferOrderController(request, response) {
       }
     }
 
-    // Only validate productAvailability
     for (const item of list_items) {
       const productData = item.productId || item;
       if (!productData.productAvailability) {
@@ -184,7 +180,6 @@ export async function DirectBankTransferOrderController(request, response) {
       }
     }
 
-    // Get shipping zone for the address
     let shippingZone = null;
     let address = null;
     if (addressId) {
@@ -197,7 +192,6 @@ export async function DirectBankTransferOrderController(request, response) {
       }
     }
 
-    // Create order items with shipping information
     const orderItems = list_items.map((item) => {
       const productData = item.productId || item;
       const priceOption = item.priceOption || 'regular';
@@ -223,10 +217,9 @@ export async function DirectBankTransferOrderController(request, response) {
         currency: currency,
         quantity: item.quantity,
         unitPrice: finalPrice,
-        // Add shipping information
         shippingMethod: shippingMethodId,
         shippingZone: shippingZone?._id,
-        shipping_cost: shippingCost / list_items.length, // Distribute shipping cost
+        shipping_cost: shippingCost / list_items.length,
         shipping_details: shippingMethod
           ? {
               method_name: shippingMethod.name,
@@ -237,21 +230,17 @@ export async function DirectBankTransferOrderController(request, response) {
               },
             }
           : {},
-        // Store bank transfer details
         bank_transfer_details: bankDetails,
         admin_notes: `Bank Transfer - Reference: ${bankDetails.reference}`,
       };
     });
 
-    // Save orders
     const orders = await OrderModel.insertMany(orderItems);
 
-    // Create tracking for each order automatically
     for (const order of orders) {
       await createTrackingForOrder(order, userId);
     }
 
-    // Send order confirmation email
     try {
       const user = await UserModel.findById(userId);
       await sendOrderConfirmationEmail({
@@ -263,7 +252,6 @@ export async function DirectBankTransferOrderController(request, response) {
         trackingNumber: orders[0].tracking_number,
       });
 
-      // Send notification to team
       await sendOrderNotificationToTeam({
         user,
         order: orders[0],
@@ -274,7 +262,6 @@ export async function DirectBankTransferOrderController(request, response) {
       console.error('Email sending failed:', emailError);
     }
 
-    // Clear cart
     await CartProductModel.deleteMany({ userId: userId });
     await UserModel.updateOne({ _id: userId }, { shopping_cart: [] });
 
@@ -295,8 +282,8 @@ export async function DirectBankTransferOrderController(request, response) {
   }
 }
 
-// Updated Stripe/Flutterwave payment handlers to include automatic tracking
-export async function paymentController(request, response) {
+// ===== PAYSTACK PAYMENT CONTROLLER =====
+export async function paystackPaymentController(request, response) {
   try {
     const userId = request.userId;
     const {
@@ -307,12 +294,359 @@ export async function paymentController(request, response) {
       shippingCost = 0,
       shippingMethodId,
       currency = 'NGN',
-      paymentMethod = 'stripe',
     } = request.body;
+
+    // Paystack only supports NGN by default
+    if (currency !== 'NGN') {
+      return response.status(400).json({
+        message: 'Paystack is only available for NGN currency',
+        error: true,
+        success: false,
+      });
+    }
 
     const user = await UserModel.findById(userId);
 
-    // Validate shipping method if provided
+    // Validate products
+    for (const item of list_items) {
+      const productData = item.productId || item;
+      if (!productData.productAvailability) {
+        return response.status(400).json({
+          message: `Product ${productData.name} is not available for production`,
+          error: true,
+          success: false,
+        });
+      }
+    }
+
+    // Generate transaction reference
+    const txRef = `PSK-${Date.now()}-${userId}`;
+
+    // Convert amount to kobo (Paystack uses smallest currency unit)
+    const amountInKobo = Math.round(totalAmt * 100);
+
+    // Prepare Paystack payment data
+    const paymentData = {
+      email: user.email,
+      amount: amountInKobo,
+      reference: txRef,
+      currency: 'NGN',
+      callback_url: `${process.env.FRONTEND_URL}/payment/paystack/callback`,
+      metadata: {
+        userId: userId.toString(),
+        addressId: addressId,
+        shippingMethodId: shippingMethodId || '',
+        shippingCost: shippingCost,
+        itemCount: list_items.length,
+        custom_fields: [
+          {
+            display_name: 'Customer Name',
+            variable_name: 'customer_name',
+            value: user.name || user.email,
+          },
+          {
+            display_name: 'Items Count',
+            variable_name: 'items_count',
+            value: list_items.length.toString(),
+          },
+        ],
+      },
+      channels: ['card', 'bank', 'ussd', 'qr', 'mobile_money', 'bank_transfer'],
+    };
+
+    // Initialize Paystack payment
+    const paystackResponse = await fetch(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(paymentData),
+      }
+    );
+
+    const paystackData = await paystackResponse.json();
+
+    if (paystackData.status === true) {
+      // Store transaction reference for webhook verification
+      await UserModel.findByIdAndUpdate(userId, {
+        $push: {
+          pending_payments: {
+            reference: txRef,
+            amount: totalAmt,
+            items: list_items,
+            addressId: addressId,
+            shippingMethodId: shippingMethodId,
+            shippingCost: shippingCost,
+            createdAt: new Date(),
+          },
+        },
+      });
+
+      return response.json({
+        success: true,
+        paymentUrl: paystackData.data.authorization_url,
+        accessCode: paystackData.data.access_code,
+        reference: paystackData.data.reference,
+        message: 'Payment link generated successfully',
+      });
+    } else {
+      throw new Error(paystackData.message || 'Failed to create payment link');
+    }
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+}
+
+// ===== PAYSTACK WEBHOOK HANDLER =====
+export async function paystackWebhookController(request, response) {
+  try {
+    // Verify webhook signature
+    const hash = crypto
+      .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+      .update(JSON.stringify(request.body))
+      .digest('hex');
+
+    if (hash !== request.headers['x-paystack-signature']) {
+      return response.status(401).json({
+        message: 'Unauthorized webhook',
+        error: true,
+      });
+    }
+
+    const { event, data } = request.body;
+
+    if (event === 'charge.success') {
+      const { reference, amount, currency, metadata, customer } = data;
+
+      // Find user from metadata
+      const userId = metadata.userId;
+      const user = await UserModel.findById(userId);
+
+      if (!user) {
+        console.error('User not found for Paystack payment:', userId);
+        return response.status(404).json({
+          message: 'User not found',
+          error: true,
+        });
+      }
+
+      // Get pending payment details
+      const pendingPayment = user.pending_payments?.find(
+        (p) => p.reference === reference
+      );
+
+      if (!pendingPayment) {
+        console.error('Pending payment not found:', reference);
+        return response.status(404).json({
+          message: 'Payment reference not found',
+          error: true,
+        });
+      }
+
+      // Get cart items
+      const cartItems = await CartProductModel.find({
+        userId: userId,
+      }).populate({
+        path: 'productId',
+        populate: {
+          path: 'category',
+          select: 'name slug',
+        },
+      });
+
+      if (cartItems.length === 0) {
+        return response.status(400).json({
+          message: 'No cart items found',
+          error: true,
+        });
+      }
+
+      // Validate products
+      for (const item of cartItems) {
+        if (!item.productId || !item.productId.productAvailability) {
+          return response.status(400).json({
+            message: `Product ${
+              item.productId?.name || 'Unknown'
+            } is not available for production`,
+            error: true,
+          });
+        }
+      }
+
+      // Get shipping information
+      let shippingZone = null;
+      let shippingMethod = null;
+
+      if (metadata.addressId) {
+        const address = await mongoose
+          .model('address')
+          .findById(metadata.addressId);
+        if (address) {
+          shippingZone = await ShippingZoneModel.findZoneByCity(
+            address.city,
+            address.state
+          );
+        }
+      }
+
+      if (metadata.shippingMethodId) {
+        shippingMethod = await ShippingMethodModel.findById(
+          metadata.shippingMethodId
+        );
+      }
+
+      const shippingCostPerItem =
+        parseFloat(metadata.shippingCost || '0') / cartItems.length;
+
+      // Create order items
+      const orderItems = cartItems.map((item) => {
+        const priceOption = item.priceOption || 'regular';
+        const productPrice = getProductPrice(item.productId, priceOption);
+        const finalPrice = pricewithDiscount(
+          productPrice,
+          item.productId.discount
+        );
+
+        return {
+          userId: userId,
+          orderId: `PSK-${new mongoose.Types.ObjectId()}`,
+          productId: item.productId._id,
+          product_details: {
+            name: item.productId.name,
+            image: item.productId.image,
+            priceOption: priceOption,
+            deliveryTime: priceOption,
+          },
+          paymentId: reference,
+          payment_status: 'PAID',
+          payment_method: 'PAYSTACK',
+          delivery_address: metadata.addressId,
+          subTotalAmt: finalPrice * item.quantity,
+          totalAmt: finalPrice * item.quantity + shippingCostPerItem,
+          currency: currency.toUpperCase(),
+          quantity: item.quantity,
+          unitPrice: finalPrice,
+          shippingMethod: metadata.shippingMethodId,
+          shippingZone: shippingZone?._id,
+          shipping_cost: shippingCostPerItem,
+          shipping_details: shippingMethod
+            ? {
+                method_name: shippingMethod.name,
+                method_type: shippingMethod.type,
+                carrier: {
+                  name: 'I-Coffee Logistics',
+                  code: 'ICF',
+                },
+                estimated_delivery_days: {
+                  min: shippingMethod.estimatedDelivery?.minDays || 1,
+                  max: shippingMethod.estimatedDelivery?.maxDays || 7,
+                },
+                weight: item.productId.weight || 1,
+                dimensions: {
+                  length: 20,
+                  width: 15,
+                  height: 10,
+                  unit: 'cm',
+                },
+              }
+            : {},
+        };
+      });
+
+      // Save orders
+      const orders = await OrderModel.insertMany(orderItems);
+
+      // Create tracking for each order
+      for (const order of orders) {
+        try {
+          await createTrackingForOrder(order, userId);
+
+          // Send confirmation email
+          const address = await mongoose
+            .model('address')
+            .findById(metadata.addressId);
+
+          await sendOrderConfirmationEmail({
+            user,
+            order,
+            items: [order],
+            shippingAddress: address,
+            shippingMethod,
+            trackingNumber: order.tracking_number,
+          });
+
+          await sendOrderNotificationToTeam({
+            user,
+            order,
+            items: [order],
+            orderType: 'Paystack Payment',
+          });
+        } catch (trackingError) {
+          console.error(
+            'Failed to create tracking for order:',
+            order._id,
+            trackingError
+          );
+        }
+      }
+
+      // Clear cart and remove pending payment
+      await CartProductModel.deleteMany({ userId: userId });
+      await UserModel.updateOne(
+        { _id: userId },
+        {
+          shopping_cart: [],
+          $pull: { pending_payments: { reference: reference } },
+        }
+      );
+
+      console.log(`Paystack payment completed for user ${userId}`);
+    }
+
+    return response.json({ received: true });
+  } catch (error) {
+    console.error('Paystack webhook error:', error);
+    return response.status(500).json({
+      message: error.message,
+      error: true,
+    });
+  }
+}
+
+// ===== STRIPE PAYMENT CONTROLLER (Enhanced) =====
+export async function stripePaymentController(request, response) {
+  try {
+    const userId = request.userId;
+    const {
+      list_items,
+      totalAmt,
+      addressId,
+      subTotalAmt,
+      shippingCost = 0,
+      shippingMethodId,
+      currency = 'USD',
+      paymentMethod = 'stripe',
+    } = request.body;
+
+    // Stripe is for non-NGN currencies
+    if (currency === 'NGN') {
+      return response.status(400).json({
+        message: 'Please use Paystack for NGN payments',
+        error: true,
+        success: false,
+      });
+    }
+
+    const user = await UserModel.findById(userId);
+
+    // Validate shipping method
     let shippingMethod = null;
     if (shippingMethodId) {
       shippingMethod = await ShippingMethodModel.findById(shippingMethodId);
@@ -325,7 +659,7 @@ export async function paymentController(request, response) {
       }
     }
 
-    // Only validate productAvailability
+    // Validate products
     for (const item of list_items) {
       const productData = item.productId || item;
       if (!productData.productAvailability) {
@@ -337,7 +671,7 @@ export async function paymentController(request, response) {
       }
     }
 
-    // Convert amounts to payment currency if needed
+    // Convert amounts to payment currency
     let paymentAmount = totalAmt;
     if (currency !== 'NGN') {
       paymentAmount = await convertCurrency(totalAmt, 'NGN', currency);
@@ -349,7 +683,6 @@ export async function paymentController(request, response) {
       const productPrice = getProductPrice(productData, priceOption);
       let finalPrice = pricewithDiscount(productPrice, productData.discount);
 
-      // Convert price to payment currency
       if (currency !== 'NGN') {
         finalPrice = finalPrice * (paymentAmount / totalAmt);
       }
@@ -375,7 +708,7 @@ export async function paymentController(request, response) {
       };
     });
 
-    // Add shipping as a line item if there's a cost
+    // Add shipping as line item
     if (shippingCost > 0) {
       let shippingAmount = shippingCost;
       if (currency !== 'NGN') {
@@ -432,7 +765,7 @@ export async function paymentController(request, response) {
   }
 }
 
-// Enhanced Stripe webhook handler with automatic tracking
+// Enhanced Stripe webhook handler (unchanged from original)
 export async function webhookStripe(request, response) {
   const event = request.body;
 
@@ -461,13 +794,11 @@ export async function webhookStripe(request, response) {
 
       const orders = await OrderModel.insertMany(orderProduct);
 
-      // Auto-create tracking for paid orders
       if (orders.length > 0) {
         for (const order of orders) {
           try {
             await createTrackingForOrder(order, userId);
 
-            // Send confirmation email
             const user = await UserModel.findById(userId);
             const address = await mongoose
               .model('address')
@@ -485,7 +816,6 @@ export async function webhookStripe(request, response) {
               trackingNumber: order.tracking_number,
             });
 
-            // Send notification to team
             await sendOrderNotificationToTeam({
               user,
               order,
@@ -502,7 +832,6 @@ export async function webhookStripe(request, response) {
         }
       }
 
-      // Clear cart
       if (userId) {
         await UserModel.findByIdAndUpdate(userId, { shopping_cart: [] });
         await CartProductModel.deleteMany({ userId: userId });
@@ -516,6 +845,7 @@ export async function webhookStripe(request, response) {
   return response.json({ received: true });
 }
 
+// Helper function for Stripe order items
 const getOrderProductItems = async ({
   lineItems,
   userId,
@@ -529,7 +859,6 @@ const getOrderProductItems = async ({
 }) => {
   const productList = [];
 
-  // Get shipping zone for the address
   let shippingZone = null;
   let shippingMethod = null;
 
@@ -551,19 +880,16 @@ const getOrderProductItems = async ({
     for (const item of lineItems.data) {
       const product = await Stripe.products.retrieve(item.price.product);
 
-      // Skip shipping line items
       if (product.metadata.type === 'shipping') continue;
 
       const priceOption = product.metadata.priceOption || 'regular';
       const productId = product.metadata.productId;
 
-      // Get full product details for shipping calculation
       const fullProduct = await mongoose
         .model('product')
         .findById(productId)
         .populate('category');
 
-      // Convert amount back to base currency if needed
       let amountInBaseCurrency = item.amount_total / 100;
       if (paymentCurrency !== originalCurrency) {
         amountInBaseCurrency = await convertCurrency(
@@ -598,8 +924,6 @@ const getOrderProductItems = async ({
         currency: originalCurrency,
         quantity: item.quantity,
         unitPrice: amountInBaseCurrency / item.quantity,
-
-        // Enhanced shipping information
         shippingMethod: shippingMethodId,
         shippingZone: shippingZone?._id,
         shipping_cost:
@@ -622,7 +946,7 @@ const getOrderProductItems = async ({
               },
               weight: fullProduct?.weight || 1,
               dimensions: {
-                length: 20, // Default dimensions in cm
+                length: 20,
                 width: 15,
                 height: 10,
                 unit: 'cm',
@@ -638,194 +962,7 @@ const getOrderProductItems = async ({
   return productList;
 };
 
-// Enhanced Flutterwave order creation with automatic tracking
-export async function flutterwaveWebhookController(request, response) {
-  try {
-    const signature = request.headers['verif-hash'];
-
-    if (!signature || signature !== process.env.FLUTTERWAVE_WEBHOOK_HASH) {
-      return response.status(401).json({
-        message: 'Unauthorized webhook',
-        error: true,
-      });
-    }
-
-    const payload = request.body;
-
-    if (
-      payload.event === 'charge.completed' &&
-      payload.data.status === 'successful'
-    ) {
-      const { tx_ref, amount, currency, customer, meta } = payload.data;
-
-      // Get cart items for this user with product details
-      const cartItems = await CartProductModel.find({
-        userId: meta.userId,
-      }).populate({
-        path: 'productId',
-        populate: {
-          path: 'category',
-          select: 'name slug',
-        },
-      });
-
-      if (cartItems.length === 0) {
-        return response.status(400).json({
-          message: 'No cart items found',
-          error: true,
-        });
-      }
-
-      // Enhanced product availability check
-      for (const item of cartItems) {
-        if (!item.productId || !item.productId.productAvailability) {
-          return response.status(400).json({
-            message: `Product ${
-              item.productId?.name || 'Unknown'
-            } is not available for production`,
-            error: true,
-          });
-        }
-      }
-
-      // Get shipping zone and method information
-      let shippingZone = null;
-      let shippingMethod = null;
-
-      if (meta.addressId) {
-        const address = await mongoose
-          .model('address')
-          .findById(meta.addressId);
-        if (address) {
-          shippingZone = await ShippingZoneModel.findZoneByCity(
-            address.city,
-            address.state
-          );
-        }
-      }
-
-      if (meta.shippingMethodId) {
-        shippingMethod = await ShippingMethodModel.findById(
-          meta.shippingMethodId
-        );
-      }
-
-      const shippingCostPerItem =
-        parseFloat(meta.shippingCost || '0') / cartItems.length;
-
-      // Create order items with enhanced shipping details
-      const orderItems = cartItems.map((item) => {
-        const priceOption = item.priceOption || 'regular';
-        const productPrice = getProductPrice(item.productId, priceOption);
-        const finalPrice = pricewithDiscount(
-          productPrice,
-          item.productId.discount
-        );
-
-        return {
-          userId: meta.userId,
-          orderId: `FLW-${new mongoose.Types.ObjectId()}`,
-          productId: item.productId._id,
-          product_details: {
-            name: item.productId.name,
-            image: item.productId.image,
-            priceOption: priceOption,
-            deliveryTime: priceOption,
-          },
-          paymentId: tx_ref,
-          payment_status: 'PAID',
-          payment_method: 'FLUTTERWAVE',
-          delivery_address: meta.addressId,
-          subTotalAmt: finalPrice * item.quantity,
-          totalAmt: finalPrice * item.quantity + shippingCostPerItem,
-          currency: currency,
-          quantity: item.quantity,
-          unitPrice: finalPrice,
-
-          // Enhanced shipping information
-          shippingMethod: meta.shippingMethodId,
-          shippingZone: shippingZone?._id,
-          shipping_cost: shippingCostPerItem,
-          shipping_details: shippingMethod
-            ? {
-                method_name: shippingMethod.name,
-                method_type: shippingMethod.type,
-                carrier: {
-                  name: 'I-Coffee Logistics',
-                  code: 'ICF',
-                },
-                estimated_delivery_days: {
-                  min: shippingMethod.estimatedDelivery?.minDays || 1,
-                  max: shippingMethod.estimatedDelivery?.maxDays || 7,
-                },
-                weight: item.productId.weight || 1,
-                dimensions: {
-                  length: 20,
-                  width: 15,
-                  height: 10,
-                  unit: 'cm',
-                },
-              }
-            : {},
-        };
-      });
-
-      // Save orders
-      const orders = await OrderModel.insertMany(orderItems);
-
-      // Auto-create tracking for paid orders
-      for (const order of orders) {
-        try {
-          await createTrackingForOrder(order, meta.userId);
-
-          // Send confirmation email
-          const user = await UserModel.findById(meta.userId);
-          const address = await mongoose
-            .model('address')
-            .findById(meta.addressId);
-
-          await sendOrderConfirmationEmail({
-            user,
-            order,
-            items: [order],
-            shippingAddress: address,
-            shippingMethod,
-            trackingNumber: order.tracking_number,
-          });
-
-          // Send notification to team
-          await sendOrderNotificationToTeam({
-            user,
-            order,
-            items: [order],
-            orderType: 'Flutterwave Payment',
-          });
-        } catch (trackingError) {
-          console.error(
-            'Failed to create tracking for order:',
-            order._id,
-            trackingError
-          );
-        }
-      }
-
-      // Clear cart
-      await CartProductModel.deleteMany({ userId: meta.userId });
-      await UserModel.updateOne({ _id: meta.userId }, { shopping_cart: [] });
-
-      console.log(`Flutterwave payment completed for user ${meta.userId}`);
-    }
-
-    return response.json({ received: true });
-  } catch (error) {
-    console.error('Flutterwave webhook error:', error);
-    return response.status(500).json({
-      message: error.message,
-      error: true,
-    });
-  }
-}
-
+// Other controllers remain unchanged
 export async function getOrderDetailsController(request, response) {
   try {
     const userId = request.userId;
@@ -851,104 +988,11 @@ export async function getOrderDetailsController(request, response) {
   }
 }
 
-// Flutterwave payment controller with enhanced tracking
-export async function flutterwavePaymentController(request, response) {
-  try {
-    const userId = request.userId;
-    const {
-      list_items,
-      totalAmt,
-      addressId,
-      subTotalAmt,
-      shippingCost = 0,
-      shippingMethodId,
-      currency = 'NGN',
-    } = request.body;
-
-    const user = await UserModel.findById(userId);
-
-    // Only validate productAvailability
-    for (const item of list_items) {
-      const productData = item.productId || item;
-      if (!productData.productAvailability) {
-        return response.status(400).json({
-          message: `Product ${productData.name} is not available for production`,
-          error: true,
-          success: false,
-        });
-      }
-    }
-
-    // Generate transaction reference
-    const txRef = `FLW-${Date.now()}-${userId}`;
-
-    // Prepare Flutterwave payment data
-    const paymentData = {
-      tx_ref: txRef,
-      amount: totalAmt,
-      currency: currency,
-      redirect_url: `${process.env.FRONTEND_URL}/payment/flutterwave/callback`,
-      customer: {
-        email: user.email,
-        name: user.name || user.email,
-        phonenumber: user.mobile || '',
-      },
-      customizations: {
-        title: 'Order Payment',
-        description: 'Payment for order items',
-        logo: process.env.LOGO_URL || '',
-      },
-      meta: {
-        userId: userId,
-        addressId: addressId,
-        shippingMethodId: shippingMethodId,
-        shippingCost: shippingCost,
-        itemCount: list_items.length,
-      },
-    };
-
-    // Create Flutterwave payment link
-    const flutterwaveResponse = await fetch(
-      'https://api.flutterwave.com/v3/payments',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(paymentData),
-      }
-    );
-
-    const flutterwaveData = await flutterwaveResponse.json();
-
-    if (flutterwaveData.status === 'success') {
-      return response.json({
-        success: true,
-        paymentUrl: flutterwaveData.data.link,
-        txRef: txRef,
-        message: 'Payment link generated successfully',
-      });
-    } else {
-      throw new Error(
-        flutterwaveData.message || 'Failed to create payment link'
-      );
-    }
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-}
-
 // Get shipping methods for checkout
 export const getShippingMethodsController = async (request, response) => {
   try {
     const { addressId, items, orderValue } = request.body;
 
-    // Get address details
     const address = await mongoose.model('address').findById(addressId);
     if (!address) {
       return response.status(404).json({
@@ -958,13 +1002,11 @@ export const getShippingMethodsController = async (request, response) => {
       });
     }
 
-    // Find shipping zone
     const zone = await ShippingZoneModel.findZoneByCity(
       address.city,
       address.state
     );
 
-    // Get active shipping methods
     const methods = await ShippingMethodModel.find({ isActive: true }).sort({
       sortOrder: 1,
     });
@@ -976,7 +1018,7 @@ export const getShippingMethodsController = async (request, response) => {
       switch (method.type) {
         case 'flat_rate':
           calculation = method.calculateShippingCost({
-            weight: 1, // Default weight
+            weight: 1,
             orderValue: orderValue || 0,
             zone: zone?._id,
             items: items,
@@ -991,7 +1033,7 @@ export const getShippingMethodsController = async (request, response) => {
             };
           } else {
             calculation = method.calculateShippingCost({
-              weight: 1, // Default weight
+              weight: 1,
               orderValue: orderValue || 0,
               zone: zone._id,
               items: items,
@@ -1000,7 +1042,6 @@ export const getShippingMethodsController = async (request, response) => {
           break;
 
         case 'pickup':
-          // Pickup is always available and free
           calculation = {
             eligible: true,
             cost: 0,
@@ -1214,7 +1255,6 @@ export const updateTracking = async (request, response) => {
       });
     }
 
-    // Update estimated delivery if provided
     if (estimatedDelivery) {
       await tracking.updateEstimatedDelivery(
         new Date(estimatedDelivery),
@@ -1222,7 +1262,6 @@ export const updateTracking = async (request, response) => {
       );
     }
 
-    // Add tracking event if status and description provided
     if (status && description) {
       await tracking.addTrackingEvent(
         {
@@ -1233,7 +1272,6 @@ export const updateTracking = async (request, response) => {
         userId
       );
 
-      // Update order status based on tracking status
       let orderStatus = tracking.orderId.order_status;
       switch (status) {
         case 'PROCESSING':
@@ -1257,7 +1295,6 @@ export const updateTracking = async (request, response) => {
         ...(status === 'DELIVERED' && { actual_delivery: new Date() }),
       });
 
-      // Send email notification for important status changes
       const importantStatuses = [
         'PICKED_UP',
         'IN_TRANSIT',

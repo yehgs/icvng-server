@@ -1,13 +1,13 @@
-// route/order.route.js - Updated order routes with shipping integration
+// routes/order.route.js - Updated order routes with Paystack integration
 import { Router } from 'express';
 import auth from '../middleware/auth.js';
 import {
   DirectBankTransferOrderController,
   getOrderDetailsController,
-  paymentController,
-  flutterwavePaymentController,
+  stripePaymentController,
+  paystackPaymentController,
   webhookStripe,
-  flutterwaveWebhookController,
+  paystackWebhookController,
   getShippingMethodsController,
   getOrdersForShippingController,
   updateOrderTrackingController,
@@ -16,22 +16,22 @@ import {
 
 const orderRouter = Router();
 
-// Direct Bank Transfer order (NGN only) - replaces cash on delivery
+// Direct Bank Transfer order (NGN only)
 orderRouter.post(
   '/direct-bank-transfer',
   auth,
   DirectBankTransferOrderController
 );
 
-// Stripe checkout for international currencies
-orderRouter.post('/checkout', auth, paymentController);
+// Stripe checkout for international currencies (USD, EUR, GBP)
+orderRouter.post('/checkout', auth, stripePaymentController);
 
-// Flutterwave payment for NGN
-orderRouter.post('/flutterwave-payment', auth, flutterwavePaymentController);
+// Paystack payment for NGN (replaces Flutterwave)
+orderRouter.post('/paystack-payment', auth, paystackPaymentController);
 
 // Webhook endpoints
 orderRouter.post('/webhook/stripe', webhookStripe);
-orderRouter.post('/webhook/flutterwave', flutterwaveWebhookController);
+orderRouter.post('/webhook/paystack', paystackWebhookController);
 
 // Get user orders
 orderRouter.get('/order-list', auth, getOrderDetailsController);
