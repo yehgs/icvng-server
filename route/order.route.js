@@ -1,4 +1,4 @@
-// routes/order.route.js - Updated order routes with Paystack integration
+// routes/order.route.js - Complete order routes with Paystack
 import { Router } from 'express';
 import auth from '../middleware/auth.js';
 import {
@@ -8,6 +8,7 @@ import {
   paystackPaymentController,
   webhookStripe,
   paystackWebhookController,
+  verifyPaystackPaymentController,
   getShippingMethodsController,
   getOrdersForShippingController,
   updateOrderTrackingController,
@@ -15,6 +16,8 @@ import {
 } from '../controllers/order.controller.js';
 
 const orderRouter = Router();
+
+// ===== PAYMENT ENDPOINTS =====
 
 // Direct Bank Transfer order (NGN only)
 orderRouter.post(
@@ -26,17 +29,20 @@ orderRouter.post(
 // Stripe checkout for international currencies (USD, EUR, GBP)
 orderRouter.post('/checkout', auth, stripePaymentController);
 
-// Paystack payment for NGN (replaces Flutterwave)
+// Paystack payment for NGN
 orderRouter.post('/paystack-payment', auth, paystackPaymentController);
 
-// Webhook endpoints
+// Paystack payment verification (callback endpoint)
+orderRouter.get('/verify-paystack/:reference', verifyPaystackPaymentController);
+
+// ===== WEBHOOK ENDPOINTS (NO AUTH!) =====
 orderRouter.post('/webhook/stripe', webhookStripe);
 orderRouter.post('/webhook/paystack', paystackWebhookController);
 
-// Get user orders
+// ===== ORDER MANAGEMENT =====
 orderRouter.get('/order-list', auth, getOrderDetailsController);
 
-// Shipping related endpoints
+// ===== SHIPPING ENDPOINTS =====
 orderRouter.post('/shipping-methods', getShippingMethodsController);
 orderRouter.get('/shipping/ready', auth, getOrdersForShippingController);
 orderRouter.put(

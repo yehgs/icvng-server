@@ -455,8 +455,7 @@ export const teamOrderNotificationTemplate = ({
         
         <div class="content">
             <div class="alert-box ${
-              orderType === 'Stripe Payment' ||
-              orderType === 'Flutterwave Payment'
+              orderType === 'Stripe Payment' || orderType === 'Paystack Payment'
                 ? ''
                 : 'urgent'
             }">

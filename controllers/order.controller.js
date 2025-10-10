@@ -1339,3 +1339,78 @@ export const updateTracking = async (request, response) => {
     });
   }
 };
+
+// ===== PAYSTACK PAYMENT VERIFICATION =====
+export async function verifyPaystackPaymentController(request, response) {
+  try {
+    const { reference } = request.params;
+
+    if (!reference) {
+      return response.status(400).json({
+        message: 'Payment reference is required',
+        error: true,
+        success: false,
+      });
+    }
+
+    // Verify payment with Paystack
+    const paystackResponse = await fetch(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        },
+      }
+    );
+
+    const paystackData = await paystackResponse.json();
+
+    if (!paystackData.status || paystackData.data.status !== 'success') {
+      return response.status(400).json({
+        message: 'Payment verification failed',
+        error: true,
+        success: false,
+        data: paystackData,
+      });
+    }
+
+    // Payment verified successfully
+    const { data: paymentData } = paystackData;
+
+    // Find orders with this reference
+    const orders = await OrderModel.find({ paymentId: reference });
+
+    if (orders.length === 0) {
+      return response.status(404).json({
+        message: 'No orders found for this payment reference',
+        error: true,
+        success: false,
+      });
+    }
+
+    // Return order details
+    const orderDetails = {
+      reference: reference,
+      amount: paymentData.amount / 100, // Convert from kobo to naira
+      currency: paymentData.currency,
+      status: paymentData.status,
+      paidAt: paymentData.paid_at,
+      orders: orders,
+    };
+
+    return response.json({
+      message: 'Payment verified successfully',
+      data: orderDetails,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Paystack verification error:', error);
+    return response.status(500).json({
+      message: error.message || 'Payment verification failed',
+      error: true,
+      success: false,
+    });
+  }
+}

@@ -49,7 +49,7 @@ const orderSchema = new mongoose.Schema(
     },
     payment_method: {
       type: String,
-      enum: ['STRIPE', 'FLUTTERWAVE', 'BANK_TRANSFER'],
+      enum: ['STRIPE', 'PAYSTACK', 'BANK_TRANSFER'],
       default: 'STRIPE',
     },
     delivery_address: {
