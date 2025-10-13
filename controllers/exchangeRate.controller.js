@@ -183,11 +183,11 @@ export const fetchRatesFromAPI = async (request, response) => {
     }
 
     // If all APIs failed, use fallback rates
-    if (!rates && FALLBACK_RATES[base]) {
-      rates = FALLBACK_RATES[base];
-      usedProvider = 'fallback';
-      console.log('Using fallback rates');
-    }
+    // if (!rates && FALLBACK_RATES[base]) {
+    //   rates = FALLBACK_RATES[base];
+    //   usedProvider = 'fallback';
+    //   console.log('Using fallback rates');
+    // }
 
     if (!rates) {
       return response.status(500).json({
@@ -270,7 +270,6 @@ export const getExchangeRates = async (request, response) => {
 
     const query = { isActive: true };
 
-    // Add search functionality
     if (search) {
       query.$or = [
         { baseCurrency: { $regex: search, $options: 'i' } },
@@ -288,7 +287,7 @@ export const getExchangeRates = async (request, response) => {
     }
 
     if (source) {
-      query.source = source;
+      query.source = source.toUpperCase();
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);

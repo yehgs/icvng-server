@@ -51,12 +51,18 @@ const convertCurrency = async (amount, fromCurrency, toCurrency) => {
 const getProductPrice = (product, priceOption = 'regular') => {
   switch (priceOption) {
     case '3weeks':
-      return product.price3weeksDelivery || product.price;
+      return product.price3weeksDelivery && product.price3weeksDelivery > 0
+        ? product.price3weeksDelivery
+        : product.btcPrice;
+
     case '5weeks':
-      return product.price5weeksDelivery || product.price;
+      return product.price5weeksDelivery && product.price5weeksDelivery > 0
+        ? product.price5weeksDelivery
+        : product.btcPrice;
+
     case 'regular':
     default:
-      return product.price;
+      return product.btcPrice;
   }
 };
 
@@ -134,277 +140,9 @@ const createTrackingForOrder = async (order, userId) => {
   }
 };
 
-// Direct Bank Transfer Controller (unchanged)
-export async function DirectBankTransferOrderController(request, response) {
-  try {
-    const userId = request.userId;
-    const {
-      list_items,
-      totalAmt,
-      addressId,
-      subTotalAmt,
-      shippingCost = 0,
-      shippingMethodId,
-      currency = 'NGN',
-      bankDetails,
-    } = request.body;
-
-    if (currency !== 'NGN') {
-      return response.status(400).json({
-        message: 'Direct Bank Transfer is only available for NGN currency',
-        error: true,
-        success: false,
-      });
-    }
-
-    let shippingMethod = null;
-    if (shippingMethodId) {
-      shippingMethod = await ShippingMethodModel.findById(shippingMethodId);
-      if (!shippingMethod) {
-        return response.status(400).json({
-          message: 'Invalid shipping method',
-          error: true,
-          success: false,
-        });
-      }
-    }
-
-    for (const item of list_items) {
-      const productData = item.productId || item;
-      if (!productData.productAvailability) {
-        return response.status(400).json({
-          message: `Product ${productData.name} is not available for production`,
-          error: true,
-          success: false,
-        });
-      }
-    }
-
-    let shippingZone = null;
-    let address = null;
-    if (addressId) {
-      address = await mongoose.model('address').findById(addressId);
-      if (address) {
-        shippingZone = await ShippingZoneModel.findZoneByCity(
-          address.city,
-          address.state
-        );
-      }
-    }
-
-    const orderItems = list_items.map((item) => {
-      const productData = item.productId || item;
-      const priceOption = item.priceOption || 'regular';
-      const productPrice = getProductPrice(productData, priceOption);
-      const finalPrice = pricewithDiscount(productPrice, productData.discount);
-
-      return {
-        userId: userId,
-        orderId: `BANK-${Date.now()}-${new mongoose.Types.ObjectId()}`,
-        productId: productData._id,
-        product_details: {
-          name: productData.name,
-          image: productData.image,
-          priceOption: priceOption,
-          deliveryTime: priceOption,
-        },
-        paymentId: `BANK-${Date.now()}`,
-        payment_status: 'PENDING_BANK_TRANSFER',
-        payment_method: 'BANK_TRANSFER',
-        delivery_address: addressId,
-        subTotalAmt: finalPrice * item.quantity,
-        totalAmt: finalPrice * item.quantity + shippingCost / list_items.length,
-        currency: currency,
-        quantity: item.quantity,
-        unitPrice: finalPrice,
-        shippingMethod: shippingMethodId,
-        shippingZone: shippingZone?._id,
-        shipping_cost: shippingCost / list_items.length,
-        shipping_details: shippingMethod
-          ? {
-              method_name: shippingMethod.name,
-              method_type: shippingMethod.type,
-              carrier: {
-                name: 'I-Coffee Logistics',
-                code: 'ICF',
-              },
-            }
-          : {},
-        bank_transfer_details: bankDetails,
-        admin_notes: `Bank Transfer - Reference: ${bankDetails.reference}`,
-      };
-    });
-
-    const orders = await OrderModel.insertMany(orderItems);
-
-    for (const order of orders) {
-      await createTrackingForOrder(order, userId);
-    }
-
-    try {
-      const user = await UserModel.findById(userId);
-      await sendOrderConfirmationEmail({
-        user,
-        order: orders[0],
-        items: orderItems,
-        shippingAddress: address,
-        shippingMethod,
-        trackingNumber: orders[0].tracking_number,
-      });
-
-      await sendOrderNotificationToTeam({
-        user,
-        order: orders[0],
-        items: orderItems,
-        orderType: 'Bank Transfer',
-      });
-    } catch (emailError) {
-      console.error('Email sending failed:', emailError);
-    }
-
-    await CartProductModel.deleteMany({ userId: userId });
-    await UserModel.updateOne({ _id: userId }, { shopping_cart: [] });
-
-    return response.json({
-      message: 'Bank transfer order placed successfully',
-      data: orders,
-      bankDetails: bankDetails,
-      shippingMethod: shippingMethod,
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-}
-
-// ===== PAYSTACK PAYMENT CONTROLLER =====
-export async function paystackPaymentController(request, response) {
-  try {
-    const userId = request.userId;
-    const {
-      list_items,
-      totalAmt,
-      addressId,
-      subTotalAmt,
-      shippingCost = 0,
-      shippingMethodId,
-      currency = 'NGN',
-    } = request.body;
-
-    // Paystack only supports NGN by default
-    if (currency !== 'NGN') {
-      return response.status(400).json({
-        message: 'Paystack is only available for NGN currency',
-        error: true,
-        success: false,
-      });
-    }
-
-    const user = await UserModel.findById(userId);
-
-    // Validate products
-    for (const item of list_items) {
-      const productData = item.productId || item;
-      if (!productData.productAvailability) {
-        return response.status(400).json({
-          message: `Product ${productData.name} is not available for production`,
-          error: true,
-          success: false,
-        });
-      }
-    }
-
-    // Generate transaction reference
-    const txRef = `PSK-${Date.now()}-${userId}`;
-
-    // Convert amount to kobo (Paystack uses smallest currency unit)
-    const amountInKobo = Math.round(totalAmt * 100);
-
-    // Prepare Paystack payment data
-    const paymentData = {
-      email: user.email,
-      amount: amountInKobo,
-      reference: txRef,
-      currency: 'NGN',
-      callback_url: `${process.env.FRONTEND_URL}/payment/paystack/callback`,
-      metadata: {
-        userId: userId.toString(),
-        addressId: addressId,
-        shippingMethodId: shippingMethodId || '',
-        shippingCost: shippingCost,
-        itemCount: list_items.length,
-        custom_fields: [
-          {
-            display_name: 'Customer Name',
-            variable_name: 'customer_name',
-            value: user.name || user.email,
-          },
-          {
-            display_name: 'Items Count',
-            variable_name: 'items_count',
-            value: list_items.length.toString(),
-          },
-        ],
-      },
-      channels: ['card', 'bank', 'ussd', 'qr', 'mobile_money', 'bank_transfer'],
-    };
-
-    // Initialize Paystack payment
-    const paystackResponse = await fetch(
-      'https://api.paystack.co/transaction/initialize',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(paymentData),
-      }
-    );
-
-    const paystackData = await paystackResponse.json();
-
-    if (paystackData.status === true) {
-      // Store transaction reference for webhook verification
-      await UserModel.findByIdAndUpdate(userId, {
-        $push: {
-          pending_payments: {
-            reference: txRef,
-            amount: totalAmt,
-            items: list_items,
-            addressId: addressId,
-            shippingMethodId: shippingMethodId,
-            shippingCost: shippingCost,
-            createdAt: new Date(),
-          },
-        },
-      });
-
-      return response.json({
-        success: true,
-        paymentUrl: paystackData.data.authorization_url,
-        accessCode: paystackData.data.access_code,
-        reference: paystackData.data.reference,
-        message: 'Payment link generated successfully',
-      });
-    } else {
-      throw new Error(paystackData.message || 'Failed to create payment link');
-    }
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-}
-
 // ===== PAYSTACK WEBHOOK HANDLER =====
+// order.controller.js - CORRECTED paystackWebhookController
+
 export async function paystackWebhookController(request, response) {
   try {
     // Verify webhook signature
@@ -425,7 +163,6 @@ export async function paystackWebhookController(request, response) {
     if (event === 'charge.success') {
       const { reference, amount, currency, metadata, customer } = data;
 
-      // Find user from metadata
       const userId = metadata.userId;
       const user = await UserModel.findById(userId);
 
@@ -437,7 +174,6 @@ export async function paystackWebhookController(request, response) {
         });
       }
 
-      // Get pending payment details
       const pendingPayment = user.pending_payments?.find(
         (p) => p.reference === reference
       );
@@ -450,7 +186,6 @@ export async function paystackWebhookController(request, response) {
         });
       }
 
-      // Get cart items
       const cartItems = await CartProductModel.find({
         userId: userId,
       }).populate({
@@ -480,7 +215,6 @@ export async function paystackWebhookController(request, response) {
         }
       }
 
-      // Get shipping information
       let shippingZone = null;
       let shippingMethod = null;
 
@@ -505,9 +239,20 @@ export async function paystackWebhookController(request, response) {
       const shippingCostPerItem =
         parseFloat(metadata.shippingCost || '0') / cartItems.length;
 
+      // ✅ Get exchange rate info from metadata
+      const exchangeRateInfo = {
+        rate: parseFloat(metadata.exchangeRate) || 1,
+        fromCurrency: metadata.fromCurrency || 'NGN',
+        toCurrency: metadata.toCurrency || 'NGN',
+        rateSource: 'manual',
+        appliedAt: new Date(),
+      };
+
       // Create order items
       const orderItems = cartItems.map((item) => {
         const priceOption = item.priceOption || 'regular';
+
+        // ✅ FIXED: Use btcPrice as base and correct price selection
         const productPrice = getProductPrice(item.productId, priceOption);
         const finalPrice = pricewithDiscount(
           productPrice,
@@ -536,6 +281,17 @@ export async function paystackWebhookController(request, response) {
           shippingMethod: metadata.shippingMethodId,
           shippingZone: shippingZone?._id,
           shipping_cost: shippingCostPerItem,
+
+          // ✅ Store exchange rate info (for NGN it's 1:1)
+          exchangeRateUsed: exchangeRateInfo,
+
+          // ✅ Store original NGN amounts (same as amounts for Paystack)
+          amountsInNGN: {
+            subtotal: finalPrice * item.quantity,
+            shipping: shippingCostPerItem,
+            total: finalPrice * item.quantity + shippingCostPerItem,
+          },
+
           shipping_details: shippingMethod
             ? {
                 method_name: shippingMethod.name,
@@ -560,7 +316,6 @@ export async function paystackWebhookController(request, response) {
         };
       });
 
-      // Save orders
       const orders = await OrderModel.insertMany(orderItems);
 
       // Create tracking for each order
@@ -568,7 +323,6 @@ export async function paystackWebhookController(request, response) {
         try {
           await createTrackingForOrder(order, userId);
 
-          // Send confirmation email
           const address = await mongoose
             .model('address')
             .findById(metadata.addressId);
@@ -597,7 +351,7 @@ export async function paystackWebhookController(request, response) {
         }
       }
 
-      // Clear cart and remove pending payment
+      // Clear cart
       await CartProductModel.deleteMany({ userId: userId });
       await UserModel.updateOne(
         { _id: userId },
@@ -619,348 +373,6 @@ export async function paystackWebhookController(request, response) {
     });
   }
 }
-
-// ===== STRIPE PAYMENT CONTROLLER (Enhanced) =====
-export async function stripePaymentController(request, response) {
-  try {
-    const userId = request.userId;
-    const {
-      list_items,
-      totalAmt,
-      addressId,
-      subTotalAmt,
-      shippingCost = 0,
-      shippingMethodId,
-      currency = 'USD',
-      paymentMethod = 'stripe',
-    } = request.body;
-
-    // Stripe is for non-NGN currencies
-    if (currency === 'NGN') {
-      return response.status(400).json({
-        message: 'Please use Paystack for NGN payments',
-        error: true,
-        success: false,
-      });
-    }
-
-    const user = await UserModel.findById(userId);
-
-    // Validate shipping method
-    let shippingMethod = null;
-    if (shippingMethodId) {
-      shippingMethod = await ShippingMethodModel.findById(shippingMethodId);
-      if (!shippingMethod) {
-        return response.status(400).json({
-          message: 'Invalid shipping method',
-          error: true,
-          success: false,
-        });
-      }
-    }
-
-    // Validate products
-    for (const item of list_items) {
-      const productData = item.productId || item;
-      if (!productData.productAvailability) {
-        return response.status(400).json({
-          message: `Product ${productData.name} is not available for production`,
-          error: true,
-          success: false,
-        });
-      }
-    }
-
-    // Convert amounts to payment currency
-    let paymentAmount = totalAmt;
-    if (currency !== 'NGN') {
-      paymentAmount = await convertCurrency(totalAmt, 'NGN', currency);
-    }
-
-    const line_items = list_items.map((item) => {
-      const productData = item.productId || item;
-      const priceOption = item.priceOption || 'regular';
-      const productPrice = getProductPrice(productData, priceOption);
-      let finalPrice = pricewithDiscount(productPrice, productData.discount);
-
-      if (currency !== 'NGN') {
-        finalPrice = finalPrice * (paymentAmount / totalAmt);
-      }
-
-      return {
-        price_data: {
-          currency: currency.toLowerCase(),
-          product_data: {
-            name: `${productData.name} - ${priceOption} delivery`,
-            images: productData.image,
-            metadata: {
-              productId: productData._id,
-              priceOption: priceOption,
-            },
-          },
-          unit_amount: Math.round(finalPrice * 100),
-        },
-        adjustable_quantity: {
-          enabled: true,
-          minimum: 1,
-        },
-        quantity: item.quantity,
-      };
-    });
-
-    // Add shipping as line item
-    if (shippingCost > 0) {
-      let shippingAmount = shippingCost;
-      if (currency !== 'NGN') {
-        shippingAmount = shippingAmount * (paymentAmount / totalAmt);
-      }
-
-      line_items.push({
-        price_data: {
-          currency: currency.toLowerCase(),
-          product_data: {
-            name: `Shipping - ${shippingMethod?.name || 'Standard Shipping'}`,
-            metadata: {
-              type: 'shipping',
-              shippingMethodId: shippingMethodId,
-            },
-          },
-          unit_amount: Math.round(shippingAmount * 100),
-        },
-        quantity: 1,
-      });
-    }
-
-    const params = {
-      submit_type: 'pay',
-      mode: 'payment',
-      payment_method_types: ['card'],
-      customer_email: user.email,
-      metadata: {
-        userId: userId,
-        addressId: addressId,
-        shippingMethodId: shippingMethodId || '',
-        shippingCost: shippingCost.toString(),
-        originalCurrency: 'NGN',
-        paymentCurrency: currency,
-      },
-      line_items: line_items,
-      success_url: `${process.env.FRONTEND_URL}/success`,
-      cancel_url: `${process.env.FRONTEND_URL}/cancel`,
-    };
-
-    const session = await Stripe.checkout.sessions.create(params);
-
-    return response.status(200).json({
-      id: session.id,
-      url: session.url,
-      success: true,
-    });
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-}
-
-// Enhanced Stripe webhook handler (unchanged from original)
-export async function webhookStripe(request, response) {
-  const event = request.body;
-
-  switch (event.type) {
-    case 'checkout.session.completed':
-      const session = event.data.object;
-      const lineItems = await Stripe.checkout.sessions.listLineItems(
-        session.id
-      );
-      const userId = session.metadata.userId;
-      const shippingMethodId = session.metadata.shippingMethodId;
-      const shippingCost = parseFloat(session.metadata.shippingCost || '0');
-
-      const orderProduct = await getOrderProductItems({
-        lineItems: lineItems,
-        userId: userId,
-        addressId: session.metadata.addressId,
-        paymentId: session.payment_intent,
-        payment_status: 'PAID',
-        shippingMethodId: shippingMethodId,
-        shippingCost: shippingCost,
-        originalCurrency: session.metadata.originalCurrency || 'NGN',
-        paymentCurrency:
-          session.metadata.paymentCurrency || session.currency.toUpperCase(),
-      });
-
-      const orders = await OrderModel.insertMany(orderProduct);
-
-      if (orders.length > 0) {
-        for (const order of orders) {
-          try {
-            await createTrackingForOrder(order, userId);
-
-            const user = await UserModel.findById(userId);
-            const address = await mongoose
-              .model('address')
-              .findById(session.metadata.addressId);
-            const shippingMethod = shippingMethodId
-              ? await ShippingMethodModel.findById(shippingMethodId)
-              : null;
-
-            await sendOrderConfirmationEmail({
-              user,
-              order,
-              items: [order],
-              shippingAddress: address,
-              shippingMethod,
-              trackingNumber: order.tracking_number,
-            });
-
-            await sendOrderNotificationToTeam({
-              user,
-              order,
-              items: [order],
-              orderType: 'Stripe Payment',
-            });
-          } catch (trackingError) {
-            console.error(
-              'Failed to create tracking for order:',
-              order._id,
-              trackingError
-            );
-          }
-        }
-      }
-
-      if (userId) {
-        await UserModel.findByIdAndUpdate(userId, { shopping_cart: [] });
-        await CartProductModel.deleteMany({ userId: userId });
-      }
-      break;
-
-    default:
-      console.log(`Unhandled event type ${event.type}`);
-  }
-
-  return response.json({ received: true });
-}
-
-// Helper function for Stripe order items
-const getOrderProductItems = async ({
-  lineItems,
-  userId,
-  addressId,
-  paymentId,
-  payment_status,
-  originalCurrency,
-  paymentCurrency,
-  shippingMethodId,
-  shippingCost,
-}) => {
-  const productList = [];
-
-  let shippingZone = null;
-  let shippingMethod = null;
-
-  if (addressId) {
-    const address = await mongoose.model('address').findById(addressId);
-    if (address) {
-      shippingZone = await ShippingZoneModel.findZoneByCity(
-        address.city,
-        address.state
-      );
-    }
-  }
-
-  if (shippingMethodId) {
-    shippingMethod = await ShippingMethodModel.findById(shippingMethodId);
-  }
-
-  if (lineItems?.data?.length) {
-    for (const item of lineItems.data) {
-      const product = await Stripe.products.retrieve(item.price.product);
-
-      if (product.metadata.type === 'shipping') continue;
-
-      const priceOption = product.metadata.priceOption || 'regular';
-      const productId = product.metadata.productId;
-
-      const fullProduct = await mongoose
-        .model('product')
-        .findById(productId)
-        .populate('category');
-
-      let amountInBaseCurrency = item.amount_total / 100;
-      if (paymentCurrency !== originalCurrency) {
-        amountInBaseCurrency = await convertCurrency(
-          amountInBaseCurrency,
-          paymentCurrency,
-          originalCurrency
-        );
-      }
-
-      const payload = {
-        userId: userId,
-        orderId: `STR-${new mongoose.Types.ObjectId()}`,
-        productId: productId,
-        product_details: {
-          name: product.name,
-          image: product.images,
-          priceOption: priceOption,
-          deliveryTime: priceOption,
-        },
-        paymentId: paymentId,
-        payment_status: payment_status,
-        payment_method: 'STRIPE',
-        delivery_address: addressId,
-        subTotalAmt: amountInBaseCurrency,
-        totalAmt:
-          amountInBaseCurrency +
-          shippingCost /
-            lineItems.data.filter((li) => {
-              const prod = li.price.product;
-              return !prod.metadata || prod.metadata.type !== 'shipping';
-            }).length,
-        currency: originalCurrency,
-        quantity: item.quantity,
-        unitPrice: amountInBaseCurrency / item.quantity,
-        shippingMethod: shippingMethodId,
-        shippingZone: shippingZone?._id,
-        shipping_cost:
-          shippingCost /
-          lineItems.data.filter((li) => {
-            const prod = li.price.product;
-            return !prod.metadata || prod.metadata.type !== 'shipping';
-          }).length,
-        shipping_details: shippingMethod
-          ? {
-              method_name: shippingMethod.name,
-              method_type: shippingMethod.type,
-              carrier: {
-                name: 'I-Coffee Logistics',
-                code: 'ICF',
-              },
-              estimated_delivery_days: {
-                min: shippingMethod.estimatedDelivery?.minDays || 1,
-                max: shippingMethod.estimatedDelivery?.maxDays || 7,
-              },
-              weight: fullProduct?.weight || 1,
-              dimensions: {
-                length: 20,
-                width: 15,
-                height: 10,
-                unit: 'cm',
-              },
-            }
-          : {},
-      };
-
-      productList.push(payload);
-    }
-  }
-
-  return productList;
-};
 
 // Other controllers remain unchanged
 export async function getOrderDetailsController(request, response) {
@@ -1413,4 +825,711 @@ export async function verifyPaystackPaymentController(request, response) {
       success: false,
     });
   }
+}
+
+//  DIRECT BANK TRANSFER
+export async function DirectBankTransferOrderController(request, response) {
+  try {
+    const userId = request.userId;
+    const {
+      list_items,
+      totalAmt,
+      addressId,
+      subTotalAmt,
+      shippingCost = 0,
+      shippingMethodId,
+      currency = 'NGN',
+      bankDetails,
+    } = request.body;
+
+    if (currency !== 'NGN') {
+      return response.status(400).json({
+        message: 'Direct Bank Transfer is only available for NGN currency',
+        error: true,
+        success: false,
+      });
+    }
+
+    let shippingMethod = null;
+    if (shippingMethodId) {
+      shippingMethod = await ShippingMethodModel.findById(shippingMethodId);
+      if (!shippingMethod) {
+        return response.status(400).json({
+          message: 'Invalid shipping method',
+          error: true,
+          success: false,
+        });
+      }
+    }
+
+    // ✅ FIX: Get cart items and validate products properly
+    const cartItems = await CartProductModel.find({
+      userId: userId,
+    }).populate('productId');
+
+    if (cartItems.length === 0) {
+      return response.status(400).json({
+        message: 'No items in cart',
+        error: true,
+        success: false,
+      });
+    }
+
+    // ✅ FIX: Validate products using populated cart items
+    for (const item of cartItems) {
+      if (!item.productId) {
+        return response.status(400).json({
+          message: 'Product not found in cart',
+          error: true,
+          success: false,
+        });
+      }
+
+      if (!item.productId.productAvailability) {
+        return response.status(400).json({
+          message: `Product "${item.productId.name}" is not available for production`,
+          error: true,
+          success: false,
+        });
+      }
+    }
+
+    let shippingZone = null;
+    let address = null;
+    if (addressId) {
+      address = await mongoose.model('address').findById(addressId);
+      if (address) {
+        shippingZone = await ShippingZoneModel.findZoneByCity(
+          address.city,
+          address.state
+        );
+      }
+    }
+
+    // ✅ Use cart items instead of list_items
+    const orderItems = cartItems.map((item) => {
+      const priceOption = item.priceOption || 'regular';
+      const productPrice = getProductPrice(item.productId, priceOption);
+      const finalPrice = pricewithDiscount(
+        productPrice,
+        item.productId.discount
+      );
+
+      return {
+        userId: userId,
+        orderId: `BANK-${Date.now()}-${new mongoose.Types.ObjectId()}`,
+        productId: item.productId._id,
+        product_details: {
+          name: item.productId.name,
+          image: item.productId.image,
+          priceOption: priceOption,
+          deliveryTime: priceOption,
+        },
+        paymentId: `BANK-${Date.now()}`,
+        payment_status: 'PENDING_BANK_TRANSFER',
+        payment_method: 'BANK_TRANSFER',
+        delivery_address: addressId,
+        subTotalAmt: finalPrice * item.quantity,
+        totalAmt: finalPrice * item.quantity + shippingCost / cartItems.length,
+        currency: currency,
+        quantity: item.quantity,
+        unitPrice: finalPrice,
+        shippingMethod: shippingMethodId,
+        shippingZone: shippingZone?._id,
+        shipping_cost: shippingCost / cartItems.length,
+        shipping_details: shippingMethod
+          ? {
+              method_name: shippingMethod.name,
+              method_type: shippingMethod.type,
+              carrier: {
+                name: 'I-Coffee Logistics',
+                code: 'ICF',
+              },
+            }
+          : {},
+        bank_transfer_details: bankDetails,
+        admin_notes: `Bank Transfer - Reference: ${bankDetails.reference}`,
+      };
+    });
+
+    const orders = await OrderModel.insertMany(orderItems);
+
+    for (const order of orders) {
+      await createTrackingForOrder(order, userId);
+    }
+
+    try {
+      const user = await UserModel.findById(userId);
+      await sendOrderConfirmationEmail({
+        user,
+        order: orders[0],
+        items: orderItems,
+        shippingAddress: address,
+        shippingMethod,
+        trackingNumber: orders[0].tracking_number,
+      });
+
+      await sendOrderNotificationToTeam({
+        user,
+        order: orders[0],
+        items: orderItems,
+        orderType: 'Bank Transfer',
+      });
+    } catch (emailError) {
+      console.error('Email sending failed:', emailError);
+    }
+
+    await CartProductModel.deleteMany({ userId: userId });
+    await UserModel.updateOne({ _id: userId }, { shopping_cart: [] });
+
+    return response.json({
+      message: 'Bank transfer order placed successfully',
+      data: orders,
+      bankDetails: bankDetails,
+      shippingMethod: shippingMethod,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Bank transfer error:', error);
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+}
+
+//  PAYSTACK PAYMENT
+export async function paystackPaymentController(request, response) {
+  try {
+    const userId = request.userId;
+    const {
+      list_items,
+      totalAmt,
+      addressId,
+      subTotalAmt,
+      shippingCost = 0,
+      shippingMethodId,
+      currency = 'NGN',
+      exchangeRateInfo,
+    } = request.body;
+
+    if (currency !== 'NGN') {
+      return response.status(400).json({
+        message: 'Paystack is only available for NGN currency',
+        error: true,
+        success: false,
+      });
+    }
+
+    const user = await UserModel.findById(userId);
+
+    const cartItems = await CartProductModel.find({
+      userId: userId,
+    }).populate('productId');
+
+    if (cartItems.length === 0) {
+      return response.status(400).json({
+        message: 'No items in cart',
+        error: true,
+        success: false,
+      });
+    }
+
+    // Validate products
+    for (const item of cartItems) {
+      if (!item.productId) {
+        return response.status(400).json({
+          message: 'Product not found in cart',
+          error: true,
+          success: false,
+        });
+      }
+
+      if (!item.productId.productAvailability) {
+        return response.status(400).json({
+          message: `Product "${item.productId.name}" is not available for production`,
+          error: true,
+          success: false,
+        });
+      }
+    }
+
+    // Generate transaction reference
+    const txRef = `PSK-${Date.now()}-${userId}`;
+
+    // Convert amount to kobo
+    const amountInKobo = Math.round(totalAmt * 100);
+
+    // Prepare Paystack payment data
+    const paymentData = {
+      email: user.email,
+      amount: amountInKobo,
+      reference: txRef,
+      currency: 'NGN',
+      callback_url: `${process.env.FRONTEND_URL}/payment/paystack/callback`,
+      metadata: {
+        userId: userId.toString(),
+        addressId: addressId,
+        shippingMethodId: shippingMethodId || '',
+        shippingCost: shippingCost,
+        itemCount: cartItems.length,
+        exchangeRate: exchangeRateInfo?.rate || 1,
+        fromCurrency: exchangeRateInfo?.fromCurrency || 'NGN',
+        toCurrency: exchangeRateInfo?.toCurrency || 'NGN',
+        custom_fields: [
+          {
+            display_name: 'Customer Name',
+            variable_name: 'customer_name',
+            value: user.name || user.email,
+          },
+          {
+            display_name: 'Items Count',
+            variable_name: 'items_count',
+            value: cartItems.length.toString(),
+          },
+        ],
+      },
+      channels: ['card', 'bank', 'ussd', 'qr', 'mobile_money', 'bank_transfer'],
+    };
+
+    // Initialize Paystack payment
+    const paystackResponse = await fetch(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(paymentData),
+      }
+    );
+
+    const paystackData = await paystackResponse.json();
+
+    if (paystackData.status === true) {
+      // Store transaction reference
+      await UserModel.findByIdAndUpdate(userId, {
+        $push: {
+          pending_payments: {
+            reference: txRef,
+            amount: totalAmt,
+            items: list_items,
+            addressId: addressId,
+            shippingMethodId: shippingMethodId,
+            shippingCost: shippingCost,
+            exchangeRateInfo: exchangeRateInfo,
+            createdAt: new Date(),
+          },
+        },
+      });
+
+      return response.json({
+        success: true,
+        paymentUrl: paystackData.data.authorization_url,
+        accessCode: paystackData.data.access_code,
+        reference: paystackData.data.reference,
+        message: 'Payment link generated successfully',
+      });
+    } else {
+      throw new Error(paystackData.message || 'Failed to create payment link');
+    }
+  } catch (error) {
+    console.error('Paystack payment controller error:', error);
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+}
+
+//STRIPE PAYMENT
+
+export async function stripePaymentController(request, response) {
+  try {
+    const userId = request.userId;
+    const {
+      list_items,
+      totalAmt, // ✅ Already converted in frontend
+      addressId,
+      subTotalAmt, // ✅ Already converted in frontend
+      shippingCost = 0, // ✅ Already converted in frontend
+      originalAmounts, // ✅ Original NGN amounts for records
+      exchangeRateInfo, // ✅ Exchange rate used for admin
+      shippingMethodId,
+      currency = 'USD',
+      paymentMethod = 'stripe',
+    } = request.body;
+
+    console.log('💳 Stripe Payment - Received CONVERTED amounts:', {
+      currency,
+      convertedAmounts: {
+        subtotal: subTotalAmt,
+        shipping: shippingCost,
+        total: totalAmt,
+      },
+      originalNGN: originalAmounts,
+      exchangeRate: exchangeRateInfo,
+    });
+
+    if (currency === 'NGN') {
+      return response.status(400).json({
+        message: 'Please use Paystack for NGN payments',
+        error: true,
+        success: false,
+      });
+    }
+
+    const user = await UserModel.findById(userId);
+
+    const cartItems = await CartProductModel.find({ userId }).populate(
+      'productId'
+    );
+
+    if (cartItems.length === 0) {
+      return response.status(400).json({
+        message: 'No items in cart',
+        error: true,
+        success: false,
+      });
+    }
+
+    // Validate products
+    for (const item of cartItems) {
+      if (!item.productId?.productAvailability) {
+        return response.status(400).json({
+          message: `Product "${item.productId?.name}" is not available`,
+          error: true,
+          success: false,
+        });
+      }
+    }
+
+    let shippingMethod = null;
+    if (shippingMethodId) {
+      shippingMethod = await ShippingMethodModel.findById(shippingMethodId);
+    }
+
+    // ✅ NO CONVERSION - Use amounts as-is from frontend
+    // ✅ Build Stripe line items with already-converted prices
+    const line_items = [];
+
+    for (const item of cartItems) {
+      const priceOption = item.priceOption || 'regular';
+      const productPrice = getProductPrice(item.productId, priceOption);
+      const finalPriceNGN = pricewithDiscount(
+        productPrice,
+        item.productId.discount
+      );
+
+      // ✅ Calculate what this item's price should be in target currency
+      // Frontend already converted total, we need to maintain proportions
+      const itemProportion =
+        (finalPriceNGN * item.quantity) / originalAmounts.subTotalAmt;
+      const itemPriceConverted = (subTotalAmt * itemProportion) / item.quantity;
+
+      line_items.push({
+        price_data: {
+          currency: currency.toLowerCase(),
+          product_data: {
+            name: `${item.productId.name} - ${priceOption} delivery`,
+            images: item.productId.image,
+            metadata: {
+              productId: item.productId._id.toString(),
+              priceOption: priceOption,
+            },
+          },
+          unit_amount: Math.round(itemPriceConverted * 100), // cents
+        },
+        adjustable_quantity: {
+          enabled: true,
+          minimum: 1,
+        },
+        quantity: item.quantity,
+      });
+    }
+
+    // ✅ Add shipping as separate line item (already converted)
+    if (shippingCost > 0) {
+      line_items.push({
+        price_data: {
+          currency: currency.toLowerCase(),
+          product_data: {
+            name: `Shipping - ${shippingMethod?.name || 'Standard'}`,
+            metadata: {
+              type: 'shipping',
+              shippingMethodId: shippingMethodId,
+            },
+          },
+          unit_amount: Math.round(shippingCost * 100), // cents
+        },
+        quantity: 1,
+      });
+    }
+
+    const params = {
+      submit_type: 'pay',
+      mode: 'payment',
+      payment_method_types: ['card'],
+      customer_email: user.email,
+      metadata: {
+        userId: userId.toString(),
+        addressId: addressId,
+        shippingMethodId: shippingMethodId || '',
+
+        // ✅ Store exchange rate info for admin
+        exchangeRate: exchangeRateInfo.rate.toString(),
+        fromCurrency: exchangeRateInfo.fromCurrency,
+        toCurrency: exchangeRateInfo.toCurrency,
+        rateSource: exchangeRateInfo.rateSource,
+
+        // ✅ Store original NGN amounts
+        originalSubtotalNGN: originalAmounts.subTotalAmt.toString(),
+        originalShippingNGN: originalAmounts.shippingCost.toString(),
+        originalTotalNGN: originalAmounts.totalAmt.toString(),
+      },
+      line_items: line_items,
+      success_url: `${process.env.FRONTEND_URL}/success`,
+      cancel_url: `${process.env.FRONTEND_URL}/cancel`,
+    };
+
+    console.log('Creating Stripe session with CONVERTED amounts:', {
+      currency,
+      itemCount: line_items.length,
+      total: totalAmt,
+    });
+
+    const session = await Stripe.checkout.sessions.create(params);
+
+    return response.status(200).json({
+      id: session.id,
+      url: session.url,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Stripe payment error:', error);
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+}
+
+// ✅ Updated webhook to store exchange rate info
+const getOrderProductItems = async ({
+  lineItems,
+  userId,
+  addressId,
+  paymentId,
+  payment_status,
+  shippingMethodId,
+  shippingCost,
+  session, // ✅ Pass entire session to get metadata
+}) => {
+  const productList = [];
+
+  let shippingZone = null;
+  let shippingMethod = null;
+
+  if (addressId) {
+    const address = await mongoose.model('address').findById(addressId);
+    if (address) {
+      shippingZone = await ShippingZoneModel.findZoneByCity(
+        address.city,
+        address.state
+      );
+    }
+  }
+
+  if (shippingMethodId) {
+    shippingMethod = await ShippingMethodModel.findById(shippingMethodId);
+  }
+
+  // ✅ Extract exchange rate info from session metadata
+  const exchangeRateInfo = {
+    rate: parseFloat(session.metadata.exchangeRate) || 1,
+    fromCurrency: session.metadata.fromCurrency || 'NGN',
+    toCurrency: session.metadata.toCurrency || session.currency.toUpperCase(),
+    rateSource: session.metadata.rateSource || 'manual',
+    appliedAt: new Date(),
+  };
+
+  const originalAmountsNGN = {
+    subtotal: parseFloat(session.metadata.originalSubtotalNGN) || 0,
+    shipping: parseFloat(session.metadata.originalShippingNGN) || 0,
+    total: parseFloat(session.metadata.originalTotalNGN) || 0,
+  };
+
+  if (lineItems?.data?.length) {
+    const shippingCostPerItem =
+      shippingCost /
+      lineItems.data.filter(
+        (item) =>
+          !item.price?.product?.metadata?.type ||
+          item.price.product.metadata.type !== 'shipping'
+      ).length;
+
+    for (const item of lineItems.data) {
+      const product = await Stripe.products.retrieve(item.price.product);
+
+      if (product.metadata.type === 'shipping') continue;
+
+      const priceOption = product.metadata.priceOption || 'regular';
+      const productId = product.metadata.productId;
+
+      const fullProduct = await mongoose
+        .model('product')
+        .findById(productId)
+        .populate('category');
+
+      // ✅ Amounts are already in target currency
+      const amountInTargetCurrency = item.amount_total / 100;
+
+      const payload = {
+        userId: userId,
+        orderId: `STR-${new mongoose.Types.ObjectId()}`,
+        productId: productId,
+        product_details: {
+          name: product.name,
+          image: product.images,
+          priceOption: priceOption,
+          deliveryTime: priceOption,
+        },
+        paymentId: paymentId,
+        payment_status: payment_status,
+        payment_method: 'STRIPE',
+        delivery_address: addressId,
+
+        // ✅ Store converted amounts (what customer actually paid)
+        subTotalAmt: amountInTargetCurrency,
+        totalAmt: amountInTargetCurrency + shippingCostPerItem,
+        currency: session.currency.toUpperCase(),
+        shipping_cost: shippingCostPerItem,
+
+        // ✅ Store exchange rate info for admin
+        exchangeRateUsed: exchangeRateInfo,
+
+        // ✅ Store original NGN amounts for admin reference
+        amountsInNGN: {
+          subtotal: originalAmountsNGN.subtotal / lineItems.data.length,
+          shipping: originalAmountsNGN.shipping / lineItems.data.length,
+          total: originalAmountsNGN.total / lineItems.data.length,
+        },
+
+        quantity: item.quantity,
+        unitPrice: amountInTargetCurrency / item.quantity,
+        shippingMethod: shippingMethodId,
+        shippingZone: shippingZone?._id,
+        shipping_details: shippingMethod
+          ? {
+              method_name: shippingMethod.name,
+              method_type: shippingMethod.type,
+              carrier: {
+                name: 'I-Coffee Logistics',
+                code: 'ICF',
+              },
+              estimated_delivery_days: {
+                min: shippingMethod.estimatedDelivery?.minDays || 1,
+                max: shippingMethod.estimatedDelivery?.maxDays || 7,
+              },
+              weight: fullProduct?.weight || 1,
+              dimensions: {
+                length: 20,
+                width: 15,
+                height: 10,
+                unit: 'cm',
+              },
+            }
+          : {},
+      };
+
+      productList.push(payload);
+    }
+  }
+
+  return productList;
+};
+
+// ✅ Updated webhook handler
+export async function webhookStripe(request, response) {
+  const event = request.body;
+
+  switch (event.type) {
+    case 'checkout.session.completed':
+      const session = event.data.object;
+      const lineItems = await Stripe.checkout.sessions.listLineItems(
+        session.id
+      );
+      const userId = session.metadata.userId;
+      const shippingMethodId = session.metadata.shippingMethodId;
+      const shippingCost = parseFloat(
+        session.metadata.originalShippingNGN || '0'
+      );
+
+      const orderProduct = await getOrderProductItems({
+        lineItems: lineItems,
+        userId: userId,
+        addressId: session.metadata.addressId,
+        paymentId: session.payment_intent,
+        payment_status: 'PAID',
+        shippingMethodId: shippingMethodId,
+        shippingCost: shippingCost,
+        session: session, // ✅ Pass entire session
+      });
+
+      const orders = await OrderModel.insertMany(orderProduct);
+
+      if (orders.length > 0) {
+        for (const order of orders) {
+          try {
+            await createTrackingForOrder(order, userId);
+
+            const user = await UserModel.findById(userId);
+            const address = await mongoose
+              .model('address')
+              .findById(session.metadata.addressId);
+            const shippingMethod = shippingMethodId
+              ? await ShippingMethodModel.findById(shippingMethodId)
+              : null;
+
+            await sendOrderConfirmationEmail({
+              user,
+              order,
+              items: [order],
+              shippingAddress: address,
+              shippingMethod,
+              trackingNumber: order.tracking_number,
+            });
+
+            await sendOrderNotificationToTeam({
+              user,
+              order,
+              items: [order],
+              orderType: 'Stripe Payment',
+            });
+          } catch (trackingError) {
+            console.error(
+              'Failed to create tracking for order:',
+              order._id,
+              trackingError
+            );
+          }
+        }
+      }
+
+      if (userId) {
+        await UserModel.findByIdAndUpdate(userId, { shopping_cart: [] });
+        await CartProductModel.deleteMany({ userId: userId });
+      }
+      break;
+
+    default:
+      console.log(`Unhandled event type ${event.type}`);
+  }
+
+  return response.json({ received: true });
 }

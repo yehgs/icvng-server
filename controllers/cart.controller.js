@@ -57,7 +57,7 @@ export const addToCartItemController = async (request, response) => {
           productId: product._id,
           quantity: quantity,
           priceOption: priceOption || 'regular',
-          price: product.price,
+          price: product.btcPrice,
           discount: product.discount || 0,
           name: product.name,
           image: product.image,

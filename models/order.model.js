@@ -234,6 +234,66 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    currency: {
+      type: String,
+      enum: ['NGN', 'USD', 'EUR', 'GBP'],
+      default: 'NGN',
+    },
+
+    // ✅ NEW: Store the exchange rate used at time of order
+    exchangeRateUsed: {
+      rate: {
+        type: Number,
+        default: 1,
+      },
+      fromCurrency: {
+        type: String,
+        default: 'NGN',
+      },
+      toCurrency: {
+        type: String,
+        default: 'NGN',
+      },
+      rateSource: {
+        type: String,
+        enum: ['manual', 'system'],
+        default: 'manual',
+      },
+      appliedAt: {
+        type: Date,
+        default: Date.now,
+      },
+    },
+
+    // ✅ Store original NGN amounts for reference
+    amountsInNGN: {
+      subtotal: {
+        type: Number,
+        default: 0,
+      },
+      shipping: {
+        type: Number,
+        default: 0,
+      },
+      total: {
+        type: Number,
+        default: 0,
+      },
+    },
+
+    // These are the converted amounts (what customer actually pays)
+    subTotalAmt: {
+      type: Number,
+      default: 0,
+    },
+    shipping_cost: {
+      type: Number,
+      default: 0,
+    },
+    totalAmt: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
