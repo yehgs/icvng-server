@@ -157,7 +157,7 @@ app.use('/api/admin/customers', customerRouter);
 // Error handling middleware
 // ============================================
 app.use((err, req, res, next) => {
-  console.error('Server error:', err);
+  console.error('Server error:', err);  
   res.status(err.status || 500).json({
     message: err.message || 'Internal server error',
     error: true,
@@ -171,7 +171,6 @@ app.use((err, req, res, next) => {
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log('✅ Server is running on port:', PORT);
-    console.log('✅ Payload limit set to: 50mb');
     console.log('✅ Database connected');
   });
 });

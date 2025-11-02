@@ -3,11 +3,11 @@ import uploadImageCloudinary from '../utils/uploadImageCloudinary.js';
 
 const uploadImageController = async (request, response) => {
   try {
-    // console.log('Upload request received');
-    // console.log('Request file:', request.file);
+    console.log('Upload request received');
+    console.log('Request file:', request.file);
 
     const file = request.file;
-
+   
     if (!file) {
       console.log('No file found in request');
       return response.status(400).json({
@@ -51,9 +51,9 @@ const uploadImageController = async (request, response) => {
       });
     }
 
-    // console.log('Starting Cloudinary upload...');
-    // const upload = await uploadImageCloudinary(file);
-    // console.log('Cloudinary upload successful:', upload);
+    console.log('Starting Cloudinary upload...');
+    const upload = await uploadImageCloudinary(file);
+    console.log('Cloudinary upload successful:', upload);
 
     // ✅ RETURN THE IMAGE DATA PROPERLY
     return response.json({

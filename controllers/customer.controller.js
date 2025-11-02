@@ -700,7 +700,7 @@ export const toggleFeaturedCustomerController = async (request, response) => {
 // Get featured customers (public/all users)
 export const getFeaturedCustomersController = async (request, response) => {
   try {
-    const { limit = 10 } = request.query;
+    const { limit = 20 } = request.query;
 
     const featuredCustomers = await CustomerModel.find({
       isFeatured: true,

@@ -7,7 +7,7 @@ import { nigeriaStatesLgas } from '../data/nigeria-states-lgas.js';
 // Helper function to get Nigerian states and LGAs using local data
 export const getNigerianLocationData = async (request, response) => {
   try {
-    const { type, state } = request.query;
+    const { type, state } = request.query;   
 
     switch (type) {
       case 'states':
