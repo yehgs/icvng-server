@@ -466,9 +466,26 @@ export async function getBlogPostBySlugController(request, response) {
 }
 
 // Get featured posts
+// controllers/blogPost.controller.js
 export async function getFeaturedBlogPostsController(request, response) {
   try {
     const { limit = 6 } = request.query;
+    
+    console.log('=== Featured Posts Request ===');
+    console.log('Limit:', limit);
+
+    // Check if any posts exist at all
+    const totalPosts = await BlogPostModel.countDocuments();
+    console.log('Total posts in database:', totalPosts);
+
+    const publishedPosts = await BlogPostModel.countDocuments({ status: 'PUBLISHED' });
+    console.log('Published posts:', publishedPosts);
+
+    const featuredCount = await BlogPostModel.countDocuments({ 
+      status: 'PUBLISHED',
+      featured: true 
+    });
+    console.log('Featured published posts:', featuredCount);
 
     const posts = await BlogPostModel.find({
       status: 'PUBLISHED',
@@ -480,6 +497,10 @@ export async function getFeaturedBlogPostsController(request, response) {
       .select('-content')
       .sort({ publishedAt: -1 })
       .limit(parseInt(limit));
+
+    console.log('Posts found:', posts.length);
+    console.log('First post:', posts[0]?.title || 'No posts');
+    console.log('=== End Featured Posts Request ===');
 
     return response.json({
       message: 'Featured blog posts retrieved successfully',

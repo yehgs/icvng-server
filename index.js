@@ -35,11 +35,10 @@ import warehouseRouter from './route/warehouse.route.js';
 import shippingRouter from './route/shipping.route.js';
 import blogRouter from './route/blog.route.js';
 import directPricingRouter from './route/direct-pricing.route.js';
+import customerRouter from './route/customer.route.js';
+
 
 dotenv.config();
-
-// console.log(process.env.ADMIN_FRONTEND_URL1);
-// console.log(process.env.ADMIN_FRONTEND_URL2);
 
 const app = express();
 app.use(
@@ -78,16 +77,40 @@ app.use(
 );
 app.options('*', cors());
 
-// app.use('/api/file', uploadRouter);
 
-app.use(express.json());
+app.use(express.json({ 
+  limit: '50mb',
+  strict: false 
+}));
+
+app.use(express.urlencoded({ 
+  limit: '50mb', 
+  extended: true,
+  parameterLimit: 50000
+}));
+
 app.use(cookieParser());
-app.use(morgan());
+app.use(morgan('dev'));
 app.use(
   helmet({
     crossOriginResourcePolicy: false,
   })
 );
+
+// ============================================
+// Debug middleware (optional but helpful)
+// ============================================
+app.use((req, res, next) => {
+  if (req.path.includes('/upload')) {
+    console.log('📥 Upload request:', {
+      method: req.method,
+      path: req.path,
+      contentType: req.headers['content-type'],
+      contentLength: req.headers['content-length'],
+    });
+  }
+  next();
+});
 
 const PORT = 8080 || process.env.PORT;
 
@@ -95,6 +118,7 @@ app.get('/', (request, response) => {
   ///server to client
   response.json({
     message: 'Server is running ' + PORT,
+    payloadLimit: '50mb',
   });
 });
 app.use('/api/file', uploadRouter);
@@ -127,9 +151,28 @@ app.use('/api/warehouse', warehouseRouter);
 app.use('/api/shipping', shippingRouter);
 app.use('/api/blog', blogRouter);
 app.use('/api/direct-pricing', directPricingRouter);
+app.use('/api/admin/customers', customerRouter);
 
-connectDB().then(() => {
-  app.listen(PORT, () => {
-    console.log('Server is running', PORT);
+// ============================================
+// Error handling middleware
+// ============================================
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  res.status(err.status || 500).json({
+    message: err.message || 'Internal server error',
+    error: true,
+    success: false,
   });
 });
+
+// ===========================================
+// Start server
+// ============================================
+connectDB().then(() => {
+  app.listen(PORT, () => {
+    console.log('✅ Server is running on port:', PORT);
+    console.log('✅ Payload limit set to: 50mb');
+    console.log('✅ Database connected');
+  });
+});
+        
