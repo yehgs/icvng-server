@@ -6,7 +6,7 @@ const uploadImageController = async (request, response) => {
     console.log('Upload request received');
     console.log('Request file:', request.file);
 
-    const file = request.file;
+    const file = request.file;  
    
     if (!file) {
       console.log('No file found in request');

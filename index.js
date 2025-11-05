@@ -36,6 +36,7 @@ import shippingRouter from './route/shipping.route.js';
 import blogRouter from './route/blog.route.js';
 import directPricingRouter from './route/direct-pricing.route.js';
 import customerRouter from './route/customer.route.js';
+import formEmailRouter from './route/form-email.route.js';
 
 
 dotenv.config();
@@ -146,12 +147,13 @@ app.use('/api/suppliers', supplierRouter);
 app.use('/api/purchase-orders', purchaseOrderRouter);
 app.use('/api/stock', stockRouter);
 app.use('/api/pricing', pricingRouter);
-app.use('/api/exchange-rates', exchangeRateRouter);
+app.use('/api/b', exchangeRateRouter);
 app.use('/api/warehouse', warehouseRouter);
 app.use('/api/shipping', shippingRouter);
 app.use('/api/blog', blogRouter);
 app.use('/api/direct-pricing', directPricingRouter);
 app.use('/api/admin/customers', customerRouter);
+app.use('/api/send-email', formEmailRouter)
 
 // ============================================
 // Error handling middleware
