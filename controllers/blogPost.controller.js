@@ -220,6 +220,7 @@ export async function updateBlogPostController(request, response) {
       category,
       tags,
       status,
+      featured, // ✅ ADDED: Handle featured field
       seoTitle,
       seoDescription,
       seoKeywords,
@@ -273,6 +274,7 @@ export async function updateBlogPostController(request, response) {
     if (category) updateData.category = category;
     if (tags !== undefined) updateData.tags = tags;
     if (status) updateData.status = status;
+    if (featured !== undefined) updateData.featured = Boolean(featured); // ✅ ADDED
     if (seoTitle !== undefined) updateData.seoTitle = seoTitle?.trim();
     if (seoDescription !== undefined)
       updateData.seoDescription = seoDescription?.trim();
@@ -304,6 +306,48 @@ export async function updateBlogPostController(request, response) {
     console.error('Update blog post error:', error);
     return response.status(500).json({
       message: error.message || 'Failed to update blog post',
+      error: true,
+      success: false,
+    });
+  }
+}
+
+//Toggle featured status endpoint
+export async function toggleFeaturedBlogPostController(request, response) {
+  try {
+    const { id } = request.params;
+
+    const post = await BlogPostModel.findById(id);
+
+    if (!post) {
+      return response.status(404).json({
+        message: 'Blog post not found',
+        error: true,
+        success: false,
+      });
+    }
+
+    // Toggle the featured status
+    post.featured = !post.featured;
+    await post.save();
+
+    const updatedPost = await BlogPostModel.findById(id)
+      .populate('category', 'name slug')
+      .populate('tags', 'name slug color')
+      .populate('author', 'name email');
+
+    return response.json({
+      message: `Blog post ${
+        post.featured ? 'featured' : 'unfeatured'
+      } successfully`,
+      data: updatedPost,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error('Toggle featured blog post error:', error);
+    return response.status(500).json({
+      message: 'Failed to toggle featured status',
       error: true,
       success: false,
     });
@@ -393,8 +437,8 @@ export async function getPublicBlogPostsController(request, response) {
       .populate('category', 'name slug')
       .populate('tags', 'name slug color')
       .populate('author', 'name')
-      .select('-content') // Exclude full content for list view
-      .sort({ publishedAt: -1 })
+      .select('-content')
+      .sort({ publishedAt: 1 })
       .skip(skip)
       .limit(parseInt(limit));
 
@@ -466,11 +510,10 @@ export async function getBlogPostBySlugController(request, response) {
 }
 
 // Get featured posts
-// controllers/blogPost.controller.js
 export async function getFeaturedBlogPostsController(request, response) {
   try {
     const { limit = 6 } = request.query;
-    
+
     console.log('=== Featured Posts Request ===');
     console.log('Limit:', limit);
 
@@ -478,12 +521,14 @@ export async function getFeaturedBlogPostsController(request, response) {
     const totalPosts = await BlogPostModel.countDocuments();
     console.log('Total posts in database:', totalPosts);
 
-    const publishedPosts = await BlogPostModel.countDocuments({ status: 'PUBLISHED' });
+    const publishedPosts = await BlogPostModel.countDocuments({
+      status: 'PUBLISHED',
+    });
     console.log('Published posts:', publishedPosts);
 
-    const featuredCount = await BlogPostModel.countDocuments({ 
+    const featuredCount = await BlogPostModel.countDocuments({
       status: 'PUBLISHED',
-      featured: true 
+      featured: true,
     });
     console.log('Featured published posts:', featuredCount);
 

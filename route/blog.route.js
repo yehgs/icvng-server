@@ -8,7 +8,7 @@ import {
   deleteBlogCategoryController,
   getPublicBlogCategoriesController,
 } from '../controllers/blogCategory.controller.js';
-import {  
+import {
   createBlogTagController,
   getBlogTagsController,
   getBlogTagController,
@@ -26,6 +26,7 @@ import {
   getBlogPostBySlugController,
   getFeaturedBlogPostsController,
   getRelatedBlogPostsController,
+  toggleFeaturedBlogPostController,
 } from '../controllers/blogPost.controller.js';
 import auth from '../middleware/auth.js';
 import blogAuth from '../middleware/blogAuth.js';
@@ -129,6 +130,12 @@ blogRouter.put(
   auth,
   blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
   updateBlogPostController
+);
+blogRouter.patch(
+  '/admin/posts/:id/toggle-featured',
+  auth,
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  toggleFeaturedBlogPostController
 );
 blogRouter.delete(
   '/admin/posts/:id',
