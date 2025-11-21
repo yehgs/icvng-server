@@ -540,7 +540,7 @@ export async function getFeaturedBlogPostsController(request, response) {
       .populate('tags', 'name slug color')
       .populate('author', 'name')
       .select('-content')
-      .sort({ publishedAt: -1 })
+      .sort({ publishedAt: 1 })
       .limit(parseInt(limit));
 
     console.log('Posts found:', posts.length);
