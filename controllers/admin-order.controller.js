@@ -1,33 +1,30 @@
-// controllers/admin-order.controller.js
-import AdminOrderModel from '../models/admin-order.model.js';
+// controllers/admin-order.controller.js - For manual/sales orders
+import OrderModel from '../models/order.model.js';
 import CustomerModel from '../models/customer.model.js';
 import ProductModel from '../models/product.model.js';
 import UserModel from '../models/user.model.js';
 import mongoose from 'mongoose';
-import { generateInvoiceTemplate } from '../utils/invoiceTemplate.js';
-import sendEmail from '../config/sendEmail.js';
 
-// Create new order through admin
+// ===== CREATE MANUAL ORDER =====
 export const createAdminOrderController = async (request, response) => {
   try {
     const userId = request.userId;
     const user = await UserModel.findById(userId);
 
-    // Only SALES subrole can create orders
+    // Only SALES can create orders
     if (user.role !== 'ADMIN' || user.subRole !== 'SALES') {
       return response.status(403).json({
         message: 'Only sales agents can create orders',
         error: true,
-        success: false,
       });
     }
 
     const {
       customerId,
-      items,
-      orderType,
-      orderMode,
-      paymentMethod,
+      items, // Array of { productId, quantity, priceOption }
+      orderType, // BTC or BTB
+      orderMode, // ONLINE or OFFLINE
+      paymentMethod, // CASH, BANK_TRANSFER, CARD
       deliveryAddress,
       notes,
       customerNotes,
@@ -42,11 +39,10 @@ export const createAdminOrderController = async (request, response) => {
       return response.status(404).json({
         message: 'Customer not found',
         error: true,
-        success: false,
       });
     }
 
-    // Check if sales agent can access this customer
+    // Check permissions
     if (!['IT', 'MANAGER', 'DIRECTOR'].includes(user.subRole)) {
       if (
         customer.createdBy?.toString() !== userId &&
@@ -55,14 +51,13 @@ export const createAdminOrderController = async (request, response) => {
         return response.status(403).json({
           message: 'You can only create orders for customers you manage',
           error: true,
-          success: false,
         });
       }
     }
 
     // Validate and process items
     let subTotal = 0;
-    const processedItems = [];
+    const processedOrders = [];
 
     for (const item of items) {
       const product = await ProductModel.findById(item.productId);
@@ -70,7 +65,6 @@ export const createAdminOrderController = async (request, response) => {
         return response.status(404).json({
           message: `Product with ID ${item.productId} not found`,
           error: true,
-          success: false,
         });
       }
 
@@ -82,79 +76,98 @@ export const createAdminOrderController = async (request, response) => {
         unitPrice = product.price5weeksDelivery || product.price;
       }
 
-      const totalPrice = unitPrice * item.quantity;
-      subTotal += totalPrice;
+      const itemSubtotal = unitPrice * item.quantity;
+      subTotal += itemSubtotal;
 
-      processedItems.push({
+      // Create individual order for each item
+      const orderId = `ORD-${Date.now()}-${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
+
+      processedOrders.push({
+        // ===== UNIFIED FIELDS =====
+        orderId,
+        userId: null, // Manual orders don't have userId
+        customerId, // Manual orders use customerId
+
+        // Classification
+        orderType,
+        orderMode,
+        isWebsiteOrder: false, // Critical: This is a manual order
+
+        // Product
         productId: item.productId,
-        productName: product.name,
+        product_details: {
+          name: product.name,
+          image: product.image,
+          priceOption: item.priceOption || 'regular',
+          deliveryTime: item.priceOption || 'regular',
+        },
         quantity: item.quantity,
         unitPrice,
-        totalPrice,
-        priceOption: item.priceOption || 'regular',
+
+        // Pricing (split costs proportionally if multiple items)
+        subTotalAmt: itemSubtotal,
+        discount_amount: discountAmount / items.length,
+        tax_amount: taxAmount / items.length,
+        shipping_cost: shippingCost / items.length,
+        totalAmt:
+          itemSubtotal +
+          taxAmount / items.length +
+          shippingCost / items.length -
+          discountAmount / items.length,
+        currency: 'NGN',
+
+        // Payment
+        payment_status: paymentMethod === 'CASH' ? 'PENDING' : 'PENDING',
+        payment_method: paymentMethod,
+
+        // Delivery
+        deliveryAddress: deliveryAddress || customer.address,
+
+        // Created by sales agent
+        createdBy: userId,
+
+        // Notes
+        notes,
+        customer_notes: customerNotes,
       });
     }
 
-    const totalAmount = subTotal + taxAmount + shippingCost - discountAmount;
-
-    // Generate order ID
-    const orderId = `ORD-${Date.now()}-${Math.random()
-      .toString(36)
-      .substr(2, 9)}`;
-
-    const orderData = {
-      orderId,
-      customerId,
-      items: processedItems,
-      subTotal,
-      discountAmount,
-      taxAmount,
-      shippingCost,
-      totalAmount,
-      orderType,
-      orderMode,
-      isWebsiteOrder: false,
-      paymentMethod,
-      createdBy: userId,
-      deliveryAddress: deliveryAddress || customer.address,
-      notes,
-      customerNotes,
-    };
-
-    const newOrder = new AdminOrderModel(orderData);
-    const savedOrder = await newOrder.save();
+    const orders = await OrderModel.insertMany(processedOrders);
 
     // Update customer statistics
     await CustomerModel.findByIdAndUpdate(customerId, {
       $inc: {
-        totalOrders: 1,
-        totalOrderValue: totalAmount,
+        totalOrders: orders.length,
+        totalOrderValue: orders.reduce((sum, order) => sum + order.totalAmt, 0),
       },
       lastOrderDate: new Date(),
     });
 
-    const populatedOrder = await AdminOrderModel.findById(savedOrder._id)
+    const populatedOrders = await OrderModel.find({
+      _id: { $in: orders.map((o) => o._id) },
+    })
       .populate('customerId', 'name email customerType companyName')
       .populate('createdBy', 'name email')
-      .populate('items.productId', 'name image');
+      .populate('productId', 'name image');
 
     return response.json({
-      message: 'Order created successfully',
-      data: populatedOrder,
-      error: false,
+      message: 'Orders created successfully',
+      data: populatedOrders,
       success: true,
     });
   } catch (error) {
+    console.error('Create admin order error:', error);
     return response.status(500).json({
-      message: error.message || error,
+      message: error.message,
       error: true,
-      success: false,
     });
   }
 };
 
-// Get orders list with dynamic filtering
-export const getAdminOrdersController = async (request, response) => {
+// ===== GET ALL ORDERS (UNIFIED) =====
+export const getAllOrdersController = async (request, response) => {
   try {
     const userId = request.userId;
     const user = await UserModel.findById(userId);
@@ -180,25 +193,28 @@ export const getAdminOrdersController = async (request, response) => {
     // Role-based filtering
     if (user.role === 'ADMIN') {
       if (['IT', 'MANAGER', 'DIRECTOR'].includes(user.subRole)) {
-        // Can see all orders
+        // Can see all orders (both website and manual)
         query = {};
       } else if (user.subRole === 'SALES') {
-        // Can only see orders they created or website orders
+        // Can see:
+        // 1. Manual orders they created
+        // 2. Website orders (to process them)
         query = {
-          $or: [{ createdBy: userId }, { isWebsiteOrder: true }],
+          $or: [
+            { createdBy: userId, isWebsiteOrder: false }, // Their manual orders
+            { isWebsiteOrder: true }, // All website orders
+          ],
         };
       } else {
         return response.status(403).json({
           message: 'Access denied',
           error: true,
-          success: false,
         });
       }
     } else {
       return response.status(403).json({
         message: 'Access denied',
         error: true,
-        success: false,
       });
     }
 
@@ -213,8 +229,8 @@ export const getAdminOrdersController = async (request, response) => {
 
     if (orderType) query.orderType = orderType;
     if (orderMode) query.orderMode = orderMode;
-    if (orderStatus) query.orderStatus = orderStatus;
-    if (paymentStatus) query.paymentStatus = paymentStatus;
+    if (orderStatus) query.order_status = orderStatus;
+    if (paymentStatus) query.payment_status = paymentStatus;
     if (isWebsiteOrder !== undefined)
       query.isWebsiteOrder = isWebsiteOrder === 'true';
 
@@ -226,57 +242,67 @@ export const getAdminOrdersController = async (request, response) => {
       };
     }
 
-    const options = {
-      page: parseInt(page),
-      limit: parseInt(limit),
-      sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 },
-      populate: [
-        {
-          path: 'customerId',
-          select: 'name email customerType companyName',
-        },
-        {
-          path: 'createdBy',
-          select: 'name email subRole',
-        },
-        {
-          path: 'items.productId',
-          select: 'name image',
-        },
-      ],
-    };
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
 
-    const orders = await AdminOrderModel.paginate(query, options);
+    const [orders, totalCount] = await Promise.all([
+      OrderModel.find(query)
+        .populate('userId', 'name email mobile')
+        .populate('customerId', 'name email customerType companyName mobile')
+        .populate('createdBy', 'name email subRole')
+        .populate('productId', 'name image')
+        .populate('delivery_address')
+        .populate('shippingMethod', 'name type')
+        .sort(sort)
+        .skip(skip)
+        .limit(parseInt(limit)),
+      OrderModel.countDocuments(query),
+    ]);
+
+    // Transform orders to include unified customer field
+    const transformedOrders = orders.map((order) => {
+      const orderObj = order.toObject();
+      orderObj.customer = order.isWebsiteOrder
+        ? order.userId
+        : order.customerId;
+      return orderObj;
+    });
 
     return response.json({
       message: 'Orders retrieved successfully',
-      data: orders,
-      error: false,
+      data: {
+        docs: transformedOrders,
+        totalDocs: totalCount,
+        limit: parseInt(limit),
+        page: parseInt(page),
+        totalPages: Math.ceil(totalCount / parseInt(limit)),
+        hasNextPage: parseInt(page) < Math.ceil(totalCount / parseInt(limit)),
+        hasPrevPage: parseInt(page) > 1,
+      },
       success: true,
     });
   } catch (error) {
+    console.error('Get orders error:', error);
     return response.status(500).json({
-      message: error.message || error,
+      message: error.message,
       error: true,
-      success: false,
     });
   }
 };
 
-// Update order status
+// ===== UPDATE ORDER STATUS =====
 export const updateOrderStatusController = async (request, response) => {
   try {
     const userId = request.userId;
     const user = await UserModel.findById(userId);
     const { orderId } = request.params;
-    const { orderStatus, paymentStatus, notes } = request.body;
+    const { order_status, payment_status, notes } = request.body;
 
-    const order = await AdminOrderModel.findById(orderId);
+    const order = await OrderModel.findById(orderId);
     if (!order) {
       return response.status(404).json({
         message: 'Order not found',
         error: true,
-        success: false,
       });
     }
 
@@ -285,156 +311,65 @@ export const updateOrderStatusController = async (request, response) => {
       if (['IT', 'MANAGER', 'DIRECTOR'].includes(user.subRole)) {
         // Can update any order
       } else if (user.subRole === 'SALES') {
-        // Can only update orders they created
-        if (order.createdBy?.toString() !== userId && !order.isWebsiteOrder) {
+        // Can update:
+        // 1. Orders they created
+        // 2. Website orders (to process)
+        if (!order.isWebsiteOrder && order.createdBy?.toString() !== userId) {
           return response.status(403).json({
             message: 'You can only update orders you created',
             error: true,
-            success: false,
           });
         }
       } else {
         return response.status(403).json({
           message: 'Access denied',
           error: true,
-          success: false,
         });
       }
-    } else {
-      return response.status(403).json({
-        message: 'Access denied',
-        error: true,
-        success: false,
-      });
     }
 
     const updateData = {};
-    if (orderStatus) updateData.orderStatus = orderStatus;
-    if (paymentStatus) updateData.paymentStatus = paymentStatus;
-    if (notes) updateData.notes = notes;
+    if (order_status) updateData.order_status = order_status;
+    if (payment_status) updateData.payment_status = payment_status;
+    if (notes) updateData.admin_notes = notes;
 
-    // Set delivery date if order is delivered
-    if (orderStatus === 'DELIVERED') {
-      updateData.deliveryDate = new Date();
+    // Set delivery date if delivered
+    if (order_status === 'DELIVERED') {
+      updateData.actual_delivery = new Date();
     }
 
-    const updatedOrder = await AdminOrderModel.findByIdAndUpdate(
+    const updatedOrder = await OrderModel.findByIdAndUpdate(
       orderId,
       updateData,
       { new: true }
-    ).populate('customerId createdBy');
+    )
+      .populate('userId', 'name email')
+      .populate('customerId', 'name email companyName')
+      .populate('createdBy', 'name email');
 
     return response.json({
       message: 'Order updated successfully',
       data: updatedOrder,
-      error: false,
       success: true,
     });
   } catch (error) {
     return response.status(500).json({
-      message: error.message || error,
+      message: error.message,
       error: true,
-      success: false,
     });
   }
 };
 
-// Generate and send invoice
-export const generateInvoiceController = async (request, response) => {
-  try {
-    const userId = request.userId;
-    const user = await UserModel.findById(userId);
-    const { orderId } = request.params;
-
-    // Only SALES can generate invoices
-    if (user.role !== 'ADMIN' || user.subRole !== 'SALES') {
-      return response.status(403).json({
-        message: 'Only sales agents can generate invoices',
-        error: true,
-        success: false,
-      });
-    }
-
-    const order = await AdminOrderModel.findById(orderId)
-      .populate('customerId')
-      .populate('items.productId')
-      .populate('createdBy');
-
-    if (!order) {
-      return response.status(404).json({
-        message: 'Order not found',
-        error: true,
-        success: false,
-      });
-    }
-
-    // Permission check
-    if (!['IT', 'MANAGER', 'DIRECTOR'].includes(user.subRole)) {
-      if (order.createdBy?.toString() !== userId && !order.isWebsiteOrder) {
-        return response.status(403).json({
-          message: 'You can only generate invoices for orders you created',
-          error: true,
-          success: false,
-        });
-      }
-    }
-
-    // Mark invoice as generated if not already
-    if (!order.invoiceGenerated) {
-      order.invoiceGenerated = true;
-      await order.save();
-    }
-
-    // Generate invoice HTML
-    const invoiceHtml = generateInvoiceTemplate({
-      order,
-      customer: order.customerId,
-      items: order.items,
-      salesAgent: order.createdBy,
-    });
-
-    // Send invoice email to customer
-    try {
-      await sendEmail({
-        sendTo: order.customerId.email,
-        subject: `Invoice ${order.invoiceNumber} - I-Coffee Nigeria`,
-        html: invoiceHtml,
-      });
-    } catch (emailError) {
-      console.error('Failed to send invoice email:', emailError);
-    }
-
-    return response.json({
-      message: 'Invoice generated and sent successfully',
-      data: {
-        invoiceNumber: order.invoiceNumber,
-        invoiceHtml,
-        order,
-      },
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-};
-
-// Get order analytics
+// ===== GET ORDER ANALYTICS =====
 export const getOrderAnalyticsController = async (request, response) => {
   try {
     const userId = request.userId;
     const user = await UserModel.findById(userId);
 
-    // Only admin roles can access analytics
     if (user.role !== 'ADMIN') {
       return response.status(403).json({
         message: 'Access denied',
         error: true,
-        success: false,
       });
     }
 
@@ -442,11 +377,14 @@ export const getOrderAnalyticsController = async (request, response) => {
 
     let matchQuery = {};
 
-    // Role-based filtering for analytics
+    // Role-based filtering
     if (user.subRole === 'SALES') {
       matchQuery = {
         $or: [
-          { createdBy: new mongoose.Types.ObjectId(userId) },
+          {
+            createdBy: new mongoose.Types.ObjectId(userId),
+            isWebsiteOrder: false,
+          },
           { isWebsiteOrder: true },
         ],
       };
@@ -454,7 +392,7 @@ export const getOrderAnalyticsController = async (request, response) => {
       matchQuery.createdBy = new mongoose.Types.ObjectId(agentId);
     }
 
-    // Date range filter
+    // Date range
     if (startDate && endDate) {
       matchQuery.createdAt = {
         $gte: new Date(startDate),
@@ -462,71 +400,61 @@ export const getOrderAnalyticsController = async (request, response) => {
       };
     }
 
-    const analytics = await AdminOrderModel.aggregate([
+    const analytics = await OrderModel.aggregate([
       { $match: matchQuery },
       {
         $group: {
           _id: null,
           totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: '$totalAmount' },
-          avgOrderValue: { $avg: '$totalAmount' },
+          totalRevenue: { $sum: '$totalAmt' },
+          avgOrderValue: { $avg: '$totalAmt' },
+
+          // Order types
           btcOrders: {
             $sum: { $cond: [{ $eq: ['$orderType', 'BTC'] }, 1, 0] },
           },
           btbOrders: {
             $sum: { $cond: [{ $eq: ['$orderType', 'BTB'] }, 1, 0] },
           },
+
+          // Order modes
           onlineOrders: {
             $sum: { $cond: [{ $eq: ['$orderMode', 'ONLINE'] }, 1, 0] },
           },
           offlineOrders: {
             $sum: { $cond: [{ $eq: ['$orderMode', 'OFFLINE'] }, 1, 0] },
           },
-          websiteOrders: {
-            $sum: { $cond: ['$isWebsiteOrder', 1, 0] },
-          },
-          adminOrders: {
+
+          // Sources
+          websiteOrders: { $sum: { $cond: ['$isWebsiteOrder', 1, 0] } },
+          manualOrders: {
             $sum: { $cond: [{ $not: '$isWebsiteOrder' }, 1, 0] },
           },
+
+          // Status
           pendingOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'PENDING'] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ['$order_status', 'PENDING'] }, 1, 0] },
           },
           completedOrders: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'DELIVERED'] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ['$order_status', 'DELIVERED'] }, 1, 0] },
           },
           paidOrders: {
-            $sum: { $cond: [{ $eq: ['$paymentStatus', 'PAID'] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ['$payment_status', 'PAID'] }, 1, 0] },
           },
         },
       },
     ]);
 
-    // Get top products
-    const topProducts = await AdminOrderModel.aggregate([
-      { $match: matchQuery },
-      { $unwind: '$items' },
-      {
-        $group: {
-          _id: '$items.productId',
-          productName: { $first: '$items.productName' },
-          totalQuantity: { $sum: '$items.quantity' },
-          totalRevenue: { $sum: '$items.totalPrice' },
-        },
-      },
-      { $sort: { totalQuantity: -1 } },
-      { $limit: 10 },
-    ]);
-
-    // Get sales by agent (for directors/managers)
+    // Sales by agent (for directors/managers)
     let salesByAgent = [];
     if (['DIRECTOR', 'MANAGER', 'IT'].includes(user.subRole)) {
-      salesByAgent = await AdminOrderModel.aggregate([
+      salesByAgent = await OrderModel.aggregate([
         { $match: { ...matchQuery, isWebsiteOrder: false } },
         {
           $group: {
             _id: '$createdBy',
             totalOrders: { $sum: 1 },
-            totalRevenue: { $sum: '$totalAmount' },
+            totalRevenue: { $sum: '$totalAmt' },
           },
         },
         {
@@ -550,36 +478,91 @@ export const getOrderAnalyticsController = async (request, response) => {
       ]);
     }
 
-    const result = {
-      summary: analytics[0] || {
-        totalOrders: 0,
-        totalRevenue: 0,
-        avgOrderValue: 0,
-        btcOrders: 0,
-        btbOrders: 0,
-        onlineOrders: 0,
-        offlineOrders: 0,
-        websiteOrders: 0,
-        adminOrders: 0,
-        pendingOrders: 0,
-        completedOrders: 0,
-        paidOrders: 0,
-      },
-      topProducts,
-      salesByAgent,
-    };
-
     return response.json({
-      message: 'Order analytics retrieved successfully',
-      data: result,
-      error: false,
+      message: 'Analytics retrieved successfully',
+      data: {
+        summary: analytics[0] || {
+          totalOrders: 0,
+          totalRevenue: 0,
+          avgOrderValue: 0,
+          btcOrders: 0,
+          btbOrders: 0,
+          onlineOrders: 0,
+          offlineOrders: 0,
+          websiteOrders: 0,
+          manualOrders: 0,
+          pendingOrders: 0,
+          completedOrders: 0,
+          paidOrders: 0,
+        },
+        salesByAgent,
+      },
       success: true,
     });
   } catch (error) {
     return response.status(500).json({
-      message: error.message || error,
+      message: error.message,
       error: true,
-      success: false,
+    });
+  }
+};
+
+// ===== GENERATE INVOICE =====
+export const generateInvoiceController = async (request, response) => {
+  try {
+    const userId = request.userId;
+    const user = await UserModel.findById(userId);
+    const { orderId } = request.params;
+
+    // Only SALES can generate invoices
+    if (user.role !== 'ADMIN' || user.subRole !== 'SALES') {
+      return response.status(403).json({
+        message: 'Only sales agents can generate invoices',
+        error: true,
+      });
+    }
+
+    const order = await OrderModel.findById(orderId)
+      .populate('userId', 'name email')
+      .populate('customerId', 'name email companyName')
+      .populate('productId', 'name image')
+      .populate('createdBy', 'name email');
+
+    if (!order) {
+      return response.status(404).json({
+        message: 'Order not found',
+        error: true,
+      });
+    }
+
+    // Permission check
+    if (!['IT', 'MANAGER', 'DIRECTOR'].includes(user.subRole)) {
+      if (!order.isWebsiteOrder && order.createdBy?.toString() !== userId) {
+        return response.status(403).json({
+          message: 'You can only generate invoices for orders you created',
+          error: true,
+        });
+      }
+    }
+
+    // Generate invoice
+    if (!order.invoiceGenerated) {
+      order.invoiceGenerated = true;
+      await order.save();
+    }
+
+    return response.json({
+      message: 'Invoice generated successfully',
+      data: {
+        invoiceNumber: order.invoiceNumber,
+        order,
+      },
+      success: true,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message,
+      error: true,
     });
   }
 };

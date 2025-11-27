@@ -1,55 +1,33 @@
-// routes/order.route.js - Complete order routes with Paystack
+// route/order.route.js - Website orders WITH GROUPING
 import { Router } from 'express';
 import auth from '../middleware/auth.js';
 import {
+  paystackWebhookController,
+  paystackPaymentController,
+  webhookStripe,
   DirectBankTransferOrderController,
   getOrderDetailsController,
   stripePaymentController,
-  paystackPaymentController,
-  webhookStripe,
-  paystackWebhookController,
-  verifyPaystackPaymentController,
-  getShippingMethodsController,
-  getOrdersForShippingController,
-  updateOrderTrackingController,
-  getShippingAnalyticsController,
+  getOrderGroupController,
 } from '../controllers/order.controller.js';
 
 const orderRouter = Router();
 
-// ===== PAYMENT ENDPOINTS =====
+// Webhooks (no auth)
+orderRouter.post('/webhook', webhookStripe);
+orderRouter.post('/paystack-webhook', paystackWebhookController);
 
-// Direct Bank Transfer order (NGN only)
+// Payment initiation (auth required)
+orderRouter.post('/paystack-payment', auth, paystackPaymentController);
 orderRouter.post(
   '/direct-bank-transfer',
   auth,
   DirectBankTransferOrderController
 );
-
-// Stripe checkout for international currencies (USD, EUR, GBP)
 orderRouter.post('/checkout', auth, stripePaymentController);
 
-// Paystack payment for NGN
-orderRouter.post('/paystack-payment', auth, paystackPaymentController);
-
-// Paystack payment verification (callback endpoint)
-orderRouter.get('/verify-paystack/:reference', verifyPaystackPaymentController);
-
-// ===== WEBHOOK ENDPOINTS (NO AUTH!) =====
-orderRouter.post('/webhook/stripe', webhookStripe);
-orderRouter.post('/webhook/paystack', paystackWebhookController);
-
-// ===== ORDER MANAGEMENT =====
 orderRouter.get('/order-list', auth, getOrderDetailsController);
 
-// ===== SHIPPING ENDPOINTS =====
-orderRouter.post('/shipping-methods', getShippingMethodsController);
-orderRouter.get('/shipping/ready', auth, getOrdersForShippingController);
-orderRouter.put(
-  '/shipping/tracking/:orderId',
-  auth,
-  updateOrderTrackingController
-);
-orderRouter.get('/shipping/analytics', auth, getShippingAnalyticsController);
+orderRouter.get('/order-group/:orderGroupId', auth, getOrderGroupController);
 
 export default orderRouter;

@@ -1,5 +1,7 @@
-import stripe from 'stripe'
+import stripe from 'stripe';
 
-const Stripe = stripe(process.env.STRIPE_SECRET_KEY)
+const Stripe = stripe(process.env.STRIPE_SECRET_KEY);
 
-export default Stripe
+export const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+
+export default Stripe;

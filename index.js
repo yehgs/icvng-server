@@ -37,7 +37,7 @@ import blogRouter from './route/blog.route.js';
 import directPricingRouter from './route/direct-pricing.route.js';
 import customerRouter from './route/customer.route.js';
 import formEmailRouter from './route/form-email.route.js';
-
+import adminOrderRouter from './route/admin-order.route.js';
 
 dotenv.config();
 
@@ -78,17 +78,30 @@ app.use(
 );
 app.options('*', cors());
 
+app.post(
+  '/api/order/webhook',
+  express.raw({ type: 'application/json' }),
+  (req, res, next) => {
+    import('./controllers/order.controller.js').then(({ webhookStripe }) => {
+      webhookStripe(req, res);
+    });
+  }
+);
 
-app.use(express.json({ 
-  limit: '50mb',
-  strict: false 
-}));
+app.use(
+  express.json({
+    limit: '50mb',
+    strict: false,
+  })
+);
 
-app.use(express.urlencoded({ 
-  limit: '50mb', 
-  extended: true,
-  parameterLimit: 50000
-}));
+app.use(
+  express.urlencoded({
+    limit: '50mb',
+    extended: true,
+    parameterLimit: 50000,
+  })
+);
 
 app.use(cookieParser());
 app.use(morgan('dev'));
@@ -153,13 +166,14 @@ app.use('/api/shipping', shippingRouter);
 app.use('/api/blog', blogRouter);
 app.use('/api/direct-pricing', directPricingRouter);
 app.use('/api/admin/customers', customerRouter);
-app.use('/api/send-email', formEmailRouter)
+app.use('/api/send-email', formEmailRouter);
+app.use('/api/admin/orders', adminOrderRouter);
 
 // ============================================
 // Error handling middleware
 // ============================================
 app.use((err, req, res, next) => {
-  console.error('Server error:', err);  
+  console.error('Server error:', err);
   res.status(err.status || 500).json({
     message: err.message || 'Internal server error',
     error: true,
@@ -176,4 +190,3 @@ connectDB().then(() => {
     console.log('✅ Database connected');
   });
 });
-        

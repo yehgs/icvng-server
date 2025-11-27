@@ -68,7 +68,7 @@ const addressSchema = new mongoose.Schema(
     // Postal code (Nigerian postal codes)
     postal_code: {
       type: String,
-      required: [true, 'Postal code is required'],
+      required: false,
       trim: true,
       validate: {
         validator: function (value) {
