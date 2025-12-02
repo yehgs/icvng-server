@@ -62,6 +62,42 @@ const generateMethodCode = async (name, type) => {
 
   return code;
 };
+
+// Helper function to generate unique tracking number
+const generateTrackingNumber = async () => {
+  const prefix = 'ICF';
+  const maxAttempts = 10;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // Generate 6 random digits
+    const digits = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Generate 3 random uppercase letters
+    const letters = Array.from({ length: 3 }, () =>
+      String.fromCharCode(65 + Math.floor(Math.random() * 26))
+    ).join('');
+
+    const trackingNumber = `${prefix}${digits}${letters}`;
+
+    // Check if tracking number already exists
+    const existing = await ShippingTrackingModel.findOne({
+      trackingNumber: trackingNumber,
+    });
+
+    if (!existing) {
+      return trackingNumber;
+    }
+
+    console.log(
+      `Tracking number ${trackingNumber} already exists, retrying...`
+    );
+  }
+
+  throw new Error(
+    'Unable to generate unique tracking number after multiple attempts'
+  );
+};
+
 // ===== SHIPPING ZONES =====
 
 export const createShippingZone = async (request, response) => {
@@ -376,8 +412,6 @@ export const updateShippingZone = async (request, response) => {
     });
   }
 };
-
-// controllers/shipping.controller.js
 
 // Add this new function before deleteShippingZone
 export const getZoneDependencies = async (request, response) => {
@@ -1867,6 +1901,8 @@ export const calculateCheckoutShipping = async (request, response) => {
 
 // ===== SHIPMENT MANAGEMENT (KEEPING ORIGINAL TRACKING LOGIC) =====
 
+// controllers/shipping.controller.js
+
 export const createShipment = async (request, response) => {
   try {
     const userId = request.user._id;
@@ -1879,6 +1915,7 @@ export const createShipment = async (request, response) => {
       deliveryInstructions,
       priority,
       orderType = 'online',
+      applyToGroup = true, // NEW: Option to apply tracking to entire group
     } = request.body;
 
     if (!orderId || !carrier) {
@@ -1892,6 +1929,7 @@ export const createShipment = async (request, response) => {
     const order = await OrderModel.findById(orderId)
       .populate('delivery_address')
       .populate('userId', 'name email mobile')
+      .populate('customerId', 'name email mobile companyName')
       .populate('productId', 'name weight')
       .populate('shippingMethod', 'name type');
 
@@ -1903,18 +1941,43 @@ export const createShipment = async (request, response) => {
       });
     }
 
-    const existingTracking = await ShippingTrackingModel.findOne({ orderId });
+    // NEW: Get all orders in the group if applyToGroup is true
+    let ordersToTrack = [order];
+    if (applyToGroup && order.orderGroupId) {
+      ordersToTrack = await OrderModel.find({
+        orderGroupId: order.orderGroupId,
+      })
+        .populate('delivery_address')
+        .populate('userId', 'name email mobile')
+        .populate('customerId', 'name email mobile companyName')
+        .populate('productId', 'name weight')
+        .populate('shippingMethod', 'name type');
+    }
+
+    // Check if any order already has tracking
+    const existingTracking = await ShippingTrackingModel.findOne({
+      orderId: { $in: ordersToTrack.map((o) => o._id) },
+    });
+
     if (existingTracking) {
       return response.status(400).json({
-        message: 'Tracking already exists for this order',
+        message: 'Tracking already exists for this order or order group',
         error: true,
         success: false,
       });
     }
 
-    if (trackingNumber) {
+    // Auto-generate tracking number if not provided
+    let finalTrackingNumber = trackingNumber?.toUpperCase();
+
+    if (!finalTrackingNumber) {
+      console.log('🔄 Auto-generating tracking number...');
+      finalTrackingNumber = await generateTrackingNumber();
+      console.log(`✅ Generated tracking number: ${finalTrackingNumber}`);
+    } else {
+      // If tracking number is provided, check if it already exists
       const existingTrackingNumber = await ShippingTrackingModel.findOne({
-        trackingNumber: trackingNumber.toUpperCase(),
+        trackingNumber: finalTrackingNumber,
       });
       if (existingTrackingNumber) {
         return response.status(400).json({
@@ -1925,114 +1988,154 @@ export const createShipment = async (request, response) => {
       }
     }
 
-    const newTracking = new ShippingTrackingModel({
-      orderId,
-      trackingNumber: trackingNumber?.toUpperCase(),
-      carrier,
-      shippingMethod: order.shippingMethod?._id,
-      estimatedDelivery,
-      packageInfo: {
-        weight: packageInfo?.weight || order.productId?.weight || 1,
-        dimensions: packageInfo?.dimensions || {
-          length: 20,
-          width: 15,
-          height: 10,
-          unit: 'cm',
+    // NEW: Calculate total weight for all items in group
+    const totalWeight = ordersToTrack.reduce((sum, o) => {
+      return sum + (o.productId?.weight || 1) * o.quantity;
+    }, 0);
+
+    // Get customer info (prioritize userId over customerId)
+    const customer = order.userId || order.customerId;
+
+    // Create tracking records for each order in the group
+    const trackingRecords = [];
+
+    for (const orderItem of ordersToTrack) {
+      const newTracking = new ShippingTrackingModel({
+        orderId: orderItem._id,
+        trackingNumber: finalTrackingNumber, // Same tracking number for all
+        carrier,
+        shippingMethod: orderItem.shippingMethod?._id,
+        estimatedDelivery,
+        packageInfo: {
+          weight: packageInfo?.weight || totalWeight,
+          dimensions: packageInfo?.dimensions || {
+            length: 20,
+            width: 15,
+            height: 10,
+            unit: 'cm',
+          },
+          fragile: packageInfo?.fragile || false,
+          insured:
+            packageInfo?.insured || order.groupTotals?.grandTotal > 50000,
+          insuranceValue:
+            packageInfo?.insuranceValue ||
+            (order.groupTotals?.grandTotal > 50000
+              ? order.groupTotals.grandTotal
+              : 0),
         },
-        fragile: packageInfo?.fragile || false,
-        insured: packageInfo?.insured || order.totalAmt > 50000,
-        insuranceValue:
-          packageInfo?.insuranceValue ||
-          (order.totalAmt > 50000 ? order.totalAmt : 0),
-      },
-      deliveryInstructions,
-      priority: priority || 'NORMAL',
-      orderType: orderType,
-      deliveryAddress: order.delivery_address
-        ? {
-            addressLine: order.delivery_address.address_line,
-            city: order.delivery_address.city,
-            state: order.delivery_address.state,
-            postalCode: order.delivery_address.pincode,
-            country: order.delivery_address.country || 'Nigeria',
-          }
-        : {},
-      recipientInfo: {
-        name: order.userId ? order.userId.name : 'Customer',
-        phone: order.delivery_address?.mobile || order.userId?.mobile,
-        email: order.userId ? order.userId.email : '',
-      },
-      shippingCost: order.shipping_cost || 0,
-      createdBy: userId,
-      updatedBy: userId,
-    });
-
-    const savedTracking = await newTracking.save();
-
-    // Add initial tracking event
-    await savedTracking.addTrackingEvent(
-      {
-        status: 'PENDING',
-        description:
-          orderType === 'online'
-            ? 'Online order confirmed and ready for processing'
-            : 'Offline order created and ready for processing',
-        location: {
-          facility: 'I-Coffee Shop',
-          city: 'Lagos',
-          state: 'Lagos',
-          country: 'Nigeria',
+        deliveryInstructions,
+        priority: priority || 'NORMAL',
+        orderType: orderType,
+        deliveryAddress: orderItem.delivery_address
+          ? {
+              addressLine: orderItem.delivery_address.address_line,
+              city: orderItem.delivery_address.city,
+              state: orderItem.delivery_address.state,
+              postalCode: orderItem.delivery_address.pincode,
+              country: orderItem.delivery_address.country || 'Nigeria',
+            }
+          : {},
+        recipientInfo: {
+          name: customer ? customer.name : 'Customer',
+          phone: orderItem.delivery_address?.mobile || customer?.mobile,
+          email: customer ? customer.email : '',
         },
-      },
-      userId
-    );
+        shippingCost: orderItem.shipping_cost || 0,
+        // NEW: Store group information
+        orderGroupId: orderItem.orderGroupId,
+        isGroupShipment: ordersToTrack.length > 1,
+        groupItemCount: ordersToTrack.length,
+        createdBy: userId,
+        updatedBy: userId,
+      });
 
-    // Update order with tracking information
-    await OrderModel.findByIdAndUpdate(orderId, {
-      tracking_number: savedTracking.trackingNumber,
-      order_status: 'PROCESSING',
-      estimated_delivery: estimatedDelivery,
-    });
+      const savedTracking = await newTracking.save();
+      trackingRecords.push(savedTracking);
+
+      // Add initial tracking event
+      await savedTracking.addTrackingEvent(
+        {
+          status: 'PENDING',
+          description:
+            orderType === 'online'
+              ? `Online order confirmed and ready for processing${
+                  ordersToTrack.length > 1
+                    ? ` (${ordersToTrack.length} items in shipment)`
+                    : ''
+                }`
+              : `Offline order created and ready for processing${
+                  ordersToTrack.length > 1
+                    ? ` (${ordersToTrack.length} items in shipment)`
+                    : ''
+                }`,
+          location: {
+            facility: 'I-Coffee Shop',
+            city: 'Lagos',
+            state: 'Lagos',
+            country: 'Nigeria',
+          },
+        },
+        userId
+      );
+
+      // Update order with tracking information
+      await OrderModel.findByIdAndUpdate(orderItem._id, {
+        tracking_number: savedTracking.trackingNumber,
+        order_status: 'PROCESSING',
+        estimated_delivery: estimatedDelivery,
+      });
+    }
 
     // Send notification emails
     try {
-      if (order.userId) {
+      if (customer) {
         await sendShippingNotificationEmail({
-          user: order.userId,
+          user: customer,
           order: order,
-          tracking: savedTracking,
+          tracking: trackingRecords[0],
           latestEvent:
-            savedTracking.trackingEvents[
-              savedTracking.trackingEvents.length - 1
+            trackingRecords[0].trackingEvents[
+              trackingRecords[0].trackingEvents.length - 1
             ],
+          isGroupShipment: ordersToTrack.length > 1,
+          groupItemCount: ordersToTrack.length,
         });
       }
 
-      // Send team notification
       await sendOrderNotificationToTeam({
-        user: order.userId,
+        user: customer,
         order: order,
-        items: [order],
-        orderType: `Shipment Created - ${orderType}`,
+        items: ordersToTrack,
+        orderType: `Shipment Created - ${orderType}${
+          ordersToTrack.length > 1 ? ` (${ordersToTrack.length} items)` : ''
+        }`,
       });
     } catch (emailError) {
       console.error('Failed to send notification emails:', emailError);
     }
 
+    // Return the first tracking record with populated data
     const populatedTracking = await ShippingTrackingModel.findById(
-      savedTracking._id
+      trackingRecords[0]._id
     )
       .populate('orderId')
       .populate('shippingMethod')
       .populate('createdBy', 'name email');
 
     return response.json({
-      message: 'Shipment created successfully',
-      data: populatedTracking,
+      message: `Shipment created successfully${
+        ordersToTrack.length > 1 ? ` for ${ordersToTrack.length} items` : ''
+      }`,
+      data: {
+        ...populatedTracking.toObject(),
+        groupItemCount: ordersToTrack.length,
+        trackingRecordsCreated: trackingRecords.length,
+      },
       error: false,
       success: true,
     });
   } catch (error) {
+    console.error('❌ Create shipment error:', error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
@@ -2045,11 +2148,18 @@ export const updateTracking = async (request, response) => {
   try {
     const userId = request.user._id;
     const { trackingId } = request.params;
-    const { status, description, location, estimatedDelivery } = request.body;
+    const {
+      status,
+      description,
+      location,
+      estimatedDelivery,
+      applyToGroup = true, // NEW: Option to apply update to entire group
+    } = request.body;
 
     const tracking = await ShippingTrackingModel.findById(trackingId)
       .populate('orderId')
-      .populate('orderId.userId', 'name email');
+      .populate('orderId.userId', 'name email')
+      .populate('orderId.customerId', 'name email companyName');
 
     if (!tracking) {
       return response.status(404).json({
@@ -2059,48 +2169,69 @@ export const updateTracking = async (request, response) => {
       });
     }
 
-    if (estimatedDelivery) {
-      await tracking.updateEstimatedDelivery(
-        new Date(estimatedDelivery),
-        userId
-      );
+    // NEW: Get all trackings in the group if applyToGroup is true
+    let trackingsToUpdate = [tracking];
+    if (applyToGroup && tracking.orderGroupId) {
+      // Find all trackings with same tracking number (they're in the same shipment)
+      trackingsToUpdate = await ShippingTrackingModel.find({
+        trackingNumber: tracking.trackingNumber,
+      })
+        .populate('orderId')
+        .populate('orderId.userId', 'name email')
+        .populate('orderId.customerId', 'name email companyName');
     }
 
-    if (status && description) {
-      await tracking.addTrackingEvent(
-        {
-          status,
-          description,
-          location,
-        },
-        userId
-      );
+    // Update estimated delivery for all trackings in group
+    if (estimatedDelivery) {
+      for (const trackingItem of trackingsToUpdate) {
+        await trackingItem.updateEstimatedDelivery(
+          new Date(estimatedDelivery),
+          userId
+        );
+      }
+    }
 
-      // Update order status based on tracking status
-      let orderStatus = tracking.orderId.order_status;
-      switch (status) {
-        case 'PROCESSING':
-          orderStatus = 'PROCESSING';
-          break;
-        case 'PICKED_UP':
-        case 'IN_TRANSIT':
-          orderStatus = 'SHIPPED';
-          break;
-        case 'DELIVERED':
-          orderStatus = 'DELIVERED';
-          break;
-        case 'RETURNED':
-        case 'LOST':
-          orderStatus = 'CANCELLED';
-          break;
+    // Add tracking event and update status for all in group
+    if (status && description) {
+      for (const trackingItem of trackingsToUpdate) {
+        await trackingItem.addTrackingEvent(
+          {
+            status,
+            description:
+              trackingsToUpdate.length > 1
+                ? `${description} (${trackingsToUpdate.length} items in shipment)`
+                : description,
+            location,
+          },
+          userId
+        );
+
+        // Update order status based on tracking status
+        let orderStatus = trackingItem.orderId.order_status;
+        switch (status) {
+          case 'PROCESSING':
+            orderStatus = 'PROCESSING';
+            break;
+          case 'PICKED_UP':
+          case 'IN_TRANSIT':
+            orderStatus = 'SHIPPED';
+            break;
+          case 'DELIVERED':
+            orderStatus = 'DELIVERED';
+            break;
+          case 'RETURNED':
+          case 'LOST':
+            orderStatus = 'CANCELLED';
+            break;
+        }
+
+        await OrderModel.findByIdAndUpdate(trackingItem.orderId._id, {
+          order_status: orderStatus,
+          ...(status === 'DELIVERED' && { actual_delivery: new Date() }),
+        });
       }
 
-      await OrderModel.findByIdAndUpdate(tracking.orderId, {
-        order_status: orderStatus,
-        ...(status === 'DELIVERED' && { actual_delivery: new Date() }),
-      });
-
-      // Send email notification for important status changes
+      // Send email notification for important status changes (only once for the group)
       const importantStatuses = [
         'PICKED_UP',
         'IN_TRANSIT',
@@ -2108,14 +2239,19 @@ export const updateTracking = async (request, response) => {
         'DELIVERED',
         'ATTEMPTED',
       ];
+
       if (importantStatuses.includes(status)) {
         try {
+          const customer =
+            tracking.orderId.userId || tracking.orderId.customerId;
           await sendShippingNotificationEmail({
-            user: tracking.orderId.userId,
+            user: customer,
             order: tracking.orderId,
             tracking: tracking,
             latestEvent:
               tracking.trackingEvents[tracking.trackingEvents.length - 1],
+            isGroupShipment: trackingsToUpdate.length > 1,
+            groupItemCount: trackingsToUpdate.length,
           });
         } catch (emailError) {
           console.error(
@@ -2126,14 +2262,23 @@ export const updateTracking = async (request, response) => {
       }
     }
 
+    // Return the updated tracking with group info
     const updatedTracking = await ShippingTrackingModel.findById(trackingId)
       .populate('orderId')
       .populate('shippingMethod')
       .populate('trackingEvents.updatedBy', 'name');
 
     return response.json({
-      message: 'Tracking updated successfully',
-      data: updatedTracking,
+      message: `Tracking updated successfully${
+        trackingsToUpdate.length > 1
+          ? ` for ${trackingsToUpdate.length} items`
+          : ''
+      }`,
+      data: {
+        ...updatedTracking.toObject(),
+        groupItemCount: trackingsToUpdate.length,
+        trackingsUpdated: trackingsToUpdate.length,
+      },
       error: false,
       success: true,
     });

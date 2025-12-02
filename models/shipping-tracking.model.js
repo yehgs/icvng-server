@@ -209,6 +209,18 @@ const shippingTrackingSchema = new mongoose.Schema(
       enum: ['LOW', 'NORMAL', 'HIGH', 'URGENT'],
       default: 'NORMAL',
     },
+    orderGroupId: {
+      type: String,
+      index: true,
+    },
+    isGroupShipment: {
+      type: Boolean,
+      default: false,
+    },
+    groupItemCount: {
+      type: Number,
+      default: 1,
+    },
     createdBy: {
       type: mongoose.Schema.ObjectId,
       ref: 'User',
