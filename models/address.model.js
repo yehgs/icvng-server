@@ -1,4 +1,4 @@
-// models/address.model.js - Enhanced Nigeria-focused address model
+// models/address.model.js - 
 import mongoose from 'mongoose';
 import { nigeriaStatesLgas } from '../data/nigeria-states-lgas.js';
 

@@ -1,4 +1,4 @@
-// models/admin-order.model.js - Extension to existing order model
+// models/admin-order.model.js 
 import mongoose from 'mongoose';
 import mongoosePaginate from 'mongoose-paginate-v2';
 

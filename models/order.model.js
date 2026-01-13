@@ -1,4 +1,4 @@
-// models/order.model.js - Enhanced unified model with ORDER GROUPING
+// models/order.model.js - 
 import mongoose from 'mongoose';
 
 const orderSchema = new mongoose.Schema(
