@@ -1,5 +1,5 @@
-import { Router } from 'express';
-import auth from '../middleware/auth.js';
+import { Router } from "express";
+import auth from "../middleware/auth.js";
 import {
   createProductController,
   searchProductController,
@@ -17,56 +17,59 @@ import {
   getProductsByAvailability,
   getProductBySKU,
   getProductControllerAdmin,
-} from '../controllers/product.controller.js';
-import { admin } from '../middleware/Admin.js';
+  getPopularProducts,
+} from "../controllers/product.controller.js";
+import { admin } from "../middleware/Admin.js";
 
 const productRouter = Router();
 
 // Create product
-productRouter.post('/create', auth, admin, createProductController);
+productRouter.post("/create", auth, admin, createProductController);
 
 // Get products
-productRouter.get('/search', searchProductController);
-productRouter.get('/category-structure', getCategoryStructureController);
-productRouter.post('/get', getProductController);
-productRouter.post('/get-admin', getProductControllerAdmin);
-productRouter.post('/get-product-by-category', getProductByCategory);
+productRouter.get("/search", searchProductController);
+productRouter.get("/category-structure", getCategoryStructureController);
+productRouter.post("/get", getProductController);
+productRouter.post("/get-admin", getProductControllerAdmin);
+productRouter.post("/get-product-by-category", getProductByCategory);
 productRouter.post(
-  '/get-product-by-category-and-subcategory',
+  "/get-product-by-category-and-subcategory",
   getProductByCategoryAndSubCategory
 );
-productRouter.post('/get-product-details', getProductDetails);
+productRouter.post("/get-product-details", getProductDetails);
 
 // Update product
-productRouter.put('/update-product-details', auth, admin, updateProductDetails);
+productRouter.put("/update-product-details", auth, admin, updateProductDetails);
 
 // Delete product
-productRouter.delete('/delete-product', auth, admin, deleteProductDetails);
+productRouter.delete("/delete-product", auth, admin, deleteProductDetails);
 
 // Search product
-productRouter.post('/search-product', searchProduct);
-productRouter.post('/search-product-admin', searchProductAdmin);
+productRouter.post("/search-product", searchProduct);
+productRouter.post("/search-product-admin", searchProductAdmin);
 
 // Filter products by category
-productRouter.post('/get-product-by-category', getProductByCategory);
+productRouter.post("/get-product-by-category", getProductByCategory);
 
 // Filter products by category and subcategory
 productRouter.post(
-  '/get-product-by-category-and-subcategory',
+  "/get-product-by-category-and-subcategory",
   getProductByCategoryAndSubCategory
 );
 
 // Filter products by brand
-productRouter.post('/get-product-by-brand', getProductByBrand);
+productRouter.post("/get-product-by-brand", getProductByBrand);
 
-// NEW ROUTES - Added the three new functions
 // Get featured products
-productRouter.post('/get-featured-products', getFeaturedProducts);
+productRouter.post("/get-featured-products", getFeaturedProducts);
 
 // Get products by availability status
-productRouter.post('/get-products-by-availability', getProductsByAvailability);
+productRouter.post("/get-products-by-availability", getProductsByAvailability);
 
 // Get product by SKU
-productRouter.post('/get-product-by-sku', getProductBySKU);
+productRouter.post("/get-product-by-sku", getProductBySKU);
+
+// Get popular products
+productRouter.post("/get-popular-products", getPopularProducts);
 
 export default productRouter;

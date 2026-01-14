@@ -1,9 +1,9 @@
-import ProductModel from '../models/product.model.js';
-import SubCategoryModel from '../models/subCategory.model.js';
-import CategoryModel from '../models/category.model.js';
-import BrandModel from '../models/brand.model.js';
-import generateSlug from '../utils/generateSlug.js';
-import generateSKU from '../utils/generateSKU.js';
+import ProductModel from "../models/product.model.js";
+import SubCategoryModel from "../models/subCategory.model.js";
+import CategoryModel from "../models/category.model.js";
+import BrandModel from "../models/brand.model.js";
+import generateSlug from "../utils/generateSlug.js";
+import generateSKU from "../utils/generateSKU.js";
 
 export const createProductController = async (request, response) => {
   try {
@@ -55,7 +55,7 @@ export const createProductController = async (request, response) => {
     if (!name || !image[0] || !category || !shortDescription) {
       return response.status(400).json({
         message:
-          'Enter required fields (name, image, category, price, shortDescription)',
+          "Enter required fields (name, image, category, price, shortDescription)",
         error: true,
         success: false,
       });
@@ -70,7 +70,7 @@ export const createProductController = async (request, response) => {
 
     if (existingProduct) {
       return response.status(400).json({
-        message: 'A Product with this slug already exists',
+        message: "A Product with this slug already exists",
         error: true,
         success: false,
       });
@@ -78,14 +78,14 @@ export const createProductController = async (request, response) => {
 
     // Generate SKU if not provided
     let generatedSKU = sku;
-    if (!sku || sku.trim() === '') {
+    if (!sku || sku.trim() === "") {
       generatedSKU = await generateSKU(name, category, brand);
     } else {
       // Check if provided SKU already exists
       const existingSKU = await ProductModel.findOne({ sku });
       if (existingSKU) {
         return response.status(400).json({
-          message: 'A Product with this SKU already exists',
+          message: "A Product with this SKU already exists",
           error: true,
           success: false,
         });
@@ -128,16 +128,16 @@ export const createProductController = async (request, response) => {
       btcPrice: btcPrice || 0,
       discount: discount || 0,
       sku: generatedSKU,
-      description: description || '',
+      description: description || "",
       shortDescription,
-      additionalInfo: additionalInfo || '',
+      additionalInfo: additionalInfo || "",
       more_details: more_details || {},
       createdBy: userId,
       updatedBy: userId,
       seoTitle: seoTitle || name,
       seoDescription:
-        seoDescription || (description ? description.substring(0, 160) : ''),
-      publish: publish || 'PENDING',
+        seoDescription || (description ? description.substring(0, 160) : ""),
+      publish: publish || "PENDING",
       relatedProducts: relatedProducts || [],
       slug: generatedSlug,
     });
@@ -145,7 +145,7 @@ export const createProductController = async (request, response) => {
     const saveProduct = await product.save();
 
     return response.json({
-      message: 'Product Created Successfully',
+      message: "Product Created Successfully",
       data: saveProduct,
       error: false,
       success: true,
@@ -166,7 +166,7 @@ export const searchProductController = async (request, response) => {
 
     if (!q) {
       return response.status(400).json({
-        message: 'Search query is required',
+        message: "Search query is required",
         error: true,
         success: false,
       });
@@ -175,25 +175,25 @@ export const searchProductController = async (request, response) => {
     // Create the search query
     const searchQuery = {
       $or: [
-        { name: { $regex: q, $options: 'i' } },
-        { description: { $regex: q, $options: 'i' } },
-        { shortDescription: { $regex: q, $options: 'i' } },
-        { sku: { $regex: q, $options: 'i' } },
+        { name: { $regex: q, $options: "i" } },
+        { description: { $regex: q, $options: "i" } },
+        { shortDescription: { $regex: q, $options: "i" } },
+        { sku: { $regex: q, $options: "i" } },
       ],
     };
 
     // Fetch products with populated fields
     const products = await ProductModel.find(searchQuery)
-      .populate('brand', 'name')
-      .populate('category', 'name')
-      .populate('compatibleSystem', 'name')
-      .populate('producer', 'name')
+      .populate("brand", "name")
+      .populate("category", "name")
+      .populate("compatibleSystem", "name")
+      .populate("producer", "name")
       .sort({ averageRating: -1 })
       .limit(parseInt(limit))
       .lean();
 
     return response.json({
-      message: 'Products found',
+      message: "Products found",
       data: products,
       error: false,
       success: true,
@@ -291,7 +291,7 @@ export const getCategoryStructureController = async (request, response) => {
     );
 
     return response.json({
-      message: 'Category structure fetched successfully',
+      message: "Category structure fetched successfully",
       data: enrichedCategories,
       error: false,
       success: true,
@@ -333,13 +333,13 @@ export const getProductControllerAdmin = async (request, response) => {
         .skip(skip)
         .limit(limit)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy'
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy"
         ),
       ProductModel.countDocuments(query),
     ]);
 
     return response.json({
-      message: 'Product data',
+      message: "Product data",
       error: false,
       success: true,
       totalCount: totalCount,
@@ -354,6 +354,9 @@ export const getProductControllerAdmin = async (request, response) => {
     });
   }
 };
+
+// Controller 1: getProductController
+// UPDATE THIS IN: icvng-server/controllers/product.controller.js
 
 // Controller 1: getProductController
 export const getProductController = async (request, response) => {
@@ -408,14 +411,26 @@ export const getProductController = async (request, response) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .populate(
-          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy'
-        ),
+        // ✅ CRITICAL: Populate category with name field
+        .populate("category", "name")
+        .populate("subCategory", "name")
+        .populate("brand", "name")
+        .populate("tags", "name")
+        .populate("attributes", "name")
+        .populate("compatibleSystem", "name")
+        .populate("producer", "name")
+        .populate("createdBy", "name")
+        .populate("updatedBy", "name"),
       ProductModel.countDocuments(query),
     ]);
 
+    console.log(`getProductController: Returning ${data.length} products`);
+    if (data.length > 0) {
+      console.log("Sample product category:", data[0].category);
+    }
+
     return response.json({
-      message: 'Product data',
+      message: "Product data",
       error: false,
       success: true,
       totalCount: totalCount,
@@ -596,27 +611,27 @@ export const searchProduct = async (request, response) => {
 
     if (sort) {
       switch (sort) {
-        case 'price-low':
+        case "price-low":
           sortOption = {
             btcPrice: 1,
             price3weeksDelivery: 1,
             price5weeksDelivery: 1,
           };
           break;
-        case 'price-high':
+        case "price-high":
           sortOption = {
             btcPrice: -1,
             price3weeksDelivery: -1,
             price5weeksDelivery: -1,
           };
           break;
-        case 'popularity':
+        case "popularity":
           sortOption = { averageRating: -1 };
           break;
-        case 'alphabet':
+        case "alphabet":
           sortOption = { name: 1 };
           break;
-        case 'featured':
+        case "featured":
           sortOption = { featured: -1, createdAt: -1 };
           break;
       }
@@ -629,13 +644,13 @@ export const searchProduct = async (request, response) => {
         .skip(skip)
         .limit(limit)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
         ),
       ProductModel.countDocuments(query),
     ]);
 
     return response.json({
-      message: 'Product data',
+      message: "Product data",
       error: false,
       success: true,
       data: data,
@@ -645,7 +660,7 @@ export const searchProduct = async (request, response) => {
       limit: limit,
     });
   } catch (error) {
-    console.error('Search product error:', error);
+    console.error("Search product error:", error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
@@ -660,26 +675,26 @@ export const getProductDetails = async (request, response) => {
 
     if (!productId) {
       return response.status(400).json({
-        message: 'provide product id',
+        message: "provide product id",
         error: true,
         success: false,
       });
     }
 
     const product = await ProductModel.findOne({ _id: productId }).populate(
-      'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
+      "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
     );
 
     if (!product) {
       return response.status(404).json({
-        message: 'Product not found',
+        message: "Product not found",
         error: true,
         success: false,
       });
     }
 
     return response.json({
-      message: 'product details',
+      message: "product details",
       data: product,
       error: false,
       success: true,
@@ -699,7 +714,7 @@ export const updateProductDetails = async (request, response) => {
 
     if (!_id) {
       return response.status(400).json({
-        message: 'provide product _id',
+        message: "provide product _id",
         error: true,
         success: false,
       });
@@ -709,7 +724,7 @@ export const updateProductDetails = async (request, response) => {
     const existingProduct = await ProductModel.findById(_id);
     if (!existingProduct) {
       return response.status(404).json({
-        message: 'Product not found',
+        message: "Product not found",
         error: true,
         success: false,
       });
@@ -730,7 +745,7 @@ export const updateProductDetails = async (request, response) => {
 
       if (existingSlugProduct) {
         return response.status(400).json({
-          message: 'A Product with this slug already exists',
+          message: "A Product with this slug already exists",
           error: true,
           success: false,
         });
@@ -742,8 +757,8 @@ export const updateProductDetails = async (request, response) => {
     // Handle SKU generation if product doesn't have SKU or SKU is empty
     if (
       !existingProduct.sku ||
-      existingProduct.sku.trim() === '' ||
-      (sku && sku.trim() === '')
+      existingProduct.sku.trim() === "" ||
+      (sku && sku.trim() === "")
     ) {
       const productName = name || existingProduct.name;
       const productCategory = category || existingProduct.category;
@@ -764,7 +779,7 @@ export const updateProductDetails = async (request, response) => {
 
       if (existingSKUProduct) {
         return response.status(400).json({
-          message: 'A Product with this SKU already exists',
+          message: "A Product with this SKU already exists",
           error: true,
           success: false,
         });
@@ -776,11 +791,11 @@ export const updateProductDetails = async (request, response) => {
       updateData,
       { new: true }
     ).populate(
-      'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
+      "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
     );
 
     return response.json({
-      message: 'updated successfully',
+      message: "updated successfully",
       data: updateProduct,
       error: false,
       success: true,
@@ -800,7 +815,7 @@ export const deleteProductDetails = async (request, response) => {
 
     if (!_id) {
       return response.status(400).json({
-        message: 'provide _id ',
+        message: "provide _id ",
         error: true,
         success: false,
       });
@@ -810,14 +825,14 @@ export const deleteProductDetails = async (request, response) => {
 
     if (deleteProduct.deletedCount === 0) {
       return response.status(404).json({
-        message: 'Product not found',
+        message: "Product not found",
         error: true,
         success: false,
       });
     }
 
     return response.json({
-      message: 'Delete successfully',
+      message: "Delete successfully",
       error: false,
       success: true,
       data: deleteProduct,
@@ -949,19 +964,19 @@ export const searchProductAdmin = async (request, response) => {
 
     if (sort) {
       switch (sort) {
-        case 'price-low':
+        case "price-low":
           sortOption = { price: 1 };
           break;
-        case 'price-high':
+        case "price-high":
           sortOption = { price: -1 };
           break;
-        case 'popularity':
+        case "popularity":
           sortOption = { averageRating: -1 };
           break;
-        case 'alphabet':
+        case "alphabet":
           sortOption = { name: 1 };
           break;
-        case 'featured':
+        case "featured":
           sortOption = { featured: -1, createdAt: -1 };
           break;
       }
@@ -974,13 +989,13 @@ export const searchProductAdmin = async (request, response) => {
         .skip(skip)
         .limit(limit)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
         ),
       ProductModel.countDocuments(query),
     ]);
 
     return response.json({
-      message: 'Product data',
+      message: "Product data",
       error: false,
       success: true,
       data: data,
@@ -990,7 +1005,7 @@ export const searchProductAdmin = async (request, response) => {
       limit: limit,
     });
   } catch (error) {
-    console.error('Search product error:', error);
+    console.error("Search product error:", error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
@@ -1006,7 +1021,7 @@ export const getProductByCategory = async (request, response) => {
 
     if (!categoryId) {
       return response.status(400).json({
-        message: 'Category ID is required',
+        message: "Category ID is required",
         error: true,
         success: false,
       });
@@ -1022,13 +1037,13 @@ export const getProductByCategory = async (request, response) => {
         .skip(skip)
         .limit(pageSize)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
         ),
       ProductModel.countDocuments({ category: categoryId }),
     ]);
 
     return response.json({
-      message: 'Products by category',
+      message: "Products by category",
       error: false,
       success: true,
       data: data,
@@ -1053,7 +1068,7 @@ export const getProductByCategoryAndSubCategory = async (request, response) => {
 
     if (!categoryId || !subCategoryId) {
       return response.status(400).json({
-        message: 'Category ID and Subcategory ID are required',
+        message: "Category ID and Subcategory ID are required",
         error: true,
         success: false,
       });
@@ -1072,7 +1087,7 @@ export const getProductByCategoryAndSubCategory = async (request, response) => {
         .skip(skip)
         .limit(pageSize)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
         ),
       ProductModel.countDocuments({
         category: categoryId,
@@ -1081,7 +1096,7 @@ export const getProductByCategoryAndSubCategory = async (request, response) => {
     ]);
 
     return response.json({
-      message: 'Products by category and subcategory',
+      message: "Products by category and subcategory",
       error: false,
       success: true,
       data: data,
@@ -1106,7 +1121,7 @@ export const getProductByBrand = async (request, response) => {
 
     if (!brandId) {
       return response.status(400).json({
-        message: 'Brand ID is required',
+        message: "Brand ID is required",
         error: true,
         success: false,
       });
@@ -1122,13 +1137,13 @@ export const getProductByBrand = async (request, response) => {
         .skip(skip)
         .limit(pageSize)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
         ),
       ProductModel.countDocuments({ brand: brandId }),
     ]);
 
     return response.json({
-      message: 'Products by brand',
+      message: "Products by brand",
       error: false,
       success: true,
       data: data,
@@ -1155,22 +1170,37 @@ export const getFeaturedProducts = async (request, response) => {
     const pageSize = limit || 12;
     const skip = (pageNumber - 1) * pageSize;
 
-    const [data, dataCount] = await Promise.all([
-      ProductModel.find({ featured: true, productAvailability: true })
-        .sort({ averageRating: -1, createdAt: -1 })
-        .skip(skip)
-        .limit(pageSize)
-        .populate(
-          'category subCategory brand tags attributes compatibleSystem producer'
-        ),
-      ProductModel.countDocuments({
-        featured: true,
-        productAvailability: true,
-      }),
-    ]);
+    // Build query with mandatory filters
+    const query = {
+      $and: [
+        { featured: true },
+        { productAvailability: true },
+        // CRITICAL: Only show products with at least one price set
+        {
+          $or: [
+            { btcPrice: { $gt: 0 } },
+            { price3weeksDelivery: { $gt: 0 } },
+            { price5weeksDelivery: { $gt: 0 } },
+          ],
+        },
+        // Weight filter
+        { weight: { $exists: true, $gt: 0 } },
+      ],
+    };
+
+    // Get total count first
+    const dataCount = await ProductModel.countDocuments(query);
+
+    // Fetch all matching products (no sort by createdAt - will be randomized on frontend)
+    const data = await ProductModel.find(query)
+      .skip(skip)
+      .limit(pageSize)
+      .populate(
+        "category subCategory brand tags attributes compatibleSystem producer"
+      );
 
     return response.json({
-      message: 'Featured products',
+      message: "Featured products",
       error: false,
       success: true,
       data: data,
@@ -1205,13 +1235,13 @@ export const getProductsByAvailability = async (request, response) => {
         .skip(skip)
         .limit(pageSize)
         .populate(
-          'category subCategory brand tags attributes compatibleSystem producer'
+          "category subCategory brand tags attributes compatibleSystem producer"
         ),
       ProductModel.countDocuments(query),
     ]);
 
     return response.json({
-      message: `Products ${available !== false ? 'available' : 'unavailable'}`,
+      message: `Products ${available !== false ? "available" : "unavailable"}`,
       error: false,
       success: true,
       data: data,
@@ -1260,8 +1290,8 @@ export const getProducts = async (request, response) => {
         priceFilter,
         {
           $or: [
-            { name: { $regex: search, $options: 'i' } },
-            { sku: { $regex: search, $options: 'i' } },
+            { name: { $regex: search, $options: "i" } },
+            { sku: { $regex: search, $options: "i" } },
           ],
         },
       ];
@@ -1283,13 +1313,13 @@ export const getProducts = async (request, response) => {
     }
 
     // Exclude products with direct pricing
-    if (excludeDirectPricing === 'true' || excludeDirectPricing === true) {
+    if (excludeDirectPricing === "true" || excludeDirectPricing === true) {
       const DirectPricingModel = (
-        await import('../models/direct-pricing.model.js')
+        await import("../models/direct-pricing.model.js")
       ).default;
       const productsWithDirectPricing = await DirectPricingModel.find({
         isActive: true,
-      }).distinct('product');
+      }).distinct("product");
 
       query._id = { $nin: productsWithDirectPricing };
     }
@@ -1298,8 +1328,8 @@ export const getProducts = async (request, response) => {
 
     const [products, totalCount] = await Promise.all([
       ProductModel.find(query)
-        .populate('brand', 'name')
-        .populate('category', 'name')
+        .populate("brand", "name")
+        .populate("category", "name")
         .skip(skip)
         .limit(parseInt(limit))
         .sort({ createdAt: -1 }),
@@ -1307,7 +1337,7 @@ export const getProducts = async (request, response) => {
     ]);
 
     return response.json({
-      message: 'Products retrieved successfully',
+      message: "Products retrieved successfully",
       data: products,
       totalCount,
       totalNoPage: Math.ceil(totalCount / limit),
@@ -1315,9 +1345,9 @@ export const getProducts = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Get products error:', error);
+    console.error("Get products error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to get products',
+      message: error.message || "Failed to get products",
       error: true,
       success: false,
     });
@@ -1341,8 +1371,8 @@ export const getProductsAdmin = async (request, response) => {
     // Your existing filters...
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { sku: { $regex: search, $options: 'i' } },
+        { name: { $regex: search, $options: "i" } },
+        { sku: { $regex: search, $options: "i" } },
       ];
     }
 
@@ -1359,13 +1389,13 @@ export const getProductsAdmin = async (request, response) => {
     }
 
     // NEW: Exclude products with direct pricing
-    if (excludeDirectPricing === 'true' || excludeDirectPricing === true) {
+    if (excludeDirectPricing === "true" || excludeDirectPricing === true) {
       const DirectPricingModel = (
-        await import('../models/direct-pricing.model.js')
+        await import("../models/direct-pricing.model.js")
       ).default;
       const productsWithDirectPricing = await DirectPricingModel.find({
         isActive: true,
-      }).distinct('product');
+      }).distinct("product");
 
       query._id = { $nin: productsWithDirectPricing };
     }
@@ -1374,8 +1404,8 @@ export const getProductsAdmin = async (request, response) => {
 
     const [products, totalCount] = await Promise.all([
       ProductModel.find(query)
-        .populate('brand', 'name')
-        .populate('category', 'name')
+        .populate("brand", "name")
+        .populate("category", "name")
         .skip(skip)
         .limit(parseInt(limit))
         .sort({ createdAt: -1 }),
@@ -1383,7 +1413,7 @@ export const getProductsAdmin = async (request, response) => {
     ]);
 
     return response.json({
-      message: 'Products retrieved successfully',
+      message: "Products retrieved successfully",
       data: products,
       totalCount,
       totalNoPage: Math.ceil(totalCount / limit),
@@ -1391,9 +1421,9 @@ export const getProductsAdmin = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Get products error:', error);
+    console.error("Get products error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to get products',
+      message: error.message || "Failed to get products",
       error: true,
       success: false,
     });
@@ -1407,31 +1437,109 @@ export const getProductBySKU = async (request, response) => {
 
     if (!sku) {
       return response.status(400).json({
-        message: 'SKU is required',
+        message: "SKU is required",
         error: true,
         success: false,
       });
     }
 
     const product = await ProductModel.findOne({ sku }).populate(
-      'category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts'
+      "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
     );
 
     if (!product) {
       return response.status(404).json({
-        message: 'Product not found with this SKU',
+        message: "Product not found with this SKU",
         error: true,
         success: false,
       });
     }
 
     return response.json({
-      message: 'Product found',
+      message: "Product found",
       data: product,
       error: false,
       success: true,
     });
   } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Get popular products sorted by average rating and review count
+export const getPopularProducts = async (request, response) => {
+  try {
+    const { page, limit } = request.body;
+
+    const pageNumber = page || 1;
+    const pageSize = limit || 12;
+    const skip = (pageNumber - 1) * pageSize;
+
+    // Build query with mandatory filters
+    const query = {
+      $and: [
+        { productAvailability: true },
+        // CRITICAL: Only show products with at least one price set
+        {
+          $or: [
+            { btcPrice: { $gt: 0 } },
+            { price3weeksDelivery: { $gt: 0 } },
+            { price5weeksDelivery: { $gt: 0 } },
+          ],
+        },
+        // Weight filter
+        { weight: { $exists: true, $gt: 0 } },
+      ],
+    };
+
+    // Get total count first
+    const dataCount = await ProductModel.countDocuments(query);
+
+    // Fetch products sorted by popularity metrics
+    // Sort priority:
+    // 1. averageRating (highest first)
+    // 2. reviewCount (most reviews first)
+    // 3. featured (featured products first)
+    const data = await ProductModel.find(query)
+      .sort({
+        averageRating: -1, // Highest rated first
+        reviewCount: -1, // Most reviewed first
+        featured: -1, // Featured products first
+        createdAt: -1, // Newest first as tiebreaker
+      })
+      .skip(skip)
+      .limit(pageSize)
+      .populate(
+        "category subCategory brand tags attributes compatibleSystem producer"
+      );
+
+    console.log(
+      `getPopularProducts: Returning ${data.length} products sorted by rating and reviews`
+    );
+    if (data.length > 0) {
+      console.log("Sample product:", {
+        name: data[0].name,
+        rating: data[0].averageRating,
+        reviews: data[0].reviewCount,
+      });
+    }
+
+    return response.json({
+      message: "Popular products",
+      error: false,
+      success: true,
+      data: data,
+      totalCount: dataCount,
+      totalPage: Math.ceil(dataCount / pageSize),
+      page: pageNumber,
+      limit: pageSize,
+    });
+  } catch (error) {
+    console.error("Get popular products error:", error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
