@@ -1,9 +1,41 @@
+import mongoose from "mongoose";
 import ProductModel from "../models/product.model.js";
 import SubCategoryModel from "../models/subCategory.model.js";
 import CategoryModel from "../models/category.model.js";
 import BrandModel from "../models/brand.model.js";
 import generateSlug from "../utils/generateSlug.js";
 import generateSKU from "../utils/generateSKU.js";
+
+// Helper function to determine if a product should be displayed
+const shouldDisplayProduct = (product) => {
+  const onlineStock = product.warehouseStock?.onlineStock || 0;
+  const hasRegularPrice =
+    (product.btcPrice && product.btcPrice > 0) ||
+    (product.price && product.price > 0);
+  const has3WeeksPrice =
+    product.price3weeksDelivery && product.price3weeksDelivery > 0;
+  const has5WeeksPrice =
+    product.price5weeksDelivery && product.price5weeksDelivery > 0;
+  const hasImage = product.image && product.image.length > 0;
+
+  // Rule 1: Must have at least one image
+  if (!hasImage) {
+    return false;
+  }
+
+  // Rule 2: Must have at least one valid price
+  if (!hasRegularPrice && !has3WeeksPrice && !has5WeeksPrice) {
+    return false;
+  }
+
+  // Rule 3: If online stock is 0, must have either 3-week or 5-week delivery price
+  if (onlineStock === 0) {
+    return has3WeeksPrice || has5WeeksPrice;
+  }
+
+  // If online stock > 0, product can be displayed with any valid price
+  return true;
+};
 
 export const createProductController = async (request, response) => {
   try {
@@ -356,9 +388,6 @@ export const getProductControllerAdmin = async (request, response) => {
 };
 
 // Controller 1: getProductController
-// UPDATE THIS IN: icvng-server/controllers/product.controller.js
-
-// Controller 1: getProductController
 export const getProductController = async (request, response) => {
   try {
     let { page, limit, search } = request.body;
@@ -438,229 +467,6 @@ export const getProductController = async (request, response) => {
       data: data,
     });
   } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-};
-
-// Controller 2: searchProduct
-export const searchProduct = async (request, response) => {
-  try {
-    let {
-      search,
-      page,
-      limit,
-      category,
-      subCategory,
-      brand,
-      productType,
-      roastLevel,
-      intensity,
-      blend,
-      featured,
-      productAvailability,
-      minPrice,
-      maxPrice,
-      sort,
-    } = request.body;
-
-    // Default pagination values
-    if (!page) page = 1;
-    if (!limit) limit = 12;
-
-    // Build query object
-    const query = {};
-
-    // CRITICAL: Only show products with at least one of the three prices set AND has weight
-    const mandatoryFilters = [
-      {
-        $or: [
-          { btcPrice: { $gt: 0 } },
-          { price3weeksDelivery: { $gt: 0 } },
-          { price5weeksDelivery: { $gt: 0 } },
-        ],
-      },
-      {
-        weight: { $exists: true, $gt: 0 },
-      },
-    ];
-
-    // Initialize $and array with mandatory filters
-    query.$and = [...mandatoryFilters];
-
-    // Text search if provided
-    if (search) {
-      query.$and.push({ $text: { $search: search } });
-    }
-
-    // Category filter
-    if (category) {
-      query.category = category;
-    }
-
-    // Subcategory filter
-    if (subCategory) {
-      query.subCategory = subCategory;
-    }
-
-    // Brand filter
-    if (brand) {
-      if (Array.isArray(brand)) {
-        query.brand = { $in: brand };
-      } else {
-        query.brand = brand;
-      }
-    }
-
-    // Product type filter
-    if (
-      productType &&
-      (Array.isArray(productType) ? productType.length > 0 : productType)
-    ) {
-      query.productType = Array.isArray(productType)
-        ? { $in: productType }
-        : productType;
-    }
-
-    // Roast level filter (for coffee products)
-    if (
-      roastLevel &&
-      (Array.isArray(roastLevel) ? roastLevel.length > 0 : roastLevel)
-    ) {
-      query.roastLevel = Array.isArray(roastLevel)
-        ? { $in: roastLevel }
-        : roastLevel;
-    }
-
-    // Intensity filter (for coffee products)
-    if (
-      intensity &&
-      (Array.isArray(intensity) ? intensity.length > 0 : intensity)
-    ) {
-      query.intensity = Array.isArray(intensity)
-        ? { $in: intensity }
-        : intensity;
-    }
-
-    // Blend filter (for coffee products)
-    if (blend && (Array.isArray(blend) ? blend.length > 0 : blend)) {
-      query.blend = Array.isArray(blend) ? { $in: blend } : blend;
-    }
-
-    // Featured filter
-    if (featured !== undefined) {
-      query.featured = featured;
-    }
-
-    // Product availability filter
-    if (productAvailability !== undefined) {
-      query.productAvailability = productAvailability;
-    }
-
-    // Price range filter - check against any of the three prices
-    if (minPrice !== undefined || maxPrice !== undefined) {
-      const priceConditions = [];
-
-      if (minPrice !== undefined && maxPrice !== undefined) {
-        priceConditions.push(
-          {
-            btcPrice: {
-              $gte: Number(minPrice),
-              $lte: Number(maxPrice),
-            },
-          },
-          {
-            price3weeksDelivery: {
-              $gte: Number(minPrice),
-              $lte: Number(maxPrice),
-            },
-          },
-          {
-            price5weeksDelivery: {
-              $gte: Number(minPrice),
-              $lte: Number(maxPrice),
-            },
-          }
-        );
-      } else if (minPrice !== undefined) {
-        priceConditions.push(
-          { btcPrice: { $gte: Number(minPrice) } },
-          { price3weeksDelivery: { $gte: Number(minPrice) } },
-          { price5weeksDelivery: { $gte: Number(minPrice) } }
-        );
-      } else if (maxPrice !== undefined) {
-        priceConditions.push(
-          { btcPrice: { $lte: Number(maxPrice) } },
-          { price3weeksDelivery: { $lte: Number(maxPrice) } },
-          { price5weeksDelivery: { $lte: Number(maxPrice) } }
-        );
-      }
-
-      // Add price range conditions to $and
-      query.$and.push({ $or: priceConditions });
-    }
-
-    // Calculate skip for pagination
-    const skip = (page - 1) * limit;
-
-    // Determine sort order
-    let sortOption = { createdAt: -1 }; // Default sort by newest
-
-    if (sort) {
-      switch (sort) {
-        case "price-low":
-          sortOption = {
-            btcPrice: 1,
-            price3weeksDelivery: 1,
-            price5weeksDelivery: 1,
-          };
-          break;
-        case "price-high":
-          sortOption = {
-            btcPrice: -1,
-            price3weeksDelivery: -1,
-            price5weeksDelivery: -1,
-          };
-          break;
-        case "popularity":
-          sortOption = { averageRating: -1 };
-          break;
-        case "alphabet":
-          sortOption = { name: 1 };
-          break;
-        case "featured":
-          sortOption = { featured: -1, createdAt: -1 };
-          break;
-      }
-    }
-
-    // Execute query with all filters
-    const [data, dataCount] = await Promise.all([
-      ProductModel.find(query)
-        .sort(sortOption)
-        .skip(skip)
-        .limit(limit)
-        .populate(
-          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
-        ),
-      ProductModel.countDocuments(query),
-    ]);
-
-    return response.json({
-      message: "Product data",
-      error: false,
-      success: true,
-      data: data,
-      totalCount: dataCount,
-      totalPage: Math.ceil(dataCount / limit),
-      page: page,
-      limit: limit,
-    });
-  } catch (error) {
-    console.error("Search product error:", error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
@@ -1161,63 +967,6 @@ export const getProductByBrand = async (request, response) => {
   }
 };
 
-// Get featured products
-export const getFeaturedProducts = async (request, response) => {
-  try {
-    const { page, limit } = request.body;
-
-    const pageNumber = page || 1;
-    const pageSize = limit || 12;
-    const skip = (pageNumber - 1) * pageSize;
-
-    // Build query with mandatory filters
-    const query = {
-      $and: [
-        { featured: true },
-        { productAvailability: true },
-        // CRITICAL: Only show products with at least one price set
-        {
-          $or: [
-            { btcPrice: { $gt: 0 } },
-            { price3weeksDelivery: { $gt: 0 } },
-            { price5weeksDelivery: { $gt: 0 } },
-          ],
-        },
-        // Weight filter
-        { weight: { $exists: true, $gt: 0 } },
-      ],
-    };
-
-    // Get total count first
-    const dataCount = await ProductModel.countDocuments(query);
-
-    // Fetch all matching products (no sort by createdAt - will be randomized on frontend)
-    const data = await ProductModel.find(query)
-      .skip(skip)
-      .limit(pageSize)
-      .populate(
-        "category subCategory brand tags attributes compatibleSystem producer"
-      );
-
-    return response.json({
-      message: "Featured products",
-      error: false,
-      success: true,
-      data: data,
-      totalCount: dataCount,
-      totalPage: Math.ceil(dataCount / pageSize),
-      page: pageNumber,
-      limit: pageSize,
-    });
-  } catch (error) {
-    return response.status(500).json({
-      message: error.message || error,
-      error: true,
-      success: false,
-    });
-  }
-};
-
 // Get products by availability
 export const getProductsByAvailability = async (request, response) => {
   try {
@@ -1470,76 +1219,556 @@ export const getProductBySKU = async (request, response) => {
   }
 };
 
-// Get popular products sorted by average rating and review count
-export const getPopularProducts = async (request, response) => {
+// Search product with comprehensive filters
+export const searchProduct = async (request, response) => {
   try {
-    const { page, limit } = request.body;
+    let {
+      search,
+      page,
+      limit,
+      category,
+      subCategory,
+      brand,
+      productType,
+      roastLevel,
+      intensity,
+      blend,
+      minPrice,
+      maxPrice,
+      sort,
+    } = request.body;
 
-    const pageNumber = page || 1;
-    const pageSize = limit || 12;
-    const skip = (pageNumber - 1) * pageSize;
+    if (!page) {
+      page = 1;
+    }
 
-    // Build query with mandatory filters
-    const query = {
-      $and: [
-        { productAvailability: true },
-        // CRITICAL: Only show products with at least one price set
-        {
-          $or: [
-            { btcPrice: { $gt: 0 } },
-            { price3weeksDelivery: { $gt: 0 } },
-            { price5weeksDelivery: { $gt: 0 } },
-          ],
+    if (!limit) {
+      limit = 10;
+    }
+
+    const query = [
+      {
+        $match: {
+          publish: "PUBLISHED",
         },
-        // Weight filter
-        { weight: { $exists: true, $gt: 0 } },
-      ],
-    };
+      },
+    ];
 
-    // Get total count first
-    const dataCount = await ProductModel.countDocuments(query);
-
-    // Fetch products sorted by popularity metrics
-    // Sort priority:
-    // 1. averageRating (highest first)
-    // 2. reviewCount (most reviews first)
-    // 3. featured (featured products first)
-    const data = await ProductModel.find(query)
-      .sort({
-        averageRating: -1, // Highest rated first
-        reviewCount: -1, // Most reviewed first
-        featured: -1, // Featured products first
-        createdAt: -1, // Newest first as tiebreaker
-      })
-      .skip(skip)
-      .limit(pageSize)
-      .populate(
-        "category subCategory brand tags attributes compatibleSystem producer"
-      );
-
-    console.log(
-      `getPopularProducts: Returning ${data.length} products sorted by rating and reviews`
-    );
-    if (data.length > 0) {
-      console.log("Sample product:", {
-        name: data[0].name,
-        rating: data[0].averageRating,
-        reviews: data[0].reviewCount,
+    // Search by text
+    if (search) {
+      query.push({
+        $match: {
+          $text: {
+            $search: search,
+          },
+        },
       });
     }
+
+    // Filter by category
+    if (category) {
+      if (typeof category === "string") {
+        query.push({
+          $match: {
+            category: new mongoose.Types.ObjectId(category),
+          },
+        });
+      } else if (Array.isArray(category) && category.length > 0) {
+        query.push({
+          $match: {
+            category: {
+              $in: category.map((cat) => new mongoose.Types.ObjectId(cat)),
+            },
+          },
+        });
+      }
+    }
+
+    // Filter by subcategory
+    if (subCategory) {
+      if (typeof subCategory === "string") {
+        query.push({
+          $match: {
+            subCategory: new mongoose.Types.ObjectId(subCategory),
+          },
+        });
+      } else if (Array.isArray(subCategory) && subCategory.length > 0) {
+        query.push({
+          $match: {
+            subCategory: {
+              $in: subCategory.map((sub) => new mongoose.Types.ObjectId(sub)),
+            },
+          },
+        });
+      }
+    }
+
+    // Filter by brand
+    if (brand && brand.length > 0) {
+      query.push({
+        $match: {
+          brand: {
+            $in: brand.map((b) => new mongoose.Types.ObjectId(b)),
+          },
+        },
+      });
+    }
+
+    // Filter by product type
+    if (productType && productType.length > 0) {
+      query.push({
+        $match: {
+          productType: {
+            $in: productType,
+          },
+        },
+      });
+    }
+
+    // Filter by roast level
+    if (roastLevel && roastLevel.length > 0) {
+      query.push({
+        $match: {
+          roastLevel: {
+            $in: roastLevel,
+          },
+        },
+      });
+    }
+
+    // Filter by intensity
+    if (intensity && intensity.length > 0) {
+      query.push({
+        $match: {
+          intensity: {
+            $in: intensity,
+          },
+        },
+      });
+    }
+
+    // Filter by blend
+    if (blend && blend.length > 0) {
+      query.push({
+        $match: {
+          blend: {
+            $in: blend,
+          },
+        },
+      });
+    }
+
+    // Price range filter
+    if (minPrice || maxPrice) {
+      const priceMatch = {};
+
+      if (minPrice) {
+        priceMatch.$gte = Number(minPrice);
+      }
+
+      if (maxPrice) {
+        priceMatch.$lte = Number(maxPrice);
+      }
+
+      query.push({
+        $match: {
+          $or: [
+            { price: priceMatch },
+            { btcPrice: priceMatch },
+            { price3weeksDelivery: priceMatch },
+            { price5weeksDelivery: priceMatch },
+          ],
+        },
+      });
+    }
+
+    // ✅ CRITICAL: Filter products based on visibility rules
+    query.push({
+      $match: {
+        $and: [
+          // Must have at least one image
+          { image: { $exists: true, $ne: [] } },
+
+          // Must have at least one valid price OR valid delivery options
+          {
+            $or: [
+              // Has regular/btc price AND online stock > 0
+              {
+                $and: [
+                  {
+                    $or: [{ btcPrice: { $gt: 0 } }, { price: { $gt: 0 } }],
+                  },
+                  { "warehouseStock.onlineStock": { $gt: 0 } },
+                ],
+              },
+              // OR has 3-week delivery price (stock doesn't matter)
+              { price3weeksDelivery: { $gt: 0 } },
+              // OR has 5-week delivery price (stock doesn't matter)
+              { price5weeksDelivery: { $gt: 0 } },
+            ],
+          },
+        ],
+      },
+    });
+
+    // Populate references
+    query.push(
+      {
+        $lookup: {
+          from: "categories",
+          localField: "category",
+          foreignField: "_id",
+          as: "category",
+        },
+      },
+      {
+        $lookup: {
+          from: "subcategories",
+          localField: "subCategory",
+          foreignField: "_id",
+          as: "subCategory",
+        },
+      },
+      {
+        $lookup: {
+          from: "brands",
+          localField: "brand",
+          foreignField: "_id",
+          as: "brand",
+        },
+      },
+      {
+        $lookup: {
+          from: "brands",
+          localField: "producer",
+          foreignField: "_id",
+          as: "producer",
+        },
+      }
+    );
+
+    // Unwind arrays
+    query.push(
+      {
+        $unwind: {
+          path: "$category",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $unwind: {
+          path: "$subCategory",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $unwind: {
+          path: "$producer",
+          preserveNullAndEmptyArrays: true,
+        },
+      }
+    );
+
+    // Sorting
+    let sortQuery = { createdAt: -1 }; // Default: newest first
+
+    if (sort) {
+      if (sort === "price_asc") {
+        sortQuery = { price: 1 };
+      } else if (sort === "price_desc") {
+        sortQuery = { price: -1 };
+      } else if (sort === "name_asc") {
+        sortQuery = { name: 1 };
+      } else if (sort === "name_desc") {
+        sortQuery = { name: -1 };
+      }
+    }
+
+    query.push({ $sort: sortQuery });
+
+    // Count total documents
+    const countQuery = [...query];
+    countQuery.push({ $count: "total" });
+    const countResult = await ProductModel.aggregate(countQuery);
+    const totalCount = countResult[0]?.total || 0;
+
+    // Pagination
+    const skip = (page - 1) * limit;
+    query.push({ $skip: skip }, { $limit: parseInt(limit) });
+
+    const product = await ProductModel.aggregate(query);
+
+    return response.json({
+      message: "Products data",
+      error: false,
+      success: true,
+      data: product,
+      totalCount: totalCount,
+      totalPage: Math.ceil(totalCount / limit),
+      page: Number(page),
+      limit: Number(limit),
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Get featured products
+export const getFeaturedProducts = async (request, response) => {
+  try {
+    let { page, limit } = request.body;
+
+    if (!page) {
+      page = 1;
+    }
+
+    if (!limit) {
+      limit = 10;
+    }
+
+    const query = [
+      {
+        $match: {
+          featured: true,
+          publish: "PUBLISHED",
+        },
+      },
+    ];
+
+    // ✅ Filter products based on visibility rules
+    query.push({
+      $match: {
+        $and: [
+          { image: { $exists: true, $ne: [] } },
+          {
+            $or: [
+              {
+                $and: [
+                  {
+                    $or: [{ btcPrice: { $gt: 0 } }, { price: { $gt: 0 } }],
+                  },
+                  { "warehouseStock.onlineStock": { $gt: 0 } },
+                ],
+              },
+              { price3weeksDelivery: { $gt: 0 } },
+              { price5weeksDelivery: { $gt: 0 } },
+            ],
+          },
+        ],
+      },
+    });
+
+    query.push(
+      {
+        $lookup: {
+          from: "categories",
+          localField: "category",
+          foreignField: "_id",
+          as: "category",
+        },
+      },
+      {
+        $lookup: {
+          from: "subcategories",
+          localField: "subCategory",
+          foreignField: "_id",
+          as: "subCategory",
+        },
+      },
+      {
+        $lookup: {
+          from: "brands",
+          localField: "brand",
+          foreignField: "_id",
+          as: "brand",
+        },
+      },
+      {
+        $lookup: {
+          from: "brands",
+          localField: "producer",
+          foreignField: "_id",
+          as: "producer",
+        },
+      }
+    );
+
+    query.push(
+      {
+        $unwind: {
+          path: "$category",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $unwind: {
+          path: "$subCategory",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $unwind: {
+          path: "$producer",
+          preserveNullAndEmptyArrays: true,
+        },
+      }
+    );
+
+    query.push({ $sort: { createdAt: -1 } });
+
+    const countQuery = [...query];
+    countQuery.push({ $count: "total" });
+    const countResult = await ProductModel.aggregate(countQuery);
+    const totalCount = countResult[0]?.total || 0;
+
+    const skip = (page - 1) * limit;
+    query.push({ $skip: skip }, { $limit: parseInt(limit) });
+
+    const products = await ProductModel.aggregate(query);
+
+    return response.json({
+      message: "Featured products",
+      error: false,
+      success: true,
+      data: products,
+      totalCount: totalCount,
+      totalPage: Math.ceil(totalCount / limit),
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Get popular products (based on ratings)
+export const getPopularProducts = async (request, response) => {
+  try {
+    let { page, limit } = request.body;
+
+    if (!page) {
+      page = 1;
+    }
+
+    if (!limit) {
+      limit = 10;
+    }
+
+    const query = [
+      {
+        $match: {
+          publish: "PUBLISHED",
+          averageRating: { $gte: 4 },
+        },
+      },
+    ];
+
+    // ✅ Filter products based on visibility rules
+    query.push({
+      $match: {
+        $and: [
+          { image: { $exists: true, $ne: [] } },
+          {
+            $or: [
+              {
+                $and: [
+                  {
+                    $or: [{ btcPrice: { $gt: 0 } }, { price: { $gt: 0 } }],
+                  },
+                  { "warehouseStock.onlineStock": { $gt: 0 } },
+                ],
+              },
+              { price3weeksDelivery: { $gt: 0 } },
+              { price5weeksDelivery: { $gt: 0 } },
+            ],
+          },
+        ],
+      },
+    });
+
+    query.push(
+      {
+        $lookup: {
+          from: "categories",
+          localField: "category",
+          foreignField: "_id",
+          as: "category",
+        },
+      },
+      {
+        $lookup: {
+          from: "subcategories",
+          localField: "subCategory",
+          foreignField: "_id",
+          as: "subCategory",
+        },
+      },
+      {
+        $lookup: {
+          from: "brands",
+          localField: "brand",
+          foreignField: "_id",
+          as: "brand",
+        },
+      },
+      {
+        $lookup: {
+          from: "brands",
+          localField: "producer",
+          foreignField: "_id",
+          as: "producer",
+        },
+      }
+    );
+
+    query.push(
+      {
+        $unwind: {
+          path: "$category",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $unwind: {
+          path: "$subCategory",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $unwind: {
+          path: "$producer",
+          preserveNullAndEmptyArrays: true,
+        },
+      }
+    );
+
+    query.push({ $sort: { averageRating: -1, createdAt: -1 } });
+
+    const countQuery = [...query];
+    countQuery.push({ $count: "total" });
+    const countResult = await ProductModel.aggregate(countQuery);
+    const totalCount = countResult[0]?.total || 0;
+
+    const skip = (page - 1) * limit;
+    query.push({ $skip: skip }, { $limit: parseInt(limit) });
+
+    const products = await ProductModel.aggregate(query);
 
     return response.json({
       message: "Popular products",
       error: false,
       success: true,
-      data: data,
-      totalCount: dataCount,
-      totalPage: Math.ceil(dataCount / pageSize),
-      page: pageNumber,
-      limit: pageSize,
+      data: products,
+      totalCount: totalCount,
+      totalPage: Math.ceil(totalCount / limit),
     });
   } catch (error) {
-    console.error("Get popular products error:", error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
