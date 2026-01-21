@@ -6,7 +6,7 @@ const passwordRecoveryTemplate = ({ name, otp, recoveryUrl, generatedBy }) => {
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>Password Recovery - I-COFFEE.NG</title>
-          <style>
+          <style> 
               body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
               .header { background: linear-gradient(135deg, #4169E1, #0000CD); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
               .content { background: #f9f9f9; padding: 30px; border: 1px solid #ddd; }

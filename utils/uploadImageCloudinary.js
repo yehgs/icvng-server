@@ -1,5 +1,5 @@
 // utils/uploadImageCloudinary.js
-import { v2 as cloudinary } from 'cloudinary';
+import { v2 as cloudinary } from "cloudinary";
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -8,13 +8,13 @@ cloudinary.config({
   timeout: 120000,
 });
 
-const uploadImageCloudinary = async (image) => {    
+const uploadImageCloudinary = async (image) => {
   try {
     // Get buffer from multer file
     const buffer = image?.buffer;
 
     if (!buffer) {
-      throw new Error('No image buffer found');
+      throw new Error("No image buffer found");
     }
 
     // console.log('Starting Cloudinary image upload...');
@@ -24,31 +24,31 @@ const uploadImageCloudinary = async (image) => {
     const uploadImage = await new Promise((resolve, reject) => {
       cloudinary.uploader
         .upload_stream(
-          { 
-            folder: 'icv-ng',
-            resource_type: 'image', // ✅ Explicitly set as image
-            timeout: 120000
+          {
+            folder: "icv-ng",
+            resource_type: "image", // ✅ Explicitly set as image
+            timeout: 120000,
           },
           (error, uploadResult) => {
             if (error) {
-              console.error('Cloudinary upload error:', error);
+              console.error("Cloudinary upload error:", error);
               return reject(error); // ✅ Handle errors properly
             }
-            console.log('Cloudinary upload success:', {
+            console.log("Cloudinary upload success:", {
               public_id: uploadResult.public_id,
               secure_url: uploadResult.secure_url,
             });
-            return resolve(uploadResult); 
-          },
+            return resolve(uploadResult);
+          }
         )
         .end(buffer);
     });
 
     return uploadImage;
   } catch (error) {
-    console.error('Upload image Cloudinary error:', error);
+    console.error("Upload image Cloudinary error:", error);
     throw error;
   }
 };
 
-export default uploadImageCloudinary;                     
+export default uploadImageCloudinary;

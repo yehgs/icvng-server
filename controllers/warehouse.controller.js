@@ -1,11 +1,14 @@
-// controllers/warehouse.controller.js - Updated to include weight functionality
+// controllers/warehouse.controller.js
+import ProductModel from "../models/product.model.js";
+import StockModel from "../models/stock.model.js";
+import UserModel from "../models/user.model.js";
+import WarehouseActivityModel from "../models/warehouse-activity.model.js";
+import mongoose from "mongoose";
+import PDFDocument from "pdfkit";
+import fs from "fs";
+import path from "path";
 
-import ProductModel from '../models/product.model.js';
-import StockModel from '../models/stock.model.js';
-import UserModel from '../models/user.model.js';
-import mongoose from 'mongoose';
-
-// System settings
+// System settings with persistence
 let systemSettings = {
   enabled: true,
   autoSyncEnabled: true,
@@ -13,37 +16,48 @@ let systemSettings = {
   criticalStockThreshold: 5,
 };
 
-// Activity log storage
-let activityLog = [];
+// Enhanced activity logging with database persistence
+const logActivity = async (
+  user,
+  action,
+  target,
+  changes = null,
+  notes = "",
+  metadata = {}
+) => {
+  try {
+    const activity = new WarehouseActivityModel({
+      user: user._id,
+      action,
+      target: {
+        type: target.type,
+        id: target.id || null,
+        name: target.name || "",
+        sku: target.sku || "",
+      },
+      changes: changes ? new Map(Object.entries(changes)) : null,
+      notes,
+      metadata: {
+        ip: metadata.ip || "",
+        userAgent: metadata.userAgent || "",
+        sessionId: metadata.sessionId || "",
+      },
+    });
 
-// Helper function to log activities
-const logActivity = (user, action, target, changes = null, notes = '') => {
-  const activity = {
-    id: Date.now(),
-    timestamp: new Date(),
-    user: {
-      id: user._id,
-      name: user.name,
-      role: user.subRole || user.role,
-    },
-    action,
-    target,
-    changes,
-    notes,
-  };
-
-  activityLog.unshift(activity);
-  if (activityLog.length > 1000) {
-    activityLog = activityLog.slice(0, 1000);
+    await activity.save();
+    return activity;
+  } catch (error) {
+    console.error("Error logging activity:", error);
+    // Don't throw error to prevent main operation from failing
   }
 };
 
-// Helper function to sync stock from Stock model for a product
+// Helper function to sync stock from Stock model
 const syncStockFromStockModel = async (productId) => {
   try {
     const stockBatches = await StockModel.find({
       product: productId,
-      status: { $in: ['AVAILABLE', 'PARTIALLY_ALLOCATED', 'RECEIVED'] },
+      status: { $in: ["AVAILABLE", "PARTIALLY_ALLOCATED", "RECEIVED"] },
     });
 
     const totals = stockBatches.reduce(
@@ -52,7 +66,7 @@ const syncStockFromStockModel = async (productId) => {
         acc.goodQuantity += batch.goodQuantity || 0;
         acc.refurbishedQuantity += batch.refurbishedQuantity || 0;
         acc.damagedQuantity += batch.damagedQuantity || 0;
-        acc.expiredQuantity += 0; // Not tracked in original Stock model, can be added
+        acc.expiredQuantity += 0;
         acc.onlineStock += batch.onlineStock || 0;
         acc.offlineStock += batch.offlineStock || 0;
         return acc;
@@ -78,16 +92,16 @@ const syncStockFromStockModel = async (productId) => {
       finalStock: finalStock,
       onlineStock: totals.onlineStock,
       offlineStock: totals.offlineStock,
-      source: 'STOCK_BATCHES',
+      source: "STOCK_BATCHES",
       lastUpdated: new Date(),
     };
   } catch (error) {
-    console.error('Error syncing stock from Stock model:', error);
+    console.error("Error syncing stock from Stock model:", error);
     return null;
   }
 };
 
-// Helper function to get effective stock data with consistent structure
+// Helper function to get effective stock
 const getEffectiveStock = async (product) => {
   if (product.warehouseStock?.enabled) {
     return {
@@ -98,9 +112,9 @@ const getEffectiveStock = async (product) => {
       finalStock: product.warehouseStock.finalStock || 0,
       onlineStock: product.warehouseStock.onlineStock || 0,
       offlineStock: product.warehouseStock.offlineStock || 0,
-      notes: product.warehouseStock.notes || '',
+      notes: product.warehouseStock.notes || "",
       lastUpdated: product.warehouseStock.lastUpdated,
-      source: 'WAREHOUSE_MANUAL',
+      source: "WAREHOUSE_MANUAL",
       isManualOverride: true,
     };
   } else {
@@ -117,9 +131,9 @@ const getEffectiveStock = async (product) => {
         finalStock: product.stock || 0,
         onlineStock: 0,
         offlineStock: 0,
-        notes: 'Default product stock',
+        notes: "Default product stock",
         lastUpdated: product.updatedAt,
-        source: 'PRODUCT_DEFAULT',
+        source: "PRODUCT_DEFAULT",
         isManualOverride: false,
       };
     }
@@ -143,9 +157,9 @@ export const getProductsForStock = async (request, response) => {
 
     if (search) {
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { sku: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
+        { name: { $regex: search, $options: "i" } },
+        { sku: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
       ];
     }
 
@@ -158,9 +172,9 @@ export const getProductsForStock = async (request, response) => {
 
     const [products, totalCount] = await Promise.all([
       ProductModel.find(query)
-        .populate('category', 'name')
-        .populate('brand', 'name')
-        .populate('compatibleSystem', 'name')
+        .populate("category", "name")
+        .populate("brand", "name")
+        .populate("compatibleSystem", "name")
         .sort({ name: 1 })
         .skip(skip)
         .limit(parseInt(limit))
@@ -179,7 +193,7 @@ export const getProductsForStock = async (request, response) => {
     );
 
     return response.json({
-      message: 'Products retrieved successfully',
+      message: "Products retrieved successfully",
       data: productsWithStock,
       totalCount,
       totalPages: Math.ceil(totalCount / limit),
@@ -188,16 +202,16 @@ export const getProductsForStock = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Get products for stock error:', error);
+    console.error("Get products for stock error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to retrieve products',
+      message: error.message || "Failed to retrieve products",
       error: true,
       success: false,
     });
   }
 };
 
-// Update stock quantities (warehouse only)
+// Update stock quantities
 export const updateStock = async (request, response) => {
   try {
     const {
@@ -214,16 +228,16 @@ export const updateStock = async (request, response) => {
 
     if (!systemSettings.enabled) {
       return response.status(403).json({
-        message: 'Warehouse stock system is disabled',
+        message: "Warehouse stock system is disabled",
         error: true,
         success: false,
       });
     }
 
     const userRole = request.user.subRole || request.user.role;
-    if (userRole !== 'WAREHOUSE') {
+    if (userRole !== "WAREHOUSE") {
       return response.status(403).json({
-        message: 'Only warehouse staff can update stock quantities',
+        message: "Only warehouse staff can update stock quantities",
         error: true,
         success: false,
       });
@@ -231,45 +245,43 @@ export const updateStock = async (request, response) => {
 
     if (!productId) {
       return response.status(400).json({
-        message: 'Product ID is required',
+        message: "Product ID is required",
         error: true,
         success: false,
       });
     }
 
-    // Comprehensive validation including quality breakdown
+    // Validation
     const validationErrors = [];
 
     if (stockOnArrival < 0)
-      validationErrors.push('Stock on arrival cannot be negative');
+      validationErrors.push("Stock on arrival cannot be negative");
     if (damagedQty < 0)
-      validationErrors.push('Damaged quantity cannot be negative');
+      validationErrors.push("Damaged quantity cannot be negative");
     if (expiredQty < 0)
-      validationErrors.push('Expired quantity cannot be negative');
+      validationErrors.push("Expired quantity cannot be negative");
     if (refurbishedQty < 0)
-      validationErrors.push('Refurbished quantity cannot be negative');
+      validationErrors.push("Refurbished quantity cannot be negative");
     if (onlineStock < 0)
-      validationErrors.push('Online stock cannot be negative');
+      validationErrors.push("Online stock cannot be negative");
     if (offlineStock < 0)
-      validationErrors.push('Offline stock cannot be negative');
+      validationErrors.push("Offline stock cannot be negative");
 
-    // Quality breakdown validation
     const totalProcessed =
       damagedQty + expiredQty + refurbishedQty + finalStock;
     if (totalProcessed !== stockOnArrival) {
       validationErrors.push(
-        'Total processed quantities must equal stock on arrival'
+        "Total processed quantities must equal stock on arrival"
       );
     }
 
-    // Distribution validation
     if (onlineStock + offlineStock > finalStock) {
-      validationErrors.push('Total distribution cannot exceed final stock');
+      validationErrors.push("Total distribution cannot exceed final stock");
     }
 
     if (validationErrors.length > 0) {
       return response.status(400).json({
-        message: 'Validation errors',
+        message: "Validation errors",
         errors: validationErrors,
         error: true,
         success: false,
@@ -279,16 +291,15 @@ export const updateStock = async (request, response) => {
     const currentProduct = await ProductModel.findById(productId);
     if (!currentProduct) {
       return response.status(404).json({
-        message: 'Product not found',
+        message: "Product not found",
         error: true,
         success: false,
       });
     }
 
-    // Get current effective stock for change tracking
     const currentEffectiveStock = await getEffectiveStock(currentProduct);
 
-    // Track changes for activity log
+    // Track changes
     const changes = {};
     const oldStock = {
       stockOnArrival: currentEffectiveStock.stockOnArrival,
@@ -319,7 +330,7 @@ export const updateStock = async (request, response) => {
       }
     });
 
-    // Enable warehouse manual override and update product with complete structure
+    // Update product
     const updateData = {
       warehouseStock: {
         enabled: true,
@@ -335,7 +346,7 @@ export const updateStock = async (request, response) => {
         updatedBy: request.user._id,
       },
       stock: finalStock,
-      stockSource: 'WAREHOUSE_MANUAL',
+      stockSource: "WAREHOUSE_MANUAL",
       updatedBy: request.user._id,
     };
 
@@ -343,24 +354,28 @@ export const updateStock = async (request, response) => {
       productId,
       updateData,
       { new: true, runValidators: true }
-    ).populate('category brand compatibleSystem', 'name');
+    ).populate("category brand compatibleSystem", "name");
 
-    // Log activity
-    logActivity(
+    // Log activity to database
+    await logActivity(
       request.user,
-      'STOCK_UPDATE',
+      "STOCK_UPDATE",
       {
-        type: 'PRODUCT',
+        type: "PRODUCT",
         id: productId,
         name: updatedProduct.name,
         sku: updatedProduct.sku,
       },
       changes,
-      notes
+      notes,
+      {
+        ip: request.ip,
+        userAgent: request.headers["user-agent"],
+      }
     );
 
     return response.json({
-      message: 'Stock updated successfully (manual override enabled)',
+      message: "Stock updated successfully",
       data: {
         ...updatedProduct.toObject(),
         warehouseStock: {
@@ -373,7 +388,7 @@ export const updateStock = async (request, response) => {
           offlineStock,
           notes,
           lastUpdated: updateData.warehouseStock.lastUpdated,
-          source: 'WAREHOUSE_MANUAL',
+          source: "WAREHOUSE_MANUAL",
           isManualOverride: true,
         },
       },
@@ -381,24 +396,24 @@ export const updateStock = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Update stock error:', error);
+    console.error("Update stock error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to update stock',
+      message: error.message || "Failed to update stock",
       error: true,
       success: false,
     });
   }
 };
 
-// NEW: Update product weight (warehouse only, no approval required)
+// Update product weight
 export const updateWeight = async (request, response) => {
   try {
     const { productId, weight } = request.body;
 
     const userRole = request.user.subRole || request.user.role;
-    if (userRole !== 'WAREHOUSE') {
+    if (userRole !== "WAREHOUSE") {
       return response.status(403).json({
-        message: 'Only warehouse staff can update product weight',
+        message: "Only warehouse staff can update product weight",
         error: true,
         success: false,
       });
@@ -406,16 +421,15 @@ export const updateWeight = async (request, response) => {
 
     if (!productId) {
       return response.status(400).json({
-        message: 'Product ID is required',
+        message: "Product ID is required",
         error: true,
         success: false,
       });
     }
 
-    // Weight validation
     if (weight < 0) {
       return response.status(400).json({
-        message: 'Weight cannot be negative',
+        message: "Weight cannot be negative",
         error: true,
         success: false,
       });
@@ -424,13 +438,12 @@ export const updateWeight = async (request, response) => {
     const currentProduct = await ProductModel.findById(productId);
     if (!currentProduct) {
       return response.status(404).json({
-        message: 'Product not found',
+        message: "Product not found",
         error: true,
         success: false,
       });
     }
 
-    // Track changes for activity log
     const changes = {};
     if (currentProduct.weight !== weight) {
       changes.weight = {
@@ -439,7 +452,6 @@ export const updateWeight = async (request, response) => {
       };
     }
 
-    // Update product weight
     const updateData = {
       weight,
       updatedBy: request.user._id,
@@ -449,47 +461,369 @@ export const updateWeight = async (request, response) => {
       productId,
       updateData,
       { new: true, runValidators: true }
-    ).populate('category brand compatibleSystem', 'name');
+    ).populate("category brand compatibleSystem", "name");
 
     // Log activity
-    logActivity(
+    await logActivity(
       request.user,
-      'WEIGHT_UPDATE',
+      "WEIGHT_UPDATE",
       {
-        type: 'PRODUCT',
+        type: "PRODUCT",
         id: productId,
         name: updatedProduct.name,
         sku: updatedProduct.sku,
       },
       changes,
-      'Product weight updated'
+      "Product weight updated",
+      {
+        ip: request.ip,
+        userAgent: request.headers["user-agent"],
+      }
     );
 
     return response.json({
-      message: 'Product weight updated successfully',
+      message: "Product weight updated successfully",
       data: updatedProduct,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Update weight error:', error);
+    console.error("Update weight error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to update product weight',
+      message: error.message || "Failed to update product weight",
       error: true,
       success: false,
     });
   }
 };
 
-// Rest of the existing functions remain the same...
+// Get activity log with real database data
+export const getActivityLog = async (request, response) => {
+  try {
+    const {
+      page = 1,
+      limit = 50,
+      dateRange,
+      action,
+      userId,
+      sortOrder = "desc",
+    } = request.query;
+
+    const query = {};
+
+    // Date range filter
+    if (dateRange && dateRange !== "all") {
+      const daysAgo = parseInt(dateRange);
+      const cutoffDate = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
+      query.createdAt = { $gte: cutoffDate };
+    }
+
+    // Action filter
+    if (action) {
+      query.action = action;
+    }
+
+    // User filter
+    if (userId) {
+      query.user = userId;
+    }
+
+    const skip = (page - 1) * limit;
+    const sort = { createdAt: sortOrder === "asc" ? 1 : -1 };
+
+    const [activities, totalCount] = await Promise.all([
+      WarehouseActivityModel.find(query)
+        .populate("user", "name email subRole role avatar")
+        .sort(sort)
+        .skip(skip)
+        .limit(parseInt(limit))
+        .lean(),
+      WarehouseActivityModel.countDocuments(query),
+    ]);
+
+    // Format activities for response
+    const formattedActivities = activities.map((activity) => ({
+      id: activity._id,
+      timestamp: activity.createdAt,
+      user: {
+        id: activity.user._id,
+        name: activity.user.name,
+        email: activity.user.email,
+        role: activity.user.subRole || activity.user.role,
+        avatar: activity.user.avatar,
+      },
+      action: activity.action,
+      target: activity.target,
+      changes: activity.changes ? Object.fromEntries(activity.changes) : null,
+      notes: activity.notes,
+      metadata: activity.metadata,
+    }));
+
+    return response.json({
+      message: "Activity log retrieved successfully",
+      data: formattedActivities,
+      totalCount,
+      totalPages: Math.ceil(totalCount / limit),
+      currentPage: parseInt(page),
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error("Get activity log error:", error);
+    return response.status(500).json({
+      message: error.message || "Failed to retrieve activity log",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+export const exportStockPDF = async (request, response) => {
+  let doc;
+
+  try {
+    const { category, brand, productType, compatibleSystem } = request.query;
+
+    const query = {};
+    if (category) query.category = category;
+    if (brand) query.brand = { $in: [brand] };
+    if (productType) query.productType = productType;
+    if (compatibleSystem) query.compatibleSystem = compatibleSystem;
+
+    const products = await ProductModel.find(query)
+      .populate("category brand compatibleSystem", "name")
+      .sort({ name: 1 })
+      .limit(500);
+
+    if (products.length === 0) {
+      return response.status(404).json({
+        message: "No products found to export",
+        error: true,
+        success: false,
+      });
+    }
+
+    // Format timestamp for filename
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+    const seconds = String(now.getSeconds()).padStart(2, "0");
+
+    const timestamp = `${year}-${month}-${day}_${hours}h${minutes}m${seconds}s`;
+    const filename = `warehouse-stock-${timestamp}.pdf`;
+
+    console.log("📄 Generating PDF:", filename);
+
+    // CRITICAL: Set headers BEFORE creating PDF document
+    response.writeHead(200, {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Access-Control-Expose-Headers": "Content-Disposition",
+      "Cache-Control": "no-cache",
+    });
+
+    // Create PDF AFTER headers are set
+    doc = new PDFDocument({
+      margin: 30,
+      size: "A4",
+      layout: "landscape",
+    });
+
+    // Pipe to response
+    doc.pipe(response);
+
+    // Title
+    doc
+      .fontSize(18)
+      .font("Helvetica-Bold")
+      .text("Warehouse Stock Report", { align: "center" })
+      .fontSize(10)
+      .font("Helvetica")
+      .text(`Date: ${now.toLocaleString()}`, { align: "center" })
+      .text(`Products: ${products.length}`, { align: "center" })
+      .moveDown(2);
+
+    // Table header
+    const startY = 100;
+    let y = startY;
+    const lineHeight = 18;
+
+    doc.fontSize(8).font("Helvetica-Bold");
+    doc.text("Product", 30, y, { width: 100 });
+    doc.text("SKU", 135, y, { width: 60 });
+    doc.text("Weight", 200, y, { width: 45 });
+    doc.text("Stock", 250, y, { width: 40 });
+    doc.text("Damaged", 295, y, { width: 45 });
+    doc.text("Final", 345, y, { width: 40 });
+    doc.text("Online", 390, y, { width: 40 });
+    doc.text("Offline", 435, y, { width: 40 });
+
+    y += 15;
+    doc.moveTo(30, y).lineTo(580, y).stroke();
+    y += 5;
+
+    // Products
+    doc.fontSize(7).font("Helvetica");
+
+    products.forEach((product) => {
+      if (y > 520) {
+        doc.addPage();
+        y = 50;
+      }
+
+      const stock = product.warehouseStock?.enabled
+        ? product.warehouseStock
+        : {
+            finalStock: product.stock || 0,
+            stockOnArrival: 0,
+            damagedQty: 0,
+            onlineStock: 0,
+            offlineStock: 0,
+          };
+
+      doc.text(product.name?.substring(0, 18) || "", 30, y, { width: 100 });
+      doc.text(product.sku || "", 135, y, { width: 60 });
+      doc.text(product.weight ? `${product.weight}kg` : "-", 200, y, {
+        width: 45,
+      });
+      doc.text(String(stock.stockOnArrival || 0), 250, y, { width: 40 });
+      doc.text(String(stock.damagedQty || 0), 295, y, { width: 45 });
+      doc.text(String(stock.finalStock || 0), 345, y, { width: 40 });
+      doc.text(String(stock.onlineStock || 0), 390, y, { width: 40 });
+      doc.text(String(stock.offlineStock || 0), 435, y, { width: 40 });
+
+      y += lineHeight;
+    });
+
+    // Finalize PDF
+    doc.end();
+
+    console.log("✅ PDF generated successfully");
+  } catch (error) {
+    console.error("❌ PDF export error:", error);
+
+    // Clean up document if it was created
+    if (doc) {
+      try {
+        doc.end();
+      } catch (e) {
+        console.error("Error ending PDF:", e);
+      }
+    }
+
+    // Only send error if headers haven't been sent
+    if (!response.headersSent) {
+      response.status(500).json({
+        message: error.message || "Failed to export PDF",
+        error: true,
+        success: false,
+      });
+    }
+  }
+};
+
+// Enable system
+export const enableSystem = async (request, response) => {
+  try {
+    const userRole = request.user.subRole || request.user.role;
+    if (!["DIRECTOR", "IT"].includes(userRole)) {
+      return response.status(403).json({
+        message: "Only Director or IT can enable the warehouse system",
+        error: true,
+        success: false,
+      });
+    }
+
+    systemSettings.enabled = true;
+
+    await logActivity(
+      request.user,
+      "SYSTEM_ENABLED",
+      {
+        type: "SYSTEM",
+        name: "Warehouse Stock Management",
+      },
+      null,
+      "Enabled manual stock management for warehouse team",
+      {
+        ip: request.ip,
+        userAgent: request.headers["user-agent"],
+      }
+    );
+
+    return response.json({
+      message: "Warehouse system enabled successfully",
+      data: { enabled: true },
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error("Enable system error:", error);
+    return response.status(500).json({
+      message: error.message || "Failed to enable system",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Disable system
+export const disableSystem = async (request, response) => {
+  try {
+    const userRole = request.user.subRole || request.user.role;
+    if (!["DIRECTOR", "IT"].includes(userRole)) {
+      return response.status(403).json({
+        message: "Only Director or IT can disable the warehouse system",
+        error: true,
+        success: false,
+      });
+    }
+
+    systemSettings.enabled = false;
+
+    await logActivity(
+      request.user,
+      "SYSTEM_DISABLED",
+      {
+        type: "SYSTEM",
+        name: "Warehouse Stock Management",
+      },
+      null,
+      "Disabled manual stock management",
+      {
+        ip: request.ip,
+        userAgent: request.headers["user-agent"],
+      }
+    );
+
+    return response.json({
+      message: "Warehouse system disabled successfully",
+      data: { enabled: false },
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error("Disable system error:", error);
+    return response.status(500).json({
+      message: error.message || "Failed to disable system",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Continue with remaining controller functions...
 export const disableWarehouseOverride = async (request, response) => {
   try {
     const { productId } = request.params;
 
     const userRole = request.user.subRole || request.user.role;
-    if (!['DIRECTOR', 'IT', 'WAREHOUSE'].includes(userRole)) {
+    if (!["DIRECTOR", "IT", "WAREHOUSE"].includes(userRole)) {
       return response.status(403).json({
-        message: 'Insufficient permissions',
+        message: "Insufficient permissions",
         error: true,
         success: false,
       });
@@ -498,7 +832,7 @@ export const disableWarehouseOverride = async (request, response) => {
     const product = await ProductModel.findById(productId);
     if (!product) {
       return response.status(404).json({
-        message: 'Product not found',
+        message: "Product not found",
         error: true,
         success: false,
       });
@@ -508,9 +842,9 @@ export const disableWarehouseOverride = async (request, response) => {
     const newStock = stockTotals ? stockTotals.finalStock : product.stock || 0;
 
     const updateData = {
-      'warehouseStock.enabled': false,
+      "warehouseStock.enabled": false,
       stock: newStock,
-      stockSource: stockTotals ? 'STOCK_BATCHES' : 'PRODUCT_DEFAULT',
+      stockSource: stockTotals ? "STOCK_BATCHES" : "PRODUCT_DEFAULT",
       updatedBy: request.user._id,
     };
 
@@ -520,29 +854,33 @@ export const disableWarehouseOverride = async (request, response) => {
       { new: true, runValidators: true }
     );
 
-    logActivity(
+    await logActivity(
       request.user,
-      'WAREHOUSE_OVERRIDE_DISABLED',
+      "WAREHOUSE_OVERRIDE_DISABLED",
       {
-        type: 'PRODUCT',
+        type: "PRODUCT",
         id: productId,
         name: updatedProduct.name,
         sku: updatedProduct.sku,
       },
       null,
-      'Warehouse manual override disabled, synced from stock batches'
+      "Warehouse manual override disabled, synced from stock batches",
+      {
+        ip: request.ip,
+        userAgent: request.headers["user-agent"],
+      }
     );
 
     return response.json({
-      message: 'Warehouse override disabled, stock synced from batches',
+      message: "Warehouse override disabled, stock synced from batches",
       data: updatedProduct,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Disable warehouse override error:', error);
+    console.error("Disable warehouse override error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to disable warehouse override',
+      message: error.message || "Failed to disable warehouse override",
       error: true,
       success: false,
     });
@@ -552,9 +890,9 @@ export const disableWarehouseOverride = async (request, response) => {
 export const syncAllFromStockModel = async (request, response) => {
   try {
     const userRole = request.user.subRole || request.user.role;
-    if (!['DIRECTOR', 'IT'].includes(userRole)) {
+    if (!["DIRECTOR", "IT"].includes(userRole)) {
       return response.status(403).json({
-        message: 'Only Director or IT can perform bulk sync',
+        message: "Only Director or IT can perform bulk sync",
         error: true,
         success: false,
       });
@@ -562,7 +900,7 @@ export const syncAllFromStockModel = async (request, response) => {
 
     const products = await ProductModel.find({
       $or: [
-        { 'warehouseStock.enabled': { $ne: true } },
+        { "warehouseStock.enabled": { $ne: true } },
         { warehouseStock: { $exists: false } },
       ],
     });
@@ -577,7 +915,7 @@ export const syncAllFromStockModel = async (request, response) => {
         if (stockTotals) {
           await ProductModel.findByIdAndUpdate(product._id, {
             stock: stockTotals.finalStock,
-            stockSource: 'STOCK_BATCHES',
+            stockSource: "STOCK_BATCHES",
             updatedBy: request.user._id,
           });
           syncedCount++;
@@ -588,19 +926,23 @@ export const syncAllFromStockModel = async (request, response) => {
       }
     }
 
-    logActivity(
+    await logActivity(
       request.user,
-      'BULK_STOCK_SYNC',
+      "BULK_STOCK_SYNC",
       {
-        type: 'SYSTEM',
-        name: 'Stock Synchronization',
+        type: "SYSTEM",
+        name: "Stock Synchronization",
       },
       null,
-      `Synced ${syncedCount} products, ${errorCount} errors`
+      `Synced ${syncedCount} products, ${errorCount} errors`,
+      {
+        ip: request.ip,
+        userAgent: request.headers["user-agent"],
+      }
     );
 
     return response.json({
-      message: 'Bulk stock sync completed',
+      message: "Bulk stock sync completed",
       data: {
         totalProducts: products.length,
         syncedCount,
@@ -610,9 +952,9 @@ export const syncAllFromStockModel = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Bulk sync error:', error);
+    console.error("Bulk sync error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to perform bulk sync',
+      message: error.message || "Failed to perform bulk sync",
       error: true,
       success: false,
     });
@@ -648,9 +990,9 @@ export const getStockSummary = async (request, response) => {
       stats.refurbishedItems += effectiveStock.refurbishedQty;
       stats.expiredItems += effectiveStock.expiredQty;
 
-      if (effectiveStock.source === 'WAREHOUSE_MANUAL') {
+      if (effectiveStock.source === "WAREHOUSE_MANUAL") {
         stats.manualOverrideCount += 1;
-      } else if (effectiveStock.source === 'STOCK_BATCHES') {
+      } else if (effectiveStock.source === "STOCK_BATCHES") {
         stats.stockBatchCount += 1;
       }
 
@@ -663,26 +1005,25 @@ export const getStockSummary = async (request, response) => {
     }
 
     return response.json({
-      message: 'Stock summary retrieved successfully',
+      message: "Stock summary retrieved successfully",
       data: stats,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Get stock summary error:', error);
+    console.error("Get stock summary error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to retrieve stock summary',
+      message: error.message || "Failed to retrieve stock summary",
       error: true,
       success: false,
     });
   }
 };
 
-// Rest of the existing functions remain the same...
 export const getSystemStatus = async (request, response) => {
   try {
     return response.json({
-      message: 'System status retrieved successfully',
+      message: "System status retrieved successfully",
       data: {
         enabled: systemSettings.enabled,
         settings: systemSettings,
@@ -691,89 +1032,9 @@ export const getSystemStatus = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Get system status error:', error);
+    console.error("Get system status error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to retrieve system status',
-      error: true,
-      success: false,
-    });
-  }
-};
-
-export const enableSystem = async (request, response) => {
-  try {
-    const userRole = request.user.subRole || request.user.role;
-    if (!['DIRECTOR', 'IT'].includes(userRole)) {
-      return response.status(403).json({
-        message: 'Only Director or IT can enable the warehouse system',
-        error: true,
-        success: false,
-      });
-    }
-
-    systemSettings.enabled = true;
-
-    logActivity(
-      request.user,
-      'SYSTEM_ENABLED',
-      {
-        type: 'SYSTEM',
-        name: 'Warehouse Stock Management',
-      },
-      null,
-      'Enabled manual stock management for warehouse team'
-    );
-
-    return response.json({
-      message: 'Warehouse system enabled successfully',
-      data: { enabled: true },
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    console.error('Enable system error:', error);
-    return response.status(500).json({
-      message: error.message || 'Failed to enable system',
-      error: true,
-      success: false,
-    });
-  }
-};
-
-export const disableSystem = async (request, response) => {
-  try {
-    const userRole = request.user.subRole || request.user.role;
-    if (!['DIRECTOR', 'IT'].includes(userRole)) {
-      return response.status(403).json({
-        message: 'Only Director or IT can disable the warehouse system',
-        error: true,
-        success: false,
-      });
-    }
-
-    systemSettings.enabled = false;
-
-    logActivity(
-      request.user,
-      'SYSTEM_DISABLED',
-      {
-        type: 'SYSTEM',
-        name: 'Warehouse Stock Management',
-      },
-      null,
-      'Disabled manual stock management'
-    );
-
-    return response.json({
-      message: 'Warehouse system disabled successfully',
-      data: { enabled: false },
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    console.error('Disable system error:', error);
-    return response.status(500).json({
-      message: error.message || 'Failed to disable system',
+      message: error.message || "Failed to retrieve system status",
       error: true,
       success: false,
     });
@@ -783,9 +1044,9 @@ export const disableSystem = async (request, response) => {
 export const updateSystemSettings = async (request, response) => {
   try {
     const userRole = request.user.subRole || request.user.role;
-    if (!['DIRECTOR', 'IT'].includes(userRole)) {
+    if (!["DIRECTOR", "IT"].includes(userRole)) {
       return response.status(403).json({
-        message: 'Only Director or IT can update system settings',
+        message: "Only Director or IT can update system settings",
         error: true,
         success: false,
       });
@@ -794,49 +1055,86 @@ export const updateSystemSettings = async (request, response) => {
     const { autoSyncEnabled, lowStockThreshold, criticalStockThreshold } =
       request.body;
 
-    if (
-      lowStockThreshold &&
-      (lowStockThreshold < 1 || lowStockThreshold > 100)
-    ) {
-      return response.status(400).json({
-        message: 'Low stock threshold must be between 1 and 100',
-        error: true,
-        success: false,
-      });
-    }
+    const changes = {};
 
     if (
-      criticalStockThreshold &&
-      (criticalStockThreshold < 1 || criticalStockThreshold > lowStockThreshold)
+      autoSyncEnabled !== undefined &&
+      autoSyncEnabled !== systemSettings.autoSyncEnabled
     ) {
-      return response.status(400).json({
-        message:
-          'Critical stock threshold must be between 1 and low stock threshold',
-        error: true,
-        success: false,
-      });
-    }
-
-    if (autoSyncEnabled !== undefined) {
+      changes.autoSyncEnabled = {
+        from: systemSettings.autoSyncEnabled,
+        to: autoSyncEnabled,
+      };
       systemSettings.autoSyncEnabled = autoSyncEnabled;
     }
-    if (lowStockThreshold !== undefined) {
+
+    if (
+      lowStockThreshold !== undefined &&
+      lowStockThreshold !== systemSettings.lowStockThreshold
+    ) {
+      if (lowStockThreshold < 1 || lowStockThreshold > 100) {
+        return response.status(400).json({
+          message: "Low stock threshold must be between 1 and 100",
+          error: true,
+          success: false,
+        });
+      }
+      changes.lowStockThreshold = {
+        from: systemSettings.lowStockThreshold,
+        to: lowStockThreshold,
+      };
       systemSettings.lowStockThreshold = lowStockThreshold;
     }
-    if (criticalStockThreshold !== undefined) {
+
+    if (
+      criticalStockThreshold !== undefined &&
+      criticalStockThreshold !== systemSettings.criticalStockThreshold
+    ) {
+      if (
+        criticalStockThreshold < 1 ||
+        criticalStockThreshold > systemSettings.lowStockThreshold
+      ) {
+        return response.status(400).json({
+          message:
+            "Critical stock threshold must be between 1 and low stock threshold",
+          error: true,
+          success: false,
+        });
+      }
+      changes.criticalStockThreshold = {
+        from: systemSettings.criticalStockThreshold,
+        to: criticalStockThreshold,
+      };
       systemSettings.criticalStockThreshold = criticalStockThreshold;
     }
 
+    if (Object.keys(changes).length > 0) {
+      await logActivity(
+        request.user,
+        "SETTINGS_UPDATE",
+        {
+          type: "SYSTEM",
+          name: "System Settings",
+        },
+        changes,
+        "System settings updated",
+        {
+          ip: request.ip,
+          userAgent: request.headers["user-agent"],
+        }
+      );
+    }
+
     return response.json({
-      message: 'System settings updated successfully',
+      message: "System settings updated successfully",
       data: systemSettings,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Update system settings error:', error);
+    console.error("Update system settings error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to update system settings',
+      message: error.message || "Failed to update system settings",
       error: true,
       success: false,
     });
@@ -846,66 +1144,15 @@ export const updateSystemSettings = async (request, response) => {
 export const getSystemSettings = async (request, response) => {
   try {
     return response.json({
-      message: 'System settings retrieved successfully',
+      message: "System settings retrieved successfully",
       data: systemSettings,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Get system settings error:', error);
+    console.error("Get system settings error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to retrieve system settings',
-      error: true,
-      success: false,
-    });
-  }
-};
-
-export const getActivityLog = async (request, response) => {
-  try {
-    const { page = 1, limit = 50, dateRange, action, user } = request.query;
-
-    let filteredActivities = [...activityLog];
-
-    if (dateRange && dateRange !== 'all') {
-      const daysAgo = parseInt(dateRange);
-      const cutoffDate = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
-      filteredActivities = filteredActivities.filter(
-        (activity) => new Date(activity.timestamp) >= cutoffDate
-      );
-    }
-
-    if (action) {
-      filteredActivities = filteredActivities.filter(
-        (activity) => activity.action === action
-      );
-    }
-
-    if (user) {
-      filteredActivities = filteredActivities.filter((activity) =>
-        activity.user.name.includes(user)
-      );
-    }
-
-    const skip = (page - 1) * limit;
-    const paginatedActivities = filteredActivities.slice(
-      skip,
-      skip + parseInt(limit)
-    );
-
-    return response.json({
-      message: 'Activity log retrieved successfully',
-      data: paginatedActivities,
-      totalCount: filteredActivities.length,
-      totalPages: Math.ceil(filteredActivities.length / limit),
-      currentPage: parseInt(page),
-      error: false,
-      success: true,
-    });
-  } catch (error) {
-    console.error('Get activity log error:', error);
-    return response.status(500).json({
-      message: error.message || 'Failed to retrieve activity log',
+      message: error.message || "Failed to retrieve system settings",
       error: true,
       success: false,
     });
@@ -914,54 +1161,39 @@ export const getActivityLog = async (request, response) => {
 
 export const getLowStockAlerts = async (request, response) => {
   try {
-    const lowStockProducts = await ProductModel.find({
-      $and: [
-        {
-          $expr: {
-            $lte: [
-              { $ifNull: ['$finalStock', '$stock'] },
-              systemSettings.lowStockThreshold,
-            ],
-          },
-        },
-        { $expr: { $gt: [{ $ifNull: ['$finalStock', '$stock'] }, 0] } },
-      ],
-    })
-      .populate('category brand', 'name')
-      .select(
-        'name sku finalStock stock onlineStock offlineStock category brand'
-      )
-      .sort({ finalStock: 1 });
+    const products = await ProductModel.find({})
+      .populate("category brand", "name")
+      .lean();
 
-    const criticalStockProducts = await ProductModel.find({
-      $expr: {
-        $lte: [
-          { $ifNull: ['$finalStock', '$stock'] },
-          systemSettings.criticalStockThreshold,
-        ],
-      },
-    })
-      .populate('category brand', 'name')
-      .select(
-        'name sku finalStock stock onlineStock offlineStock category brand'
-      )
-      .sort({ finalStock: 1 });
+    const lowStock = [];
+    const criticalStock = [];
+    const outOfStock = [];
 
-    const outOfStockProducts = await ProductModel.find({
-      $expr: { $eq: [{ $ifNull: ['$finalStock', '$stock'] }, 0] },
-    })
-      .populate('category brand', 'name')
-      .select(
-        'name sku finalStock stock onlineStock offlineStock category brand'
-      )
-      .sort({ name: 1 });
+    for (const product of products) {
+      const effectiveStock = await getEffectiveStock(product);
+      const stock = effectiveStock.finalStock;
+
+      const productData = {
+        ...product,
+        effectiveStock: stock,
+        warehouseStock: effectiveStock,
+      };
+
+      if (stock === 0) {
+        outOfStock.push(productData);
+      } else if (stock <= systemSettings.criticalStockThreshold) {
+        criticalStock.push(productData);
+      } else if (stock <= systemSettings.lowStockThreshold) {
+        lowStock.push(productData);
+      }
+    }
 
     return response.json({
-      message: 'Stock alerts retrieved successfully',
+      message: "Stock alerts retrieved successfully",
       data: {
-        lowStock: lowStockProducts,
-        criticalStock: criticalStockProducts,
-        outOfStock: outOfStockProducts,
+        lowStock,
+        criticalStock,
+        outOfStock,
         thresholds: {
           low: systemSettings.lowStockThreshold,
           critical: systemSettings.criticalStockThreshold,
@@ -971,9 +1203,9 @@ export const getLowStockAlerts = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Get low stock alerts error:', error);
+    console.error("Get low stock alerts error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to retrieve stock alerts',
+      message: error.message || "Failed to retrieve stock alerts",
       error: true,
       success: false,
     });
@@ -984,16 +1216,16 @@ export const bulkUpdateStock = async (request, response) => {
   try {
     if (!systemSettings.enabled) {
       return response.status(403).json({
-        message: 'Warehouse stock system is disabled',
+        message: "Warehouse stock system is disabled",
         error: true,
         success: false,
       });
     }
 
     const userRole = request.user.subRole || request.user.role;
-    if (userRole !== 'WAREHOUSE') {
+    if (userRole !== "WAREHOUSE") {
       return response.status(403).json({
-        message: 'Only warehouse staff can update stock quantities',
+        message: "Only warehouse staff can update stock quantities",
         error: true,
         success: false,
       });
@@ -1003,7 +1235,7 @@ export const bulkUpdateStock = async (request, response) => {
 
     if (!Array.isArray(updates) || updates.length === 0) {
       return response.status(400).json({
-        message: 'Updates array is required',
+        message: "Updates array is required",
         error: true,
         success: false,
       });
@@ -1021,16 +1253,19 @@ export const bulkUpdateStock = async (request, response) => {
         }
 
         const updateData = {
-          stockOnArrival: update.stockOnArrival,
-          damagedQty: update.damagedQty,
-          expiredQty: update.expiredQty,
-          refurbishedQty: update.refurbishedQty,
-          finalStock: update.finalStock,
+          "warehouseStock.enabled": true,
+          "warehouseStock.stockOnArrival": update.stockOnArrival,
+          "warehouseStock.damagedQty": update.damagedQty,
+          "warehouseStock.expiredQty": update.expiredQty,
+          "warehouseStock.refurbishedQty": update.refurbishedQty,
+          "warehouseStock.finalStock": update.finalStock,
+          "warehouseStock.onlineStock": update.onlineStock,
+          "warehouseStock.offlineStock": update.offlineStock,
+          "warehouseStock.notes": update.notes,
+          "warehouseStock.lastUpdated": new Date(),
+          "warehouseStock.updatedBy": request.user._id,
           stock: update.finalStock,
-          onlineStock: update.onlineStock,
-          offlineStock: update.offlineStock,
-          warehouseNotes: update.notes,
-          stockLastUpdated: new Date(),
+          stockSource: "WAREHOUSE_MANUAL",
           updatedBy: request.user._id,
         };
 
@@ -1044,17 +1279,21 @@ export const bulkUpdateStock = async (request, response) => {
           success: true,
         });
 
-        logActivity(
+        await logActivity(
           request.user,
-          'BULK_STOCK_UPDATE',
+          "BULK_STOCK_UPDATE",
           {
-            type: 'PRODUCT',
+            type: "PRODUCT",
             id: update.productId,
             name: product.name,
             sku: product.sku,
           },
           null,
-          `Bulk update: ${update.notes || 'No notes'}`
+          `Bulk update: ${update.notes || "No notes"}`,
+          {
+            ip: request.ip,
+            userAgent: request.headers["user-agent"],
+          }
         );
       } catch (error) {
         errors.push(`Error updating ${update.productId}: ${error.message}`);
@@ -1067,7 +1306,7 @@ export const bulkUpdateStock = async (request, response) => {
     }
 
     return response.json({
-      message: 'Bulk update completed',
+      message: "Bulk update completed",
       data: {
         successful: results.filter((r) => r.success).length,
         failed: results.filter((r) => !r.success).length,
@@ -1078,9 +1317,9 @@ export const bulkUpdateStock = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Bulk update stock error:', error);
+    console.error("Bulk update stock error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to perform bulk update',
+      message: error.message || "Failed to perform bulk update",
       error: true,
       success: false,
     });
@@ -1093,7 +1332,7 @@ export const reconcileStock = async (request, response) => {
 
     if (!productId || actualCount === undefined) {
       return response.status(400).json({
-        message: 'Product ID and actual count are required',
+        message: "Product ID and actual count are required",
         error: true,
         success: false,
       });
@@ -1102,27 +1341,33 @@ export const reconcileStock = async (request, response) => {
     const product = await ProductModel.findById(productId);
     if (!product) {
       return response.status(404).json({
-        message: 'Product not found',
+        message: "Product not found",
         error: true,
         success: false,
       });
     }
 
-    const currentStock = product.finalStock || product.stock || 0;
+    const effectiveStock = await getEffectiveStock(product);
+    const currentStock = effectiveStock.finalStock;
     const difference = actualCount - currentStock;
 
-    await ProductModel.findByIdAndUpdate(productId, {
-      finalStock: actualCount,
+    const updateData = {
+      "warehouseStock.enabled": true,
+      "warehouseStock.finalStock": actualCount,
+      "warehouseStock.lastUpdated": new Date(),
+      "warehouseStock.updatedBy": request.user._id,
       stock: actualCount,
-      stockLastUpdated: new Date(),
+      stockSource: "WAREHOUSE_MANUAL",
       updatedBy: request.user._id,
-    });
+    };
 
-    logActivity(
+    await ProductModel.findByIdAndUpdate(productId, updateData);
+
+    await logActivity(
       request.user,
-      'STOCK_RECONCILIATION',
+      "STOCK_RECONCILIATION",
       {
-        type: 'PRODUCT',
+        type: "PRODUCT",
         id: productId,
         name: product.name,
         sku: product.sku,
@@ -1133,11 +1378,15 @@ export const reconcileStock = async (request, response) => {
           to: actualCount,
         },
       },
-      `Stock reconciliation: ${difference > 0 ? '+' : ''}${difference} units`
+      `Stock reconciliation: ${difference > 0 ? "+" : ""}${difference} units`,
+      {
+        ip: request.ip,
+        userAgent: request.headers["user-agent"],
+      }
     );
 
     return response.json({
-      message: 'Stock reconciled successfully',
+      message: "Stock reconciled successfully",
       data: {
         productId,
         previousStock: currentStock,
@@ -1148,9 +1397,9 @@ export const reconcileStock = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Reconcile stock error:', error);
+    console.error("Reconcile stock error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to reconcile stock',
+      message: error.message || "Failed to reconcile stock",
       error: true,
       success: false,
     });
@@ -1169,61 +1418,66 @@ export const exportStockData = async (request, response) => {
     if (compatibleSystem) query.compatibleSystem = compatibleSystem;
 
     const products = await ProductModel.find(query)
-      .populate('category brand compatibleSystem', 'name')
+      .populate("category brand compatibleSystem", "name")
       .sort({ name: 1 });
 
     const csvHeaders = [
-      'Product Name',
-      'SKU',
-      'Category',
-      'Brand',
-      'Product Type',
-      'Weight',
-      'Stock on Arrival',
-      'Damaged Qty',
-      'Expired Qty',
-      'Refurbished Qty',
-      'Final Stock',
-      'Online Stock',
-      'Offline Stock',
-      'Last Updated',
-      'Notes',
+      "Product Name",
+      "SKU",
+      "Category",
+      "Brand",
+      "Product Type",
+      "Weight",
+      "Stock on Arrival",
+      "Damaged Qty",
+      "Expired Qty",
+      "Refurbished Qty",
+      "Final Stock",
+      "Online Stock",
+      "Offline Stock",
+      "Last Updated",
+      "Notes",
     ];
 
-    const csvRows = products.map((product) => [
-      product.name || '',
-      product.sku || '',
-      product.category?.name || '',
-      product.brand?.map((b) => b.name).join(', ') || '',
-      product.productType || '',
-      product.weight || 0,
-      product.stockOnArrival || 0,
-      product.damagedQty || 0,
-      product.expiredQty || 0,
-      product.refurbishedQty || 0,
-      product.finalStock || product.stock || 0,
-      product.onlineStock || 0,
-      product.offlineStock || 0,
-      product.stockLastUpdated
-        ? new Date(product.stockLastUpdated).toLocaleDateString()
-        : '',
-      product.warehouseNotes || '',
-    ]);
+    const csvRows = await Promise.all(
+      products.map(async (product) => {
+        const effectiveStock = await getEffectiveStock(product);
+        return [
+          product.name || "",
+          product.sku || "",
+          product.category?.name || "",
+          product.brand?.map((b) => b.name).join(", ") || "",
+          product.productType || "",
+          product.weight || 0,
+          effectiveStock.stockOnArrival || 0,
+          effectiveStock.damagedQty || 0,
+          effectiveStock.expiredQty || 0,
+          effectiveStock.refurbishedQty || 0,
+          effectiveStock.finalStock || 0,
+          effectiveStock.onlineStock || 0,
+          effectiveStock.offlineStock || 0,
+          effectiveStock.lastUpdated
+            ? new Date(effectiveStock.lastUpdated).toLocaleDateString()
+            : "",
+          effectiveStock.notes || "",
+        ];
+      })
+    );
 
     const csvContent = [csvHeaders, ...csvRows]
-      .map((row) => row.map((field) => `"${field}"`).join(','))
-      .join('\n');
+      .map((row) => row.map((field) => `"${field}"`).join(","))
+      .join("\n");
 
-    response.setHeader('Content-Type', 'text/csv');
+    response.setHeader("Content-Type", "text/csv");
     response.setHeader(
-      'Content-Disposition',
+      "Content-Disposition",
       'attachment; filename="warehouse-stock-export.csv"'
     );
     return response.send(csvContent);
   } catch (error) {
-    console.error('Export stock data error:', error);
+    console.error("Export stock data error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to export stock data',
+      message: error.message || "Failed to export stock data",
       error: true,
       success: false,
     });
@@ -1232,68 +1486,103 @@ export const exportStockData = async (request, response) => {
 
 export const exportActivityLog = async (request, response) => {
   try {
-    const { dateRange, action, user } = request.query;
+    const { dateRange, action, userId } = request.query;
 
-    let filteredActivities = [...activityLog];
+    const query = {};
 
-    if (dateRange && dateRange !== 'all') {
+    if (dateRange && dateRange !== "all") {
       const daysAgo = parseInt(dateRange);
       const cutoffDate = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
-      filteredActivities = filteredActivities.filter(
-        (activity) => new Date(activity.timestamp) >= cutoffDate
-      );
+      query.createdAt = { $gte: cutoffDate };
     }
 
     if (action) {
-      filteredActivities = filteredActivities.filter(
-        (activity) => activity.action === action
-      );
+      query.action = action;
     }
 
-    if (user) {
-      filteredActivities = filteredActivities.filter((activity) =>
-        activity.user.name.includes(user)
-      );
+    if (userId) {
+      query.user = userId;
     }
+
+    const activities = await WarehouseActivityModel.find(query)
+      .populate("user", "name email subRole role")
+      .sort({ createdAt: -1 })
+      .lean();
 
     const csvHeaders = [
-      'Timestamp',
-      'User',
-      'Role',
-      'Action',
-      'Target Type',
-      'Target Name',
-      'Target SKU',
-      'Changes',
-      'Notes',
+      "Timestamp",
+      "User",
+      "Email",
+      "Role",
+      "Action",
+      "Target Type",
+      "Target Name",
+      "Target SKU",
+      "Changes",
+      "Notes",
     ];
 
-    const csvRows = filteredActivities.map((activity) => [
-      new Date(activity.timestamp).toISOString(),
+    const csvRows = activities.map((activity) => [
+      new Date(activity.createdAt).toISOString(),
       activity.user.name,
-      activity.user.role,
+      activity.user.email,
+      activity.user.subRole || activity.user.role,
       activity.action,
       activity.target.type,
       activity.target.name,
-      activity.target.sku || '',
-      activity.changes ? JSON.stringify(activity.changes) : '',
-      activity.notes || '',
+      activity.target.sku || "",
+      activity.changes
+        ? JSON.stringify(Object.fromEntries(activity.changes))
+        : "",
+      activity.notes || "",
     ]);
 
     const csvContent = [csvHeaders, ...csvRows]
-      .map((row) => row.map((field) => `"${field}"`).join(','))
-      .join('\n');
+      .map((row) => row.map((field) => `"${field}"`).join(","))
+      .join("\n");
 
-    response.setHeader('Content-Type', 'text/csv');
+    response.setHeader("Content-Type", "text/csv");
     response.setHeader(
-      'Content-Disposition',
+      "Content-Disposition",
       'attachment; filename="warehouse-activity-log.csv"'
     );
     return response.send(csvContent);
   } catch (error) {
-    console.error('Export activity log error:', error);
+    console.error("Export activity log error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to export activity log',
+      message: error.message || "Failed to export activity log",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Get list of users for activity log filter
+export const getWarehouseUsers = async (request, response) => {
+  try {
+    const users = await UserModel.find({
+      $or: [
+        { subRole: "WAREHOUSE" },
+        { subRole: "DIRECTOR" },
+        { subRole: "IT" },
+        { subRole: "MANAGER" },
+      ],
+      status: "Active",
+    })
+      .select("_id name email subRole role avatar")
+      .sort({ name: 1 })
+      .lean();
+
+    return response.json({
+      message: "Warehouse users retrieved successfully",
+      data: users,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error("Get warehouse users error:", error);
+    return response.status(500).json({
+      message: error.message || "Failed to retrieve warehouse users",
       error: true,
       success: false,
     });

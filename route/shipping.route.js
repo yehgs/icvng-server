@@ -1,7 +1,7 @@
 // routes/shipping.route.js - COMPLETE WITH FIX
-import { Router } from 'express';
-import auth from '../middleware/auth.js';
-import { requireRole } from '../middleware/roleAuth.js';
+import { Router } from "express";
+import auth from "../middleware/auth.js";
+import { requireRole } from "../middleware/roleAuth.js";
 import {
   createShippingZone,
   getShippingZones,
@@ -14,6 +14,7 @@ import {
   updateShippingMethod,
   deleteShippingMethod,
   calculateCheckoutShipping,
+  calculateManualOrderShipping, // NEW: Calculate shipping for manual orders
   getPublicShippingMethods,
   createShipment,
   updateTracking,
@@ -24,24 +25,25 @@ import {
   getShippingDashboardStats,
   getCategoriesForAssignment,
   getProductsForAssignment,
-} from '../controllers/shipping.controller.js';
+} from "../controllers/shipping.controller.js";
 
 const shippingRouter = Router();
 
 // Logistics roles that can manage shipping
-const logisticsRoles = ['IT', 'DIRECTOR', 'LOGISTICS'];
-const deleteRoles = ['IT', 'DIRECTOR', 'LOGISTICS'];
+const logisticsRoles = ["IT", "DIRECTOR", "LOGISTICS"];
+const deleteRoles = ["IT", "DIRECTOR", "LOGISTICS"];
 
 // ===== PUBLIC ROUTES =====
-shippingRouter.get('/track/:trackingNumber', getTrackingByNumber);
-shippingRouter.get('/methods/public', getPublicShippingMethods);
-shippingRouter.post('/calculate-checkout', calculateCheckoutShipping);
+shippingRouter.get("/track/:trackingNumber", getTrackingByNumber);
+shippingRouter.get("/methods/public", getPublicShippingMethods);
+shippingRouter.post("/calculate-checkout", calculateCheckoutShipping);
+shippingRouter.post("/calculate-manual-order", calculateManualOrderShipping);
 
 // ===== ADMIN ROUTES =====
 
 // Dashboard
 shippingRouter.get(
-  '/dashboard/stats',
+  "/dashboard/stats",
   auth,
   requireRole(logisticsRoles),
   getShippingDashboardStats
@@ -49,42 +51,42 @@ shippingRouter.get(
 
 // Shipping Zones
 shippingRouter.get(
-  '/zones/all',
+  "/zones/all",
   auth,
   requireRole(logisticsRoles),
   getAllShippingZones
 );
 
 shippingRouter.get(
-  '/zones',
+  "/zones",
   auth,
   requireRole(logisticsRoles),
   getShippingZones
 );
 
 shippingRouter.post(
-  '/zones',
+  "/zones",
   auth,
   requireRole(logisticsRoles),
   createShippingZone
 );
 
 shippingRouter.put(
-  '/zones/:zoneId',
+  "/zones/:zoneId",
   auth,
   requireRole(logisticsRoles),
   updateShippingZone
 );
 
 shippingRouter.get(
-  '/zones/:zoneId/dependencies',
+  "/zones/:zoneId/dependencies",
   auth,
   requireRole(logisticsRoles),
   getZoneDependencies
 );
 
 shippingRouter.delete(
-  '/zones/:zoneId',
+  "/zones/:zoneId",
   auth,
   requireRole(deleteRoles),
   deleteShippingZone
@@ -92,28 +94,28 @@ shippingRouter.delete(
 
 // Shipping Methods
 shippingRouter.get(
-  '/methods',
+  "/methods",
   auth,
   requireRole(logisticsRoles),
   getShippingMethods
 );
 
 shippingRouter.post(
-  '/methods',
+  "/methods",
   auth,
   requireRole(logisticsRoles),
   createShippingMethod
 );
 
 shippingRouter.put(
-  '/methods/:methodId',
+  "/methods/:methodId",
   auth,
   requireRole(logisticsRoles),
   updateShippingMethod
 );
 
 shippingRouter.delete(
-  '/methods/:methodId',
+  "/methods/:methodId",
   auth,
   requireRole(deleteRoles),
   deleteShippingMethod
@@ -121,14 +123,14 @@ shippingRouter.delete(
 
 // Categories and Products for Assignment
 shippingRouter.get(
-  '/categories/for-assignment',
+  "/categories/for-assignment",
   auth,
   requireRole(logisticsRoles),
   getCategoriesForAssignment
 );
 
 shippingRouter.get(
-  '/products/for-assignment',
+  "/products/for-assignment",
   auth,
   requireRole(logisticsRoles),
   getProductsForAssignment
@@ -136,7 +138,7 @@ shippingRouter.get(
 
 // Orders Ready for Shipping
 shippingRouter.get(
-  '/orders/ready-for-shipping',
+  "/orders/ready-for-shipping",
   auth,
   requireRole(logisticsRoles),
   getOrdersReadyForShipping
@@ -144,7 +146,7 @@ shippingRouter.get(
 
 // Shipment Creation
 shippingRouter.post(
-  '/shipments',
+  "/shipments",
   auth,
   requireRole(logisticsRoles),
   createShipment
@@ -152,21 +154,21 @@ shippingRouter.post(
 
 // Tracking Management
 shippingRouter.get(
-  '/trackings',
+  "/trackings",
   auth,
   requireRole(logisticsRoles),
   getAllTrackings
 );
 
 shippingRouter.put(
-  '/trackings/:trackingId',
+  "/trackings/:trackingId",
   auth,
   requireRole(logisticsRoles),
   updateTracking
 );
 
 shippingRouter.get(
-  '/trackings/stats',
+  "/trackings/stats",
   auth,
   requireRole(logisticsRoles),
   getTrackingStats

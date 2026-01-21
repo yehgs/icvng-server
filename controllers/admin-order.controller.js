@@ -1,4 +1,4 @@
-// controllers/admin-order.controller-enhanced.js - Enhanced with invoice generation & email
+// controllers/admin-order.controller.js - COMPLETE CORRECTED VERSION
 import OrderModel from "../models/order.model.js";
 import CustomerModel from "../models/customer.model.js";
 import ProductModel from "../models/product.model.js";
@@ -7,13 +7,29 @@ import mongoose from "mongoose";
 import { generateInvoiceTemplate } from "../utils/invoiceTemplate.js";
 import sendEmail from "../config/sendEmail.js";
 
+// Helper functions
+const getProductPrice = (product, priceOption = "regular") => {
+  switch (priceOption) {
+    case "3weeks":
+      return product.price3weeksDelivery || product.btcPrice || product.price;
+    case "5weeks":
+      return product.price5weeksDelivery || product.btcPrice || product.price;
+    default:
+      return product.btcPrice || product.price;
+  }
+};
+
+const pricewithDiscount = (price, dis = 0) => {
+  const discountAmount = Math.ceil((Number(price) * Number(dis)) / 100);
+  return Number(price) - discountAmount;
+};
+
 // ===== CREATE MANUAL ORDER WITH WAREHOUSE STOCK DEDUCTION =====
 export const createAdminOrderController = async (request, response) => {
   try {
     const userId = request.userId;
     const user = await UserModel.findById(userId);
 
-    // Only SALES can create orders
     if (user.role !== "ADMIN" || user.subRole !== "SALES") {
       return response.status(403).json({
         message: "Only sales agents can create orders",
@@ -23,20 +39,20 @@ export const createAdminOrderController = async (request, response) => {
 
     const {
       customerId,
-      items, // Array of { productId, quantity, priceOption }
-      orderType, // BTC or BTB
-      orderMode, // ONLINE or OFFLINE
-      paymentMethod, // CASH, BANK_TRANSFER, CARD
+      items,
+      orderType,
+      orderMode,
+      paymentMethod,
       deliveryAddress,
+      shippingMethodId,
       notes,
       customerNotes,
       discountAmount = 0,
       taxAmount = 0,
       shippingCost = 0,
-      sendInvoiceEmail = false, // NEW: Flag to send invoice via email
+      sendInvoiceEmail = false,
     } = request.body;
 
-    // Validate customer
     const customer = await CustomerModel.findById(customerId);
     if (!customer) {
       return response.status(404).json({
@@ -45,7 +61,6 @@ export const createAdminOrderController = async (request, response) => {
       });
     }
 
-    // Check permissions
     if (!["IT", "MANAGER", "DIRECTOR"].includes(user.subRole)) {
       if (
         customer.createdBy?.toString() !== userId &&
@@ -58,17 +73,33 @@ export const createAdminOrderController = async (request, response) => {
       }
     }
 
-    // Validate and process items with stock checking
-    let subTotal = 0;
-    const processedOrders = [];
-    const stockUpdates = []; // Track stock updates for rollback if needed
+    const orderGroupId = `GRP-${Date.now()}-${customerId}`;
+    const shippingCostPerItem = shippingCost / items.length;
 
-    // Start a session for transaction
+    const groupTotals = {
+      subTotal: 0,
+      totalShipping: shippingCost,
+      totalDiscount: discountAmount,
+      totalTax: taxAmount,
+      grandTotal: 0,
+      itemCount: items.length,
+    };
+
+    const processedOrders = [];
+    const stockUpdates = [];
+
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
-      for (const item of items) {
+      const firstOrderId = `ORD-${Date.now()}-${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
+
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index];
+        const isParent = index === 0;
+
         const product = await ProductModel.findById(item.productId).session(
           session
         );
@@ -76,7 +107,6 @@ export const createAdminOrderController = async (request, response) => {
           throw new Error(`Product with ID ${item.productId} not found`);
         }
 
-        // Check warehouse stock availability
         const availableStock = product.warehouseStock?.enabled
           ? product.warehouseStock.offlineStock || 0
           : product.stock || 0;
@@ -87,21 +117,11 @@ export const createAdminOrderController = async (request, response) => {
           );
         }
 
-        // Get price based on option and customer type
         let unitPrice;
         if (orderType === "BTB") {
           unitPrice = product.btbPrice || product.price;
         } else {
-          // BTC pricing based on delivery option
-          if (item.priceOption === "3weeks") {
-            unitPrice =
-              product.price3weeksDelivery || product.btcPrice || product.price;
-          } else if (item.priceOption === "5weeks") {
-            unitPrice =
-              product.price5weeksDelivery || product.btcPrice || product.price;
-          } else {
-            unitPrice = product.btcPrice || product.price;
-          }
+          unitPrice = getProductPrice(product, item.priceOption);
         }
 
         if (!unitPrice || unitPrice <= 0) {
@@ -109,11 +129,16 @@ export const createAdminOrderController = async (request, response) => {
         }
 
         const itemSubtotal = unitPrice * item.quantity;
-        subTotal += itemSubtotal;
+        const itemTotal =
+          itemSubtotal +
+          shippingCostPerItem +
+          taxAmount / items.length -
+          discountAmount / items.length;
 
-        // Deduct stock (will be committed only if transaction succeeds)
+        groupTotals.subTotal += itemSubtotal;
+        groupTotals.grandTotal += itemTotal;
+
         if (product.warehouseStock?.enabled) {
-          // Update warehouse offline stock
           const newOfflineStock =
             (product.warehouseStock.offlineStock || 0) - item.quantity;
           const newFinalStock =
@@ -138,7 +163,6 @@ export const createAdminOrderController = async (request, response) => {
             newOfflineStock,
           });
         } else {
-          // Update regular stock
           const newStock = (product.stock || 0) - item.quantity;
           await ProductModel.findByIdAndUpdate(
             item.productId,
@@ -155,23 +179,24 @@ export const createAdminOrderController = async (request, response) => {
           });
         }
 
-        // Generate unique order ID
-        const orderId = `ORD-${Date.now()}-${Math.random()
-          .toString(36)
-          .substr(2, 9)}`;
+        const orderId = isParent
+          ? firstOrderId
+          : `ORD-${Date.now()}-${index}-${Math.random()
+              .toString(36)
+              .substr(2, 9)}`;
 
         processedOrders.push({
-          // ===== UNIFIED FIELDS =====
           orderId,
-          userId: null, // Manual orders don't have userId
-          customerId, // Manual orders use customerId
-
-          // Classification
+          userId: null,
+          customerId,
+          orderGroupId,
+          isParentOrder: isParent,
+          parentOrderId: isParent ? null : firstOrderId,
+          orderSequence: index + 1,
+          totalItemsInGroup: items.length,
           orderType,
           orderMode,
-          isWebsiteOrder: false, // Critical: This is a manual order
-
-          // Product
+          isWebsiteOrder: false,
           productId: item.productId,
           product_details: {
             name: product.name,
@@ -182,45 +207,33 @@ export const createAdminOrderController = async (request, response) => {
           },
           quantity: item.quantity,
           unitPrice,
-
-          // Pricing (split costs proportionally if multiple items)
           subTotalAmt: itemSubtotal,
           discount_amount: discountAmount / items.length,
           tax_amount: taxAmount / items.length,
-          shipping_cost: shippingCost / items.length,
-          totalAmt:
-            itemSubtotal +
-            taxAmount / items.length +
-            shippingCost / items.length -
-            discountAmount / items.length,
+          shipping_cost: shippingCostPerItem,
+          totalAmt: itemTotal,
           currency: "NGN",
-
-          // Payment
+          groupTotals: isParent ? groupTotals : {},
           payment_status: paymentMethod === "CASH" ? "PENDING" : "PENDING",
           payment_method: paymentMethod,
-
-          // Order status
-          order_status: "CONFIRMED", // Manual orders start as CONFIRMED
-
-          // Delivery
-          delivery_address: deliveryAddress || customer.address,
-
-          // Created by sales agent
+          paymentId: `MAN-${Date.now()}`,
+          order_status: "CONFIRMED",
+          deliveryAddress: deliveryAddress || customer.address,
+          delivery_address: null,
+          shippingMethod: shippingMethodId || null,
           createdBy: userId,
-
-          // Notes
           notes,
           customer_notes: customerNotes,
-
-          // Invoice
           invoiceGenerated: false,
         });
       }
 
-      // Insert all orders
+      if (processedOrders.length > 0) {
+        processedOrders[0].groupTotals = groupTotals;
+      }
+
       const orders = await OrderModel.insertMany(processedOrders, { session });
 
-      // Update customer statistics
       await CustomerModel.findByIdAndUpdate(
         customerId,
         {
@@ -236,10 +249,12 @@ export const createAdminOrderController = async (request, response) => {
         { session }
       );
 
-      // Commit transaction
       await session.commitTransaction();
 
-      // Populate orders for response
+      console.log(
+        `✅ Manual order: Created order group ${orderGroupId} with ${orders.length} orders`
+      );
+
       const populatedOrders = await OrderModel.find({
         _id: { $in: orders.map((o) => o._id) },
       })
@@ -250,10 +265,9 @@ export const createAdminOrderController = async (request, response) => {
         .populate("createdBy", "name email")
         .populate("productId", "name image sku");
 
-      // Send invoice email if requested
+      // ✅ SEND INVOICE EMAIL IF REQUESTED
       if (sendInvoiceEmail && customer.email) {
         try {
-          // Generate invoice for the first order (represents the whole order group)
           const mainOrder = populatedOrders[0];
 
           const invoiceHTML = generateInvoiceTemplate({
@@ -267,14 +281,11 @@ export const createAdminOrderController = async (request, response) => {
               orderStatus: mainOrder.order_status,
               paymentStatus: mainOrder.payment_status,
               paymentMethod: mainOrder.payment_method,
-              subTotal: subTotal,
+              subTotal: groupTotals.subTotal,
               discountAmount,
               taxAmount,
               shippingCost,
-              totalAmount: populatedOrders.reduce(
-                (sum, o) => sum + o.totalAmt,
-                0
-              ),
+              totalAmount: groupTotals.grandTotal,
               notes: mainOrder.notes,
               customerNotes: mainOrder.customer_notes,
               isWebsiteOrder: false,
@@ -285,7 +296,7 @@ export const createAdminOrderController = async (request, response) => {
               mobile: customer.mobile,
               customerType: customer.customerType,
               companyName: customer.companyName,
-              address: customer.address,
+              address: deliveryAddress || customer.address,
               taxNumber: customer.taxNumber,
             },
             items: populatedOrders.map((order) => ({
@@ -305,12 +316,15 @@ export const createAdminOrderController = async (request, response) => {
             sendTo: customer.email,
             subject: `Invoice - Order ${mainOrder.orderId} | I-COFFEE.NG`,
             html: invoiceHTML,
+            senderName: user.name,
+            replyTo: user.email,
           });
 
-          console.log(`Invoice email sent to ${customer.email}`);
+          console.log(
+            `✅ Invoice email sent to ${customer.email} from ${user.name}`
+          );
         } catch (emailError) {
-          console.error("Error sending invoice email:", emailError);
-          // Don't fail the order creation if email fails
+          console.error("❌ Error sending invoice email:", emailError);
         }
       }
 
@@ -320,11 +334,11 @@ export const createAdminOrderController = async (request, response) => {
           orders: populatedOrders,
           stockUpdates,
           invoiceEmailSent: sendInvoiceEmail && customer.email,
+          orderGroupId,
         },
         success: true,
       });
     } catch (error) {
-      // Rollback transaction on error
       await session.abortTransaction();
       throw error;
     } finally {
@@ -360,22 +374,16 @@ export const getAllOrdersController = async (request, response) => {
       endDate,
     } = request.query;
 
-    // Build query based on user role
     let query = {};
 
-    // Role-based filtering
     if (user.role === "ADMIN") {
       if (["IT", "MANAGER", "DIRECTOR"].includes(user.subRole)) {
-        // Can see all orders (both website and manual)
         query = {};
       } else if (user.subRole === "SALES") {
-        // Can see:
-        // 1. Manual orders they created
-        // 2. Website orders (to process them)
         query = {
           $or: [
-            { createdBy: userId, isWebsiteOrder: false }, // Their manual orders
-            { isWebsiteOrder: true }, // All website orders
+            { createdBy: userId, isWebsiteOrder: false },
+            { isWebsiteOrder: true },
           ],
         };
       } else {
@@ -391,7 +399,6 @@ export const getAllOrdersController = async (request, response) => {
       });
     }
 
-    // Add filters
     if (search) {
       const searchRegex = new RegExp(search, "i");
       query.$and = query.$and || [];
@@ -407,7 +414,6 @@ export const getAllOrdersController = async (request, response) => {
     if (isWebsiteOrder !== undefined)
       query.isWebsiteOrder = isWebsiteOrder === "true";
 
-    // Date range filter
     if (startDate && endDate) {
       query.createdAt = {
         $gte: new Date(startDate),
@@ -469,14 +475,10 @@ export const updateOrderStatusController = async (request, response) => {
       });
     }
 
-    // Permission check
     if (user.role === "ADMIN") {
       if (["IT", "MANAGER", "DIRECTOR"].includes(user.subRole)) {
         // Can update any order
       } else if (user.subRole === "SALES") {
-        // Can update:
-        // 1. Orders they created
-        // 2. Website orders (to process)
         if (!order.isWebsiteOrder && order.createdBy?.toString() !== userId) {
           return response.status(403).json({
             message: "You can only update orders you created",
@@ -496,7 +498,6 @@ export const updateOrderStatusController = async (request, response) => {
     if (payment_status) updateData.payment_status = payment_status;
     if (notes) updateData.admin_notes = notes;
 
-    // Set delivery date if delivered
     if (order_status === "DELIVERED") {
       updateData.actual_delivery = new Date();
     }
@@ -524,7 +525,6 @@ export const updateOrderStatusController = async (request, response) => {
 };
 
 // ===== GENERATE INVOICE WITH EMAIL OPTION =====
-// controllers/admin-order.controller.js
 export const generateInvoiceController = async (request, response) => {
   try {
     const userId = request.userId;
@@ -532,7 +532,6 @@ export const generateInvoiceController = async (request, response) => {
     const { orderId } = request.params;
     const { sendEmail: shouldSendEmail = false } = request.body;
 
-    // Only SALES can generate invoices
     if (user.role !== "ADMIN" || user.subRole !== "SALES") {
       return response.status(403).json({
         message: "Only sales agents can generate invoices",
@@ -548,7 +547,7 @@ export const generateInvoiceController = async (request, response) => {
       )
       .populate("productId", "name image sku")
       .populate("createdBy", "name email")
-      .populate("delivery_address"); // ✅ CRITICAL: Populate the address
+      .populate("delivery_address");
 
     if (!order) {
       return response.status(404).json({
@@ -557,7 +556,6 @@ export const generateInvoiceController = async (request, response) => {
       });
     }
 
-    // Permission check
     if (!["IT", "MANAGER", "DIRECTOR"].includes(user.subRole)) {
       if (!order.isWebsiteOrder && order.createdBy?.toString() !== userId) {
         return response.status(403).json({
@@ -567,24 +565,18 @@ export const generateInvoiceController = async (request, response) => {
       }
     }
 
-    // Mark invoice as generated
     if (!order.invoiceGenerated) {
       order.invoiceGenerated = true;
       await order.save();
     }
 
-    // ✅ Prepare delivery address for template
     let deliveryAddress = null;
-
     if (order.isWebsiteOrder) {
-      // Website orders use delivery_address reference
       deliveryAddress = order.delivery_address;
     } else {
-      // Manual orders might use deliveryAddress embedded object
       deliveryAddress = order.deliveryAddress || order.customerId?.address;
     }
 
-    // Send email if requested
     let emailSent = false;
     if (shouldSendEmail) {
       const customer = order.isWebsiteOrder ? order.userId : order.customerId;
@@ -641,12 +633,18 @@ export const generateInvoiceController = async (request, response) => {
             sendTo: customer.email,
             subject: `Invoice ${order.invoiceNumber} - Order ${order.orderId} | I-COFFEE.NG`,
             html: invoiceHTML,
+            senderName: order.createdBy?.name || user.name,
+            replyTo: order.createdBy?.email || user.email,
           });
 
           emailSent = true;
-          console.log(`Invoice email sent to ${customer.email}`);
+          console.log(
+            `✅ Invoice email sent to ${customer.email} from ${
+              order.createdBy?.name || user.name
+            }`
+          );
         } catch (emailError) {
-          console.error("Error sending invoice email:", emailError);
+          console.error("❌ Error sending invoice email:", emailError);
         }
       }
     }
@@ -685,7 +683,6 @@ export const getOrderAnalyticsController = async (request, response) => {
 
     let matchQuery = {};
 
-    // Role-based filtering
     if (user.subRole === "SALES") {
       matchQuery = {
         $or: [
@@ -700,7 +697,6 @@ export const getOrderAnalyticsController = async (request, response) => {
       matchQuery.createdBy = new mongoose.Types.ObjectId(agentId);
     }
 
-    // Date range
     if (startDate && endDate) {
       matchQuery.createdAt = {
         $gte: new Date(startDate),
@@ -716,30 +712,22 @@ export const getOrderAnalyticsController = async (request, response) => {
           totalOrders: { $sum: 1 },
           totalRevenue: { $sum: "$totalAmt" },
           avgOrderValue: { $avg: "$totalAmt" },
-
-          // Order types
           btcOrders: {
             $sum: { $cond: [{ $eq: ["$orderType", "BTC"] }, 1, 0] },
           },
           btbOrders: {
             $sum: { $cond: [{ $eq: ["$orderType", "BTB"] }, 1, 0] },
           },
-
-          // Order modes
           onlineOrders: {
             $sum: { $cond: [{ $eq: ["$orderMode", "ONLINE"] }, 1, 0] },
           },
           offlineOrders: {
             $sum: { $cond: [{ $eq: ["$orderMode", "OFFLINE"] }, 1, 0] },
           },
-
-          // Sources
           websiteOrders: { $sum: { $cond: ["$isWebsiteOrder", 1, 0] } },
           manualOrders: {
             $sum: { $cond: [{ $not: "$isWebsiteOrder" }, 1, 0] },
           },
-
-          // Status
           pendingOrders: {
             $sum: { $cond: [{ $eq: ["$order_status", "PENDING"] }, 1, 0] },
           },
@@ -753,7 +741,6 @@ export const getOrderAnalyticsController = async (request, response) => {
       },
     ]);
 
-    // Sales by agent (for directors/managers)
     let salesByAgent = [];
     if (["DIRECTOR", "MANAGER", "IT"].includes(user.subRole)) {
       salesByAgent = await OrderModel.aggregate([
@@ -815,7 +802,7 @@ export const getOrderAnalyticsController = async (request, response) => {
   }
 };
 
-// ===== NEW: PREVIEW INVOICE WITHOUT GENERATING =====
+// ===== PREVIEW INVOICE WITHOUT GENERATING =====
 export const previewInvoiceController = async (request, response) => {
   try {
     const userId = request.userId;
@@ -835,7 +822,6 @@ export const previewInvoiceController = async (request, response) => {
       shippingCost = 0,
     } = request.body;
 
-    // Validate customer
     const customer = await CustomerModel.findById(customerId);
     if (!customer) {
       return response.status(404).json({
@@ -844,7 +830,6 @@ export const previewInvoiceController = async (request, response) => {
       });
     }
 
-    // Calculate totals
     let subTotal = 0;
     const itemsForInvoice = [];
 
@@ -858,15 +843,7 @@ export const previewInvoiceController = async (request, response) => {
       if (orderType === "BTB") {
         unitPrice = product.btbPrice || product.price;
       } else {
-        if (item.priceOption === "3weeks") {
-          unitPrice =
-            product.price3weeksDelivery || product.btcPrice || product.price;
-        } else if (item.priceOption === "5weeks") {
-          unitPrice =
-            product.price5weeksDelivery || product.btcPrice || product.price;
-        } else {
-          unitPrice = product.btcPrice || product.price;
-        }
+        unitPrice = getProductPrice(product, item.priceOption);
       }
 
       const itemTotal = unitPrice * item.quantity;
@@ -883,7 +860,6 @@ export const previewInvoiceController = async (request, response) => {
 
     const totalAmount = subTotal + taxAmount + shippingCost - discountAmount;
 
-    // Generate preview invoice HTML
     const invoiceHTML = generateInvoiceTemplate({
       order: {
         orderId: "PREVIEW",

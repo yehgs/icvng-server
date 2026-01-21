@@ -1,34 +1,35 @@
-// utils/invoiceTemplate.js
+// utils/invoiceTemplate.js - Professional invoice with logo and minimal colors
 export const generateInvoiceTemplate = ({
   order,
   customer,
   items,
   salesAgent,
 }) => {
-  // Company information - update these constants as needed
+  // Company information
   const COMPANY_INFO = {
-    name: 'I-Coffee Nigeria Limited',
-    address: '4 Kafi Street, Alausa, Ikeja, Lagos State.',
-    city: 'Lagos, Nigeria',
-    phone: '+234-800-ICOFFEE',
-    email: 'sales@i-coffee.ng',
-    website: 'www.i-coffee.ng',
-    taxNumber: 'TIN: 12345678901',
-    rcNumber: 'RC: 1234567',
+    name: "I-Coffee Nigeria Limited",
+    address: "4 Kafi Street, Alausa, Ikeja, Lagos State.",
+    city: "Lagos, Nigeria",
+    phone: "234-803-982-7194",
+    email: "customercare@i-coffee.ng",
+    website: "www.i-coffee.ng",
+    taxNumber: "TIN: 12345678901",
+    rcNumber: "RC: 1234567",
+    logoUrl: "/assets/images/web-logo.svg", // or use full URL: "https://i-coffee.ng/assets/images/logo.png"
   };
 
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-NG', {
-      style: 'currency',
-      currency: 'NGN',
+    return new Intl.NumberFormat("en-NG", {
+      style: "currency",
+      currency: "NGN",
     }).format(amount);
   };
 
   const formatDate = (date) => {
-    return new Date(date).toLocaleDateString('en-GB', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
+    return new Date(date).toLocaleDateString("en-GB", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
     });
   };
 
@@ -44,9 +45,9 @@ export const generateInvoiceTemplate = ({
           item.productName
         }</div>
         ${
-          item.priceOption !== 'regular'
+          item.priceOption !== "regular"
             ? `<div style="font-size: 12px; color: #666;">${item.priceOption} delivery</div>`
-            : ''
+            : ""
         }
       </td>
       <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center;">${
@@ -61,7 +62,7 @@ export const generateInvoiceTemplate = ({
     </tr>
   `
     )
-    .join('');
+    .join("");
 
   return `
     <!DOCTYPE html>
@@ -87,15 +88,23 @@ export const generateInvoiceTemplate = ({
                 overflow: hidden;
             }
             .header { 
-                background: linear-gradient(135deg, #8B4513, #D2691E); 
-                color: white; 
+                background: white;
+                border-bottom: 3px solid #8B4513;
+                color: #333; 
                 padding: 30px; 
                 text-align: center; 
             }
+            .logo-container {
+                margin-bottom: 20px;
+            }
+            .logo-container img {
+                max-width: 200px;
+                height: auto;
+            }
             .company-info {
-                background: #f8f9fa;
+                background: #fafafa;
                 padding: 20px;
-                border-bottom: 2px solid #8B4513;
+                border-bottom: 1px solid #e0e0e0;
             }
             .invoice-details {
                 padding: 30px;
@@ -108,7 +117,7 @@ export const generateInvoiceTemplate = ({
             }
             .info-box {
                 flex: 1;
-                background: #f8f9fa;
+                background: #fafafa;
                 padding: 20px;
                 border-radius: 6px;
                 border-left: 4px solid #8B4513;
@@ -133,7 +142,7 @@ export const generateInvoiceTemplate = ({
                 font-weight: 600;
             }
             .totals-section {
-                background: #f8f9fa;
+                background: #fafafa;
                 padding: 25px;
                 border-radius: 6px;
                 margin-top: 30px;
@@ -160,7 +169,7 @@ export const generateInvoiceTemplate = ({
                 text-align: center;
             }
             .payment-info {
-                background: #e8f5e8;
+                background: #f0f8ff;
                 border: 2px solid #4CAF50;
                 padding: 20px;
                 border-radius: 6px;
@@ -169,14 +178,23 @@ export const generateInvoiceTemplate = ({
             .status-badge {
                 display: inline-block;
                 padding: 6px 12px;
-                border-radius: 20px;
+                border-radius: 4px;
                 font-size: 12px;
-                font-weight: bold;
+                font-weight: 600;
                 text-transform: uppercase;
             }
             .status-pending { background: #fff3cd; color: #856404; }
             .status-paid { background: #d4edda; color: #155724; }
             .status-delivered { background: #cce5ff; color: #004085; }
+            .status-confirmed { background: #d1ecf1; color: #0c5460; }
+            
+            .icon {
+                display: inline-block;
+                width: 16px;
+                height: 16px;
+                margin-right: 5px;
+                vertical-align: middle;
+            }
             
             @media (max-width: 600px) {
                 .info-section { flex-direction: column; }
@@ -188,10 +206,15 @@ export const generateInvoiceTemplate = ({
     </head>
     <body>
         <div class="invoice-container">
-            <!-- Header -->
+            <!-- Header with Logo -->
             <div class="header">
-                <h1 style="margin: 0; font-size: 28px;">INVOICE</h1>
-                <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">Premium Coffee Solutions</p>
+                <div class="logo-container">
+                    <img src="${COMPANY_INFO.logoUrl}" alt="${
+    COMPANY_INFO.name
+  }" onerror="this.style.display='none'">
+                </div>
+                <h1 style="margin: 0; font-size: 28px; color: #8B4513;">INVOICE</h1>
+                <p style="margin: 10px 0 0 0; font-size: 16px; color: #666;">Premium Coffee Solutions</p>
             </div>
             
             <!-- Company Information -->
@@ -201,12 +224,12 @@ export const generateInvoiceTemplate = ({
                         <h2 style="margin: 0 0 10px 0; color: #8B4513; font-size: 24px;">${
                           COMPANY_INFO.name
                         }</h2>
-                        <p style="margin: 0; line-height: 1.5;">
+                        <p style="margin: 0; line-height: 1.5; color: #555;">
                             ${COMPANY_INFO.address}<br>
                             ${COMPANY_INFO.city}<br>
-                            📞 ${COMPANY_INFO.phone}<br>
-                            ✉️ ${COMPANY_INFO.email}<br>
-                            🌐 ${COMPANY_INFO.website}
+                            Phone: ${COMPANY_INFO.phone}<br>
+                            Email: ${COMPANY_INFO.email}<br>
+                            Web: ${COMPANY_INFO.website}
                         </p>
                     </div>
                     <div style="text-align: right;">
@@ -214,7 +237,7 @@ export const generateInvoiceTemplate = ({
                             <h3 style="margin: 0 0 10px 0; color: #8B4513;">Invoice #${
                               order.invoiceNumber
                             }</h3>
-                            <p style="margin: 0; font-size: 14px;">
+                            <p style="margin: 0; font-size: 14px; color: #555;">
                                 <strong>Date:</strong> ${formatDate(
                                   order.invoiceDate || order.createdAt
                                 )}<br>
@@ -235,31 +258,31 @@ export const generateInvoiceTemplate = ({
                         <h4 style="margin: 0 0 15px 0; color: #8B4513; border-bottom: 2px solid #8B4513; padding-bottom: 8px;">Bill To:</h4>
                         <p style="margin: 0; font-size: 16px; line-height: 1.6;">
                             <strong>${
-                              customer.customerType === 'BTB' &&
+                              customer.customerType === "BTB" &&
                               customer.companyName
                                 ? customer.companyName
                                 : customer.name
                             }</strong><br>
                             ${
-                              customer.customerType === 'BTB' &&
+                              customer.customerType === "BTB" &&
                               customer.companyName
                                 ? `Contact: ${customer.name}<br>`
-                                : ''
+                                : ""
                             }
-                            📧 ${customer.email}<br>
-                            📱 ${customer.mobile}<br>
+                            Email: ${customer.email}<br>
+                            Phone: ${customer.mobile}<br>
                             ${
                               customer.address
-                                ? `📍 ${customer.address.street || ''}, ${
-                                    customer.address.city || ''
-                                  }, ${customer.address.state || ''}`
-                                : ''
+                                ? `Address: ${customer.address.street || ""}, ${
+                                    customer.address.city || ""
+                                  }, ${customer.address.state || ""}`
+                                : ""
                             }
                             ${
-                              customer.customerType === 'BTB' &&
+                              customer.customerType === "BTB" &&
                               customer.taxNumber
                                 ? `<br>Tax ID: ${customer.taxNumber}`
-                                : ''
+                                : ""
                             }
                         </p>
                     </div>
@@ -267,42 +290,24 @@ export const generateInvoiceTemplate = ({
                     <div class="info-box">
                         <h4 style="margin: 0 0 15px 0; color: #8B4513; border-bottom: 2px solid #8B4513; padding-bottom: 8px;">Order Details:</h4>
                         <p style="margin: 0; font-size: 14px; line-height: 1.8;">
-                            <strong>Order Type:</strong> 
-                            <span class="status-badge" style="background: ${
-                              order.orderType === 'BTB' ? '#e3f2fd' : '#f3e5f5'
-                            }; color: ${
-    order.orderType === 'BTB' ? '#1565c0' : '#7b1fa2'
-  };">
-                                ${order.orderType}
-                            </span><br>
-                            
-                            <strong>Order Mode:</strong> 
-                            <span class="status-badge" style="background: ${
-                              order.orderMode === 'ONLINE'
-                                ? '#e8f5e8'
-                                : '#fff3e0'
-                            }; color: ${
-    order.orderMode === 'ONLINE' ? '#2e7d32' : '#ef6c00'
-  };">
-                                ${order.orderMode}
-                            </span><br>
-                            
                             <strong>Order Status:</strong>
                             <span class="status-badge status-${
-                              order.orderStatus === 'DELIVERED'
-                                ? 'delivered'
-                                : order.orderStatus === 'PENDING'
-                                ? 'pending'
-                                : 'paid'
+                              order.orderStatus === "DELIVERED"
+                                ? "delivered"
+                                : order.orderStatus === "CONFIRMED"
+                                ? "confirmed"
+                                : order.orderStatus === "PENDING"
+                                ? "pending"
+                                : "paid"
                             }">
                                 ${order.orderStatus}
                             </span><br>
                             
                             <strong>Payment Status:</strong>
                             <span class="status-badge status-${
-                              order.paymentStatus === 'PAID'
-                                ? 'paid'
-                                : 'pending'
+                              order.paymentStatus === "PAID"
+                                ? "paid"
+                                : "pending"
                             }">
                                 ${order.paymentStatus}
                             </span><br>
@@ -310,15 +315,16 @@ export const generateInvoiceTemplate = ({
                             <strong>Payment Method:</strong> ${
                               order.paymentMethod
                             }<br>
+                            
                             ${
-                              salesAgent
-                                ? `<strong>Sales Agent:</strong> ${salesAgent.name}`
-                                : ''
+                              salesAgent && salesAgent.name
+                                ? `<strong>Sales Representative:</strong> ${salesAgent.name}<br>`
+                                : ""
                             }
                             ${
-                              order.isWebsiteOrder
-                                ? `<br><strong>Source:</strong> Website Order`
-                                : ''
+                              salesAgent && salesAgent.email
+                                ? `<strong>Contact:</strong> ${salesAgent.email}`
+                                : ""
                             }
                         </p>
                     </div>
@@ -361,7 +367,7 @@ export const generateInvoiceTemplate = ({
                         )}</span>
                     </div>
                     `
-                        : ''
+                        : ""
                     }
                     
                     ${
@@ -372,7 +378,7 @@ export const generateInvoiceTemplate = ({
                         <span>${formatCurrency(order.taxAmount)}</span>
                     </div>
                     `
-                        : ''
+                        : ""
                     }
                     
                     ${
@@ -383,7 +389,7 @@ export const generateInvoiceTemplate = ({
                         <span>${formatCurrency(order.shippingCost)}</span>
                     </div>
                     `
-                        : ''
+                        : ""
                     }
                     
                     <div class="total-row final">
@@ -394,10 +400,11 @@ export const generateInvoiceTemplate = ({
                 
                 <!-- Payment Information -->
                 ${
-                  order.paymentStatus === 'PENDING'
+                  order.paymentStatus === "PENDING" ||
+                  order.paymentStatus === "PENDING_BANK_TRANSFER"
                     ? `
                 <div class="payment-info">
-                    <h4 style="margin: 0 0 15px 0; color: #2e7d32;">💳 Payment Information</h4>
+                    <h4 style="margin: 0 0 15px 0; color: #2e7d32;">Payment Information</h4>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                         <div>
                             <p style="margin: 0 0 10px 0;"><strong>Bank Name:</strong> First Bank of Nigeria</p>
@@ -414,35 +421,26 @@ export const generateInvoiceTemplate = ({
                             }</p>
                         </div>
                     </div>
-                    <p style="margin: 15px 0 0 0; padding: 10px; background: #fff3cd; border-radius: 4px; font-size: 14px;">
-                        <strong>Note:</strong> Please use the order ID as your payment reference and send payment confirmation to ${
+                    <p style="margin: 15px 0 0 0; padding: 10px; background: #fff3cd; border-radius: 4px; font-size: 14px; border-left: 4px solid #ffc107;">
+                        <strong>Important:</strong> Please use the order ID as your payment reference and send payment confirmation to ${
                           COMPANY_INFO.email
                         }
                     </p>
                 </div>
                 `
-                    : ''
+                    : ""
                 }
                 
                 <!-- Order Notes -->
                 ${
-                  order.notes || order.customerNotes
+                  order.customerNotes
                     ? `
-                <div style="background: #f8f9fa; padding: 20px; border-radius: 6px; margin-top: 20px;">
-                    <h4 style="margin: 0 0 10px 0; color: #8B4513;">📝 Additional Notes</h4>
-                    ${
-                      order.notes
-                        ? `<p style="margin: 0 0 10px 0;"><strong>Internal Notes:</strong> ${order.notes}</p>`
-                        : ''
-                    }
-                    ${
-                      order.customerNotes
-                        ? `<p style="margin: 0;"><strong>Customer Notes:</strong> ${order.customerNotes}</p>`
-                        : ''
-                    }
+                <div style="background: #f8f9fa; padding: 20px; border-radius: 6px; margin-top: 20px; border-left: 4px solid #8B4513;">
+                    <h4 style="margin: 0 0 10px 0; color: #8B4513;">Additional Notes</h4>
+                    <p style="margin: 0;">${order.customerNotes}</p>
                 </div>
                 `
-                    : ''
+                    : ""
                 }
                 
                 <!-- Terms and Conditions -->
@@ -464,9 +462,12 @@ export const generateInvoiceTemplate = ({
             <div class="footer">
                 <p style="margin: 0 0 10px 0; font-size: 16px; font-weight: bold;">Thank you for choosing I-Coffee Nigeria!</p>
                 <p style="margin: 0; font-size: 14px; opacity: 0.8;">
-                    Premium coffee solutions for your business and home | 
-                    Follow us on social media @icoffeeng | 
-                    Visit our website: ${COMPANY_INFO.website}
+                    Premium coffee solutions for your business and home
+                </p>
+                <p style="margin: 10px 0 0 0; font-size: 14px; opacity: 0.8;">
+                    ${COMPANY_INFO.website} | ${COMPANY_INFO.email} | ${
+    COMPANY_INFO.phone
+  }
                 </p>
                 <p style="margin: 15px 0 0 0; font-size: 12px; opacity: 0.7;">
                     This is a computer-generated invoice. No signature required.

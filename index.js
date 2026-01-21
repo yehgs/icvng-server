@@ -56,8 +56,8 @@ app.use(
       "x-access-token",
       "x-csrf-token",
     ],
+    exposedHeaders: ["Content-Disposition", "Content-Type"],
     origin: (origin, callback) => {
-      // console.log('Incoming Origin:', origin);
       const allowedOrigins = [
         process.env.FRONTEND_URL,
         process.env.ADMIN_FRONTEND_URL,
@@ -161,7 +161,7 @@ app.use("/api/suppliers", supplierRouter);
 app.use("/api/purchase-orders", purchaseOrderRouter);
 app.use("/api/stock", stockRouter);
 app.use("/api/pricing", pricingRouter);
-app.use("/api/b", exchangeRateRouter);
+app.use("/api/exchange-rates", exchangeRateRouter);
 app.use("/api/warehouse", warehouseRouter);
 app.use("/api/shipping", shippingRouter);
 app.use("/api/blog", blogRouter);
