@@ -1,16 +1,16 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const pricingConfigSchema = new mongoose.Schema(
   {
     name: {
       type: String,
       required: true,
-      default: 'Default Pricing Configuration',
+      default: "Default Pricing Configuration",
     },
 
     baseCurrency: {
       type: String,
-      default: 'NGN',
+      default: "NGN",
       required: true,
     },
 
@@ -50,6 +50,15 @@ const pricingConfigSchema = new mongoose.Schema(
       default: 15, // 15% overhead
     },
 
+    // NEW: Tax percentage - added to all calculated prices
+    taxPercentage: {
+      type: Number,
+      required: true,
+      default: 7.5, // 7.5% tax (VAT)
+      min: 0,
+      max: 100,
+    },
+
     // Auto-update prices when exchange rates change
     autoUpdateOnExchangeRateChange: {
       type: Boolean,
@@ -69,7 +78,7 @@ const pricingConfigSchema = new mongoose.Schema(
 
     approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
 
     approvedAt: {
@@ -79,7 +88,7 @@ const pricingConfigSchema = new mongoose.Schema(
     // Who last updated the configuration
     lastUpdatedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
 
@@ -94,9 +103,10 @@ const pricingConfigSchema = new mongoose.Schema(
           price5weeksDelivery: Number,
         },
         overheadPercentage: Number,
+        taxPercentage: Number, // NEW: Track tax changes in history
         updatedBy: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
+          ref: "User",
         },
         updatedAt: {
           type: Date,
@@ -104,7 +114,7 @@ const pricingConfigSchema = new mongoose.Schema(
         },
         approvedBy: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
+          ref: "User",
         },
         approvedAt: Date,
       },
@@ -112,15 +122,15 @@ const pricingConfigSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Ensure only one active configuration exists
 pricingConfigSchema.index(
   { isActive: 1 },
-  { unique: true, partialFilterExpression: { isActive: true } }
+  { unique: true, partialFilterExpression: { isActive: true } },
 );
 
-const PricingConfigModel = mongoose.model('PricingConfig', pricingConfigSchema);
+const PricingConfigModel = mongoose.model("PricingConfig", pricingConfigSchema);
 
 export default PricingConfigModel;

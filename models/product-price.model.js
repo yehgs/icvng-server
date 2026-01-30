@@ -1,18 +1,17 @@
-// models/productPricing.model.js (Updated)
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const productPricingSchema = new mongoose.Schema(
   {
     product: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Product',
+      ref: "Product",
       required: true,
       unique: true,
     },
 
     purchaseOrder: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'PurchaseOrder',
+      ref: "PurchaseOrder",
     },
 
     // Cost breakdown in original currency and Naira
@@ -65,7 +64,31 @@ const productPricingSchema = new mongoose.Schema(
       },
     },
 
-    // All calculated prices in Naira
+    // All calculated prices in Naira (WITHOUT tax)
+    calculatedPricesBeforeTax: {
+      salePrice: {
+        type: Number,
+        required: true,
+      },
+      btbPrice: {
+        type: Number,
+        required: true,
+      },
+      btcPrice: {
+        type: Number,
+        required: true,
+      },
+      price3weeksDelivery: {
+        type: Number,
+        required: true,
+      },
+      price5weeksDelivery: {
+        type: Number,
+        required: true,
+      },
+    },
+
+    // NEW: Final calculated prices WITH tax included
     calculatedPrices: {
       salePrice: {
         type: Number,
@@ -113,10 +136,17 @@ const productPricingSchema = new mongoose.Schema(
       },
     },
 
+    // NEW: Applied tax percentage
+    appliedTaxPercentage: {
+      type: Number,
+      required: true,
+      default: 0,
+    },
+
     // Pricing configuration used
     pricingConfig: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'PricingConfig',
+      ref: "PricingConfig",
       required: true,
     },
 
@@ -128,7 +158,7 @@ const productPricingSchema = new mongoose.Schema(
 
     approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
 
     approvedAt: {
@@ -143,7 +173,7 @@ const productPricingSchema = new mongoose.Schema(
 
     calculatedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
 
@@ -161,6 +191,13 @@ const productPricingSchema = new mongoose.Schema(
     // Price history for tracking changes
     priceHistory: [
       {
+        calculatedPricesBeforeTax: {
+          salePrice: Number,
+          btbPrice: Number,
+          btcPrice: Number,
+          price3weeksDelivery: Number,
+          price5weeksDelivery: Number,
+        },
         calculatedPrices: {
           salePrice: Number,
           btbPrice: Number,
@@ -175,6 +212,7 @@ const productPricingSchema = new mongoose.Schema(
           price3weeksDelivery: Number,
           price5weeksDelivery: Number,
         },
+        appliedTaxPercentage: Number, // NEW
         exchangeRate: Number,
         calculatedAt: {
           type: Date,
@@ -182,11 +220,11 @@ const productPricingSchema = new mongoose.Schema(
         },
         calculatedBy: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
+          ref: "User",
         },
         approvedBy: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
+          ref: "User",
         },
         approvedAt: Date,
       },
@@ -194,7 +232,7 @@ const productPricingSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Indexes for better performance
@@ -204,8 +242,8 @@ productPricingSchema.index({ isApproved: 1 });
 productPricingSchema.index({ isActive: 1 });
 
 const ProductPricingModel = mongoose.model(
-  'ProductPricing',
-  productPricingSchema
+  "ProductPricing",
+  productPricingSchema,
 );
 
 export default ProductPricingModel;

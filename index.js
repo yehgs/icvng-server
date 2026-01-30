@@ -64,6 +64,7 @@ app.use(
         process.env.FRONTEND_URL1,
         process.env.FRONTEND_URL2,
         process.env.FRONTEND_URL3,
+        process.env.FRONTEND_URL4,
         process.env.ADMIN_FRONTEND_URL1,
         process.env.ADMIN_FRONTEND_URL2,
       ];
@@ -75,7 +76,7 @@ app.use(
         callback(new Error("Not allowed by CORS"));
       }
     },
-  })
+  }),
 );
 app.options("*", cors());
 
@@ -86,14 +87,14 @@ app.post(
     import("./controllers/order.controller.js").then(({ webhookStripe }) => {
       webhookStripe(req, res);
     });
-  }
+  },
 );
 
 app.use(
   express.json({
     limit: "50mb",
     strict: false,
-  })
+  }),
 );
 
 app.use(
@@ -101,7 +102,7 @@ app.use(
     limit: "50mb",
     extended: true,
     parameterLimit: 50000,
-  })
+  }),
 );
 
 app.use(cookieParser());
@@ -109,7 +110,7 @@ app.use(morgan("dev"));
 app.use(
   helmet({
     crossOriginResourcePolicy: false,
-  })
+  }),
 );
 
 // ============================================
