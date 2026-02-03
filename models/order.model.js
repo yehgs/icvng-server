@@ -1,12 +1,12 @@
-// models/order.model.js - 
-import mongoose from 'mongoose';
+// models/order.model.js -
+import mongoose from "mongoose";
 
 const orderSchema = new mongoose.Schema(
   {
     // ===== UNIFIED IDENTIFIERS =====
     orderId: {
       type: String,
-      required: [true, 'Provide orderId'],
+      required: [true, "Provide orderId"],
       unique: true,
       index: true,
     },
@@ -50,7 +50,7 @@ const orderSchema = new mongoose.Schema(
     // For website orders - references User model
     userId: {
       type: mongoose.Schema.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: function () {
         return this.isWebsiteOrder === true;
       },
@@ -59,7 +59,7 @@ const orderSchema = new mongoose.Schema(
     // For manual orders - references Customer model
     customerId: {
       type: mongoose.Schema.ObjectId,
-      ref: 'Customer',
+      ref: "Customer",
       required: function () {
         return this.isWebsiteOrder === false;
       },
@@ -68,14 +68,14 @@ const orderSchema = new mongoose.Schema(
     // ===== ORDER CLASSIFICATION =====
     orderType: {
       type: String,
-      enum: ['BTC', 'BTB'],
-      required: [true, 'Order type is required'],
+      enum: ["BTC", "BTB"],
+      required: [true, "Order type is required"],
       index: true,
     },
     orderMode: {
       type: String,
-      enum: ['ONLINE', 'OFFLINE'],
-      required: [true, 'Order mode is required'],
+      enum: ["ONLINE", "OFFLINE"],
+      required: [true, "Order mode is required"],
       index: true,
     },
     isWebsiteOrder: {
@@ -87,7 +87,7 @@ const orderSchema = new mongoose.Schema(
     // ===== PRODUCT DETAILS =====
     productId: {
       type: mongoose.Schema.ObjectId,
-      ref: 'Product',
+      ref: "Product",
       required: true,
     },
     product_details: {
@@ -95,8 +95,8 @@ const orderSchema = new mongoose.Schema(
       image: Array,
       priceOption: {
         type: String,
-        enum: ['regular', '3weeks', '5weeks'],
-        default: 'regular',
+        enum: ["regular", "3weeks", "5weeks"],
+        default: "regular",
       },
       deliveryTime: String,
     },
@@ -133,8 +133,8 @@ const orderSchema = new mongoose.Schema(
     },
     currency: {
       type: String,
-      enum: ['NGN', 'USD', 'EUR', 'GBP'],
-      default: 'NGN',
+      enum: ["NGN", "USD", "EUR", "GBP"],
+      default: "NGN",
     },
 
     // ===== GROUP TOTALS (stored in parent order) =====
@@ -151,12 +151,12 @@ const orderSchema = new mongoose.Schema(
     // ===== EXCHANGE RATE INFO =====
     exchangeRateUsed: {
       rate: { type: Number, default: 1 },
-      fromCurrency: { type: String, default: 'NGN' },
-      toCurrency: { type: String, default: 'NGN' },
+      fromCurrency: { type: String, default: "NGN" },
+      toCurrency: { type: String, default: "NGN" },
       rateSource: {
         type: String,
-        enum: ['manual', 'system'],
-        default: 'manual',
+        enum: ["manual", "system"],
+        default: "manual",
       },
       appliedAt: { type: Date, default: Date.now },
     },
@@ -169,27 +169,27 @@ const orderSchema = new mongoose.Schema(
     // ===== PAYMENT =====
     paymentId: {
       type: String,
-      default: '',
+      default: "",
       index: true,
       // Same for all orders in a group (shared transaction)
     },
     payment_status: {
       type: String,
       enum: [
-        'PENDING',
-        'PAID',
-        'FAILED',
-        'REFUNDED',
-        'PENDING_BANK_TRANSFER',
-        'PARTIAL',
+        "PENDING",
+        "PAID",
+        "FAILED",
+        "REFUNDED",
+        "PENDING_BANK_TRANSFER",
+        "PARTIAL",
       ],
-      default: 'PENDING',
+      default: "PENDING",
       index: true,
     },
     payment_method: {
       type: String,
-      enum: ['STRIPE', 'PAYSTACK', 'BANK_TRANSFER', 'CASH', 'CARD', 'ONLINE'],
-      default: 'CASH',
+      enum: ["STRIPE", "PAYSTACK", "BANK_TRANSFER", "CASH", "CARD", "ONLINE"],
+      default: "CASH",
       index: true,
     },
 
@@ -203,30 +203,30 @@ const orderSchema = new mongoose.Schema(
     },
     bank_transfer_status: {
       type: String,
-      enum: ['PENDING', 'VERIFIED', 'FAILED'],
-      default: 'PENDING',
+      enum: ["PENDING", "VERIFIED", "FAILED"],
+      default: "PENDING",
     },
 
     // ===== ORDER STATUS =====
     order_status: {
       type: String,
       enum: [
-        'PENDING',
-        'CONFIRMED',
-        'PROCESSING',
-        'SHIPPED',
-        'DELIVERED',
-        'CANCELLED',
-        'RETURNED',
+        "PENDING",
+        "CONFIRMED",
+        "PROCESSING",
+        "SHIPPED",
+        "DELIVERED",
+        "CANCELLED",
+        "RETURNED",
       ],
-      default: 'PENDING',
+      default: "PENDING",
       index: true,
     },
 
     // ===== DELIVERY =====
     delivery_address: {
       type: mongoose.Schema.ObjectId,
-      ref: 'address',
+      ref: "address",
     },
     // For manual orders without address model reference
     deliveryAddress: {
@@ -234,18 +234,18 @@ const orderSchema = new mongoose.Schema(
       city: String,
       state: String,
       lga: String,
-      country: { type: String, default: 'Nigeria' },
+      country: { type: String, default: "Nigeria" },
       postalCode: String,
     },
 
     // ===== SHIPPING INTEGRATION =====
     shippingMethod: {
       type: mongoose.Schema.ObjectId,
-      ref: 'ShippingMethod',
+      ref: "ShippingMethod",
     },
     shippingZone: {
       type: mongoose.Schema.ObjectId,
-      ref: 'ShippingZone',
+      ref: "ShippingZone",
     },
     shipping_details: {
       method_name: String,
@@ -261,7 +261,7 @@ const orderSchema = new mongoose.Schema(
     },
     tracking_number: {
       type: String,
-      default: '',
+      default: "",
       index: true,
     },
     estimated_delivery: Date,
@@ -270,7 +270,7 @@ const orderSchema = new mongoose.Schema(
     // ===== CREATED BY (for manual orders) =====
     createdBy: {
       type: mongoose.Schema.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: function () {
         return this.isWebsiteOrder === false;
       },
@@ -290,21 +290,21 @@ const orderSchema = new mongoose.Schema(
     invoiceDate: Date,
     invoice_receipt: {
       type: String,
-      default: '',
+      default: "",
     },
 
     // ===== NOTES =====
     notes: {
       type: String,
-      default: '',
+      default: "",
     },
     customer_notes: {
       type: String,
-      default: '',
+      default: "",
     },
     admin_notes: {
       type: String,
-      default: '',
+      default: "",
     },
 
     // ===== CANCELLATION/REFUND =====
@@ -312,7 +312,7 @@ const orderSchema = new mongoose.Schema(
     cancelled_at: Date,
     cancelled_by: {
       type: mongoose.Schema.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
     refund_amount: {
       type: Number,
@@ -320,33 +320,26 @@ const orderSchema = new mongoose.Schema(
     },
     refund_status: {
       type: String,
-      enum: ['NONE', 'PENDING', 'PROCESSED', 'FAILED'],
-      default: 'NONE',
+      enum: ["NONE", "PENDING", "PROCESSED", "FAILED"],
+      default: "NONE",
     },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // ===== INDEXES =====
 orderSchema.index({ userId: 1, createdAt: -1 });
 orderSchema.index({ customerId: 1, createdAt: -1 });
-orderSchema.index({ orderId: 1 });
-orderSchema.index({ payment_status: 1 });
-orderSchema.index({ order_status: 1 });
-orderSchema.index({ isWebsiteOrder: 1 });
 orderSchema.index({ orderType: 1, orderMode: 1 });
-orderSchema.index({ createdBy: 1 });
 orderSchema.index({ createdAt: -1 });
 // NEW: Indexes for order grouping
 orderSchema.index({ orderGroupId: 1, orderSequence: 1 });
 orderSchema.index({ isParentOrder: 1, orderGroupId: 1 });
-orderSchema.index({ parentOrderId: 1 });
-orderSchema.index({ paymentId: 1 });
 
 // ===== PRE-SAVE MIDDLEWARE =====
-orderSchema.pre('save', function (next) {
+orderSchema.pre("save", function (next) {
   // Generate invoice number if needed
   if (this.invoiceGenerated && !this.invoiceNumber) {
     this.invoiceNumber = `INV-${Date.now()}-${this.orderId}`;
@@ -357,8 +350,8 @@ orderSchema.pre('save', function (next) {
   if (this.isNew && !this.estimated_delivery && !this.shippingMethod) {
     const deliveryDays = {
       regular: 3,
-      '3weeks': 21,
-      '5weeks': 35,
+      "3weeks": 21,
+      "5weeks": 35,
     };
     const days = deliveryDays[this.product_details?.priceOption] || 3;
     this.estimated_delivery = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
@@ -368,11 +361,11 @@ orderSchema.pre('save', function (next) {
 });
 
 // ===== VIRTUALS =====
-orderSchema.virtual('customerReference').get(function () {
-  return this.isWebsiteOrder ? 'userId' : 'customerId';
+orderSchema.virtual("customerReference").get(function () {
+  return this.isWebsiteOrder ? "userId" : "customerId";
 });
 
-orderSchema.virtual('totalItems').get(function () {
+orderSchema.virtual("totalItems").get(function () {
   return this.quantity;
 });
 
@@ -381,12 +374,12 @@ orderSchema.virtual('totalItems').get(function () {
 // NEW: Get all orders in a group
 orderSchema.statics.getOrderGroup = async function (orderGroupId) {
   const orders = await this.find({ orderGroupId })
-    .populate('userId', 'name email mobile')
-    .populate('customerId', 'name email mobile companyName customerType')
-    .populate('productId', 'name image')
-    .populate('createdBy', 'name email subRole')
-    .populate('delivery_address')
-    .populate('shippingMethod', 'name type')
+    .populate("userId", "name email mobile")
+    .populate("customerId", "name email mobile companyName customerType")
+    .populate("productId", "name image")
+    .populate("createdBy", "name email subRole")
+    .populate("delivery_address")
+    .populate("shippingMethod", "name type")
     .sort({ orderSequence: 1 });
 
   return orders;
@@ -395,23 +388,23 @@ orderSchema.statics.getOrderGroup = async function (orderGroupId) {
 // NEW: Get parent order for a group
 orderSchema.statics.getParentOrder = async function (orderGroupId) {
   return await this.findOne({ orderGroupId, isParentOrder: true })
-    .populate('userId', 'name email mobile')
-    .populate('customerId', 'name email mobile companyName customerType')
-    .populate('delivery_address')
-    .populate('shippingMethod', 'name type');
+    .populate("userId", "name email mobile")
+    .populate("customerId", "name email mobile companyName customerType")
+    .populate("delivery_address")
+    .populate("shippingMethod", "name type");
 };
 
 // NEW: Get child orders for a group
 orderSchema.statics.getChildOrders = async function (orderGroupId) {
   return await this.find({ orderGroupId, isParentOrder: false })
-    .populate('productId', 'name image')
+    .populate("productId", "name image")
     .sort({ orderSequence: 1 });
 };
 
 // NEW: Get grouped orders for user (website orders)
 orderSchema.statics.getGroupedOrdersForUser = async function (
   userId,
-  options = {}
+  options = {},
 ) {
   const { page = 1, limit = 10 } = options;
   const skip = (page - 1) * limit;
@@ -426,13 +419,13 @@ orderSchema.statics.getGroupedOrdersForUser = async function (
     },
     {
       $group: {
-        _id: '$orderGroupId',
-        parentOrderId: { $first: '$parentOrderId' },
-        createdAt: { $first: '$createdAt' },
-        totalItemsInGroup: { $first: '$totalItemsInGroup' },
-        payment_status: { $first: '$payment_status' },
-        order_status: { $min: '$order_status' }, // Get worst status in group
-        groupTotals: { $first: '$groupTotals' },
+        _id: "$orderGroupId",
+        parentOrderId: { $first: "$parentOrderId" },
+        createdAt: { $first: "$createdAt" },
+        totalItemsInGroup: { $first: "$totalItemsInGroup" },
+        payment_status: { $first: "$payment_status" },
+        order_status: { $min: "$order_status" }, // Get worst status in group
+        groupTotals: { $first: "$groupTotals" },
       },
     },
     { $sort: { createdAt: -1 } },
@@ -459,7 +452,7 @@ orderSchema.statics.getGroupedOrdersForUser = async function (
           totals: group.groupTotals,
         },
       };
-    })
+    }),
   );
 
   // Get total count of groups
@@ -472,11 +465,11 @@ orderSchema.statics.getGroupedOrdersForUser = async function (
     },
     {
       $group: {
-        _id: '$orderGroupId',
+        _id: "$orderGroupId",
       },
     },
     {
-      $count: 'total',
+      $count: "total",
     },
   ]);
 
@@ -491,12 +484,12 @@ orderSchema.statics.getGroupedOrdersForUser = async function (
 // Get orders with unified customer population
 orderSchema.statics.getOrdersWithCustomer = async function (filters = {}) {
   const orders = await this.find(filters)
-    .populate('userId', 'name email mobile')
-    .populate('customerId', 'name email mobile companyName customerType')
-    .populate('productId', 'name image')
-    .populate('createdBy', 'name email subRole')
-    .populate('delivery_address')
-    .populate('shippingMethod', 'name type')
+    .populate("userId", "name email mobile")
+    .populate("customerId", "name email mobile companyName customerType")
+    .populate("productId", "name image")
+    .populate("createdBy", "name email subRole")
+    .populate("delivery_address")
+    .populate("shippingMethod", "name type")
     .sort({ createdAt: -1 });
 
   return orders.map((order) => {
@@ -515,22 +508,22 @@ orderSchema.statics.getOrderStats = async function (filters = {}) {
       $group: {
         _id: null,
         totalOrders: { $sum: 1 },
-        totalAmount: { $sum: '$totalAmt' },
-        avgOrderValue: { $avg: '$totalAmt' },
+        totalAmount: { $sum: "$totalAmt" },
+        avgOrderValue: { $avg: "$totalAmt" },
         pendingOrders: {
-          $sum: { $cond: [{ $eq: ['$order_status', 'PENDING'] }, 1, 0] },
+          $sum: { $cond: [{ $eq: ["$order_status", "PENDING"] }, 1, 0] },
         },
         completedOrders: {
-          $sum: { $cond: [{ $eq: ['$order_status', 'DELIVERED'] }, 1, 0] },
+          $sum: { $cond: [{ $eq: ["$order_status", "DELIVERED"] }, 1, 0] },
         },
         paidOrders: {
-          $sum: { $cond: [{ $eq: ['$payment_status', 'PAID'] }, 1, 0] },
+          $sum: { $cond: [{ $eq: ["$payment_status", "PAID"] }, 1, 0] },
         },
         websiteOrders: {
-          $sum: { $cond: ['$isWebsiteOrder', 1, 0] },
+          $sum: { $cond: ["$isWebsiteOrder", 1, 0] },
         },
         manualOrders: {
-          $sum: { $cond: [{ $not: '$isWebsiteOrder' }, 1, 0] },
+          $sum: { $cond: [{ $not: "$isWebsiteOrder" }, 1, 0] },
         },
       },
     },
@@ -550,6 +543,6 @@ orderSchema.statics.getOrderStats = async function (filters = {}) {
   );
 };
 
-const OrderModel = mongoose.model('order', orderSchema);
+const OrderModel = mongoose.model("order", orderSchema);
 
 export default OrderModel;

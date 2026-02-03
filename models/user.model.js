@@ -1,24 +1,24 @@
-import mongoose from 'mongoose';
-import mongoosePaginate from 'mongoose-paginate-v2';
+import mongoose from "mongoose";
+import mongoosePaginate from "mongoose-paginate-v2";
 
 const userSchema = new mongoose.Schema(
   {
     name: {
       type: String,
-      required: [true, 'Provide name'],
+      required: [true, "Provide name"],
     },
     email: {
       type: String,
-      required: [true, 'Provide email'],
+      required: [true, "Provide email"],
       unique: true,
     },
     password: {
       type: String,
-      required: [true, 'Provide password'],
+      required: [true, "Provide password"],
     },
     avatar: {
       type: String,
-      default: '',
+      default: "",
     },
     mobile: {
       type: Number,
@@ -26,7 +26,7 @@ const userSchema = new mongoose.Schema(
     },
     refresh_token: {
       type: String,
-      default: '',
+      default: "",
     },
     verify_email: {
       type: Boolean,
@@ -34,29 +34,29 @@ const userSchema = new mongoose.Schema(
     },
     last_login_date: {
       type: Date,
-      default: '',
+      default: "",
     },
     status: {
       type: String,
-      enum: ['Active', 'Inactive', 'Suspended'],
-      default: 'Active',
+      enum: ["Active", "Inactive", "Suspended"],
+      default: "Active",
     },
     address_details: [
       {
         type: mongoose.Schema.ObjectId,
-        ref: 'address',
+        ref: "address",
       },
     ],
     shopping_cart: [
       {
         type: mongoose.Schema.ObjectId,
-        ref: 'cartProduct',
+        ref: "cartProduct",
       },
     ],
     orderHistory: [
       {
         type: mongoose.Schema.ObjectId,
-        ref: 'order',
+        ref: "order",
       },
     ],
     forgot_password_otp: {
@@ -65,28 +65,28 @@ const userSchema = new mongoose.Schema(
     },
     forgot_password_expiry: {
       type: Date,
-      default: '',
+      default: "",
     },
     role: {
       type: String,
-      enum: ['ADMIN', 'USER'],
-      default: 'USER',
+      enum: ["ADMIN", "USER"],
+      default: "USER",
     },
     subRole: {
       type: String,
       enum: [
-        'DIRECTOR',
-        'SALES',
-        'HR',
-        'MANAGER',
-        'ACCOUNTANT',
-        'GRAPHICS',
-        'EDITOR',
-        'LOGISTICS',
-        'BTC',
-        'BTB',
-        'IT',
-        'WAREHOUSE',
+        "DIRECTOR",
+        "SALES",
+        "HR",
+        "MANAGER",
+        "ACCOUNTANT",
+        "GRAPHICS",
+        "EDITOR",
+        "LOGISTICS",
+        "BTC",
+        "BTB",
+        "IT",
+        "WAREHOUSE",
         null,
       ],
       default: null,
@@ -94,60 +94,59 @@ const userSchema = new mongoose.Schema(
         validator: function (value) {
           if (!value) return true;
           const adminRoles = [
-            'IT',
-            'DIRECTOR',
-            'MANAGER',
-            'SALES-MANAGER',
-            'HR',
-            'SALES',
-            'WAREHOUSE',
-            'ACCOUNTANT',
-            'GRAPHICS',
-            'LOGISTICS',
-            'EDITOR',
+            "IT",
+            "DIRECTOR",
+            "MANAGER",
+            "SALES-MANAGER",
+            "HR",
+            "SALES",
+            "WAREHOUSE",
+            "ACCOUNTANT",
+            "GRAPHICS",
+            "LOGISTICS",
+            "EDITOR",
           ];
-          const userRoles = ['BTC', 'BTB'];
-          if (this.role === 'ADMIN') return adminRoles.includes(value);
-          if (this.role === 'USER') return userRoles.includes(value);
+          const userRoles = ["BTC", "BTB"];
+          if (this.role === "ADMIN") return adminRoles.includes(value);
+          if (this.role === "USER") return userRoles.includes(value);
           return false;
         },
-        message: 'Invalid subRole for the given role',
+        message: "Invalid subRole for the given role",
       },
     },
     userMode: {
       type: String,
-      enum: ['ONLINE', 'OFFLINE', null],
+      enum: ["ONLINE", "OFFLINE", null],
       default: null,
       validate: {
         validator: function (value) {
           if (!value) return true;
 
           const isAdminSales =
-            this.role === 'ADMIN' && this.subRole === 'SALES';
+            this.role === "ADMIN" && this.subRole === "SALES";
           const isUserCustomer =
-            this.role === 'USER' && ['BTC', 'BTB'].includes(this.subRole);
+            this.role === "USER" && ["BTC", "BTB"].includes(this.subRole);
 
           return isAdminSales || isUserCustomer;
         },
         message:
-          'userMode is only allowed for ADMIN/SALES or USER with BTC or BTB subRole',
+          "userMode is only allowed for ADMIN/SALES or USER with BTC or BTB subRole",
       },
     },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Add pagination plugin BEFORE creating the model
 userSchema.plugin(mongoosePaginate);
 
 // Create indexes for better performance
-userSchema.index({ email: 1 });
 userSchema.index({ role: 1, subRole: 1 });
 userSchema.index({ status: 1 });
 userSchema.index({ createdAt: -1 });
 
-const UserModel = mongoose.model('User', userSchema);
+const UserModel = mongoose.model("User", userSchema);
 
 export default UserModel;

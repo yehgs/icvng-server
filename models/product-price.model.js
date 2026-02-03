@@ -236,7 +236,6 @@ const productPricingSchema = new mongoose.Schema(
 );
 
 // Indexes for better performance
-productPricingSchema.index({ product: 1 });
 productPricingSchema.index({ purchaseOrder: 1 });
 productPricingSchema.index({ isApproved: 1 });
 productPricingSchema.index({ isActive: 1 });

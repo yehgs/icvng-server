@@ -1,24 +1,24 @@
 // models/shipping-zone.model.js - FIXED VERSION
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const shippingZoneSchema = new mongoose.Schema(
   {
     name: {
       type: String,
-      required: [true, 'Zone name is required'],
+      required: [true, "Zone name is required"],
       trim: true,
       unique: true,
     },
     code: {
       type: String,
-      required: [true, 'Zone code is required'],
+      required: [true, "Zone code is required"],
       unique: true,
       uppercase: true,
       trim: true,
     },
     description: {
       type: String,
-      default: '',
+      default: "",
     },
     states: [
       {
@@ -33,8 +33,8 @@ const shippingZoneSchema = new mongoose.Schema(
         },
         coverage_type: {
           type: String,
-          enum: ['all', 'specific'],
-          default: 'all',
+          enum: ["all", "specific"],
+          default: "all",
         },
         available_lgas: [String],
         covered_lgas: [String],
@@ -42,13 +42,13 @@ const shippingZoneSchema = new mongoose.Schema(
     ],
     zone_type: {
       type: String,
-      enum: ['urban', 'rural', 'mixed'],
-      default: 'mixed',
+      enum: ["urban", "rural", "mixed"],
+      default: "mixed",
     },
     priority: {
       type: String,
-      enum: ['low', 'medium', 'high'],
-      default: 'medium',
+      enum: ["low", "medium", "high"],
+      default: "medium",
     },
     isActive: {
       type: Boolean,
@@ -60,41 +60,40 @@ const shippingZoneSchema = new mongoose.Schema(
     },
     operational_notes: {
       type: String,
-      default: '',
+      default: "",
     },
     createdBy: {
       type: mongoose.Schema.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     updatedBy: {
       type: mongoose.Schema.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Indexes
-shippingZoneSchema.index({ code: 1 });
 shippingZoneSchema.index({ isActive: 1 });
-shippingZoneSchema.index({ 'states.name': 1 });
+shippingZoneSchema.index({ "states.name": 1 });
 
 // Static method to find zone by state and LGA
 shippingZoneSchema.statics.findZoneByCity = async function (
   city,
   state,
-  lga = null
+  lga = null,
 ) {
   const zones = await this.find({ isActive: true });
 
   for (const zone of zones) {
     const stateMatch = zone.states.find(
       (zoneState) =>
-        zoneState.name.toLowerCase().trim() === state.toLowerCase().trim()
+        zoneState.name.toLowerCase().trim() === state.toLowerCase().trim(),
     );
 
     if (stateMatch) {
@@ -112,24 +111,24 @@ shippingZoneSchema.statics.findZoneByCity = async function (
 shippingZoneSchema.methods.isLocationCovered = function (state, lga) {
   const stateMatch = this.states.find(
     (zoneState) =>
-      zoneState.name.toLowerCase().trim() === state.toLowerCase().trim()
+      zoneState.name.toLowerCase().trim() === state.toLowerCase().trim(),
   );
 
   if (!stateMatch) {
     return false;
   }
 
-  if (stateMatch.coverage_type === 'all') {
+  if (stateMatch.coverage_type === "all") {
     return true;
   }
 
-  if (stateMatch.coverage_type === 'specific') {
+  if (stateMatch.coverage_type === "specific") {
     if (!lga) {
       return false;
     }
 
     return stateMatch.covered_lgas?.some(
-      (zoneLga) => zoneLga.toLowerCase().trim() === lga.toLowerCase().trim()
+      (zoneLga) => zoneLga.toLowerCase().trim() === lga.toLowerCase().trim(),
     );
   }
 
@@ -137,31 +136,30 @@ shippingZoneSchema.methods.isLocationCovered = function (state, lga) {
 };
 
 // Pre-save validation
-shippingZoneSchema.pre('save', async function (next) {
+shippingZoneSchema.pre("save", async function (next) {
   try {
-    const { nigeriaStatesLgas } = await import(
-      '../data/nigeria-states-lgas.js'
-    );
+    const { nigeriaStatesLgas } =
+      await import("../data/nigeria-states-lgas.js");
 
     for (const state of this.states) {
       const nigeriaState = nigeriaStatesLgas.find(
-        (ns) => ns.state.toLowerCase() === state.name.toLowerCase()
+        (ns) => ns.state.toLowerCase() === state.name.toLowerCase(),
       );
 
       if (!nigeriaState) {
         throw new Error(
-          `Invalid state: ${state.name}. Must be a valid Nigerian state.`
+          `Invalid state: ${state.name}. Must be a valid Nigerian state.`,
         );
       }
 
       // Validate covered LGAs if coverage is specific
       if (
-        state.coverage_type === 'specific' &&
+        state.coverage_type === "specific" &&
         state.covered_lgas?.length > 0
       ) {
         for (const lga of state.covered_lgas) {
           const lgaExists = nigeriaState.lga.some(
-            (nl) => nl.toLowerCase() === lga.toLowerCase()
+            (nl) => nl.toLowerCase() === lga.toLowerCase(),
           );
 
           if (!lgaExists) {
@@ -182,6 +180,6 @@ shippingZoneSchema.pre('save', async function (next) {
   }
 });
 
-const ShippingZoneModel = mongoose.model('ShippingZone', shippingZoneSchema);
+const ShippingZoneModel = mongoose.model("ShippingZone", shippingZoneSchema);
 
 export default ShippingZoneModel;

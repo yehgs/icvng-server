@@ -73,7 +73,7 @@ const generateTrackingNumber = async () => {
 
     // Generate 3 random uppercase letters
     const letters = Array.from({ length: 3 }, () =>
-      String.fromCharCode(65 + Math.floor(Math.random() * 26))
+      String.fromCharCode(65 + Math.floor(Math.random() * 26)),
     ).join("");
 
     const trackingNumber = `${prefix}${digits}${letters}`;
@@ -88,12 +88,12 @@ const generateTrackingNumber = async () => {
     }
 
     console.log(
-      `Tracking number ${trackingNumber} already exists, retrying...`
+      `Tracking number ${trackingNumber} already exists, retrying...`,
     );
   }
 
   throw new Error(
-    "Unable to generate unique tracking number after multiple attempts"
+    "Unable to generate unique tracking number after multiple attempts",
   );
 };
 
@@ -169,7 +169,7 @@ export const createShippingZone = async (request, response) => {
 
       // Validate against Nigeria data
       const nigeriaState = nigeriaStatesLgas.find(
-        (s) => s.state.toLowerCase() === state.name.toLowerCase()
+        (s) => s.state.toLowerCase() === state.name.toLowerCase(),
       );
 
       if (!nigeriaState) {
@@ -204,13 +204,13 @@ export const createShippingZone = async (request, response) => {
 
         // Validate all covered LGAs exist
         const invalidLgas = processedCoveredLgas.filter(
-          (lgaName) => !nigeriaState.lga.includes(lgaName)
+          (lgaName) => !nigeriaState.lga.includes(lgaName),
         );
 
         if (invalidLgas.length > 0) {
           return response.status(400).json({
             message: `Invalid LGAs for ${state.name}: ${invalidLgas.join(
-              ", "
+              ", ",
             )}`,
             error: true,
             success: false,
@@ -331,7 +331,7 @@ export const updateShippingZone = async (request, response) => {
 
       for (const state of states) {
         const nigeriaState = nigeriaStatesLgas.find(
-          (s) => s.state.toLowerCase() === state.name.toLowerCase()
+          (s) => s.state.toLowerCase() === state.name.toLowerCase(),
         );
 
         if (!nigeriaState) {
@@ -361,12 +361,12 @@ export const updateShippingZone = async (request, response) => {
 
           // Validate all covered LGAs exist
           const invalidLgas = processedCoveredLgas.filter(
-            (lgaName) => !nigeriaState.lga.includes(lgaName)
+            (lgaName) => !nigeriaState.lga.includes(lgaName),
           );
 
           if (invalidLgas.length > 0) {
             throw new Error(
-              `Invalid LGAs for ${state.name}: ${invalidLgas.join(", ")}`
+              `Invalid LGAs for ${state.name}: ${invalidLgas.join(", ")}`,
             );
           }
         }
@@ -384,14 +384,14 @@ export const updateShippingZone = async (request, response) => {
       updateData.states = processedStates;
       console.log(
         "Processed states for update:",
-        JSON.stringify(processedStates, null, 2)
+        JSON.stringify(processedStates, null, 2),
       );
     }
 
     const updatedZone = await ShippingZoneModel.findByIdAndUpdate(
       zoneId,
       updateData,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     ).populate("createdBy updatedBy", "name email");
 
     console.log("Zone updated successfully:", updatedZone._id);
@@ -489,7 +489,7 @@ export const deleteShippingZone = async (request, response) => {
       // If cascade delete is requested, delete all dependent methods first
       if (cascadeDelete === "true") {
         console.log(
-          `Cascade deleting ${methodsUsingZone.length} shipping methods...`
+          `Cascade deleting ${methodsUsingZone.length} shipping methods...`,
         );
 
         // Delete all dependent methods
@@ -650,11 +650,11 @@ export const createShippingMethod = async (request, response) => {
         tableShippingConfig.zoneRates = tableShippingConfig.zoneRates.filter(
           (zoneRate) => {
             return zoneRate.zone && zoneRate.zone.trim() !== "";
-          }
+          },
         );
         console.log(
           "Table shipping zone rates after cleaning:",
-          tableShippingConfig.zoneRates.length
+          tableShippingConfig.zoneRates.length,
         );
       }
 
@@ -709,11 +709,11 @@ export const createShippingMethod = async (request, response) => {
         flatRateConfig.zoneRates = flatRateConfig.zoneRates.filter(
           (zoneRate) => {
             return zoneRate.zone && zoneRate.zone.trim() !== "";
-          }
+          },
         );
         console.log(
           "Flat rate zone rates after cleaning:",
-          flatRateConfig.zoneRates.length
+          flatRateConfig.zoneRates.length,
         );
       }
 
@@ -755,7 +755,7 @@ export const createShippingMethod = async (request, response) => {
       ) {
         console.log(
           "Cleaning zone locations:",
-          pickupConfig.zoneLocations.length
+          pickupConfig.zoneLocations.length,
         );
 
         pickupConfig.zoneLocations = pickupConfig.zoneLocations.filter(
@@ -796,7 +796,7 @@ export const createShippingMethod = async (request, response) => {
                   }
 
                   return isValid;
-                }
+                },
               );
             }
 
@@ -807,12 +807,12 @@ export const createShippingMethod = async (request, response) => {
               console.log("Filtering out zone location: no valid locations");
             }
             return hasValidLocations;
-          }
+          },
         );
 
         console.log(
           "Zone locations after cleaning:",
-          pickupConfig.zoneLocations.length
+          pickupConfig.zoneLocations.length,
         );
       }
 
@@ -823,7 +823,7 @@ export const createShippingMethod = async (request, response) => {
       ) {
         console.log(
           "Cleaning default locations:",
-          pickupConfig.defaultLocations.length
+          pickupConfig.defaultLocations.length,
         );
 
         pickupConfig.defaultLocations = pickupConfig.defaultLocations.filter(
@@ -851,12 +851,12 @@ export const createShippingMethod = async (request, response) => {
             }
 
             return isValid;
-          }
+          },
         );
 
         console.log(
           "Default locations after cleaning:",
-          pickupConfig.defaultLocations.length
+          pickupConfig.defaultLocations.length,
         );
       }
 
@@ -1047,12 +1047,12 @@ export const updateShippingMethod = async (request, response) => {
                   }
 
                   return isValid;
-                }
+                },
               );
             }
 
             return zoneLocation.locations && zoneLocation.locations.length > 0;
-          }
+          },
         );
       } else {
         pickupConfig.zoneLocations = [];
@@ -1086,7 +1086,7 @@ export const updateShippingMethod = async (request, response) => {
             }
 
             return isValid;
-          }
+          },
         );
       } else {
         pickupConfig.defaultLocations = [];
@@ -1115,7 +1115,7 @@ export const updateShippingMethod = async (request, response) => {
           hasZoneLocations ? pickupConfig.zoneLocations.length : 0
         } zone locations, ${
           hasDefaultLocations ? pickupConfig.defaultLocations.length : 0
-        } default locations`
+        } default locations`,
       );
     } else if (method.type === "flat_rate") {
       console.log("Processing flat_rate method update");
@@ -1148,7 +1148,7 @@ export const updateShippingMethod = async (request, response) => {
         flatRateConfig.zoneRates = flatRateConfig.zoneRates.filter(
           (zoneRate) => {
             return zoneRate.zone && zoneRate.zone.trim() !== "";
-          }
+          },
         );
       } else {
         flatRateConfig.zoneRates = [];
@@ -1203,7 +1203,7 @@ export const updateShippingMethod = async (request, response) => {
         tableShippingConfig.zoneRates = tableShippingConfig.zoneRates.filter(
           (zoneRate) => {
             return zoneRate.zone && zoneRate.zone.trim() !== "";
-          }
+          },
         );
       } else {
         tableShippingConfig.zoneRates = [];
@@ -1255,7 +1255,7 @@ export const updateShippingMethod = async (request, response) => {
         new: true,
         runValidators: true,
         context: "query",
-      }
+      },
     ).populate("createdBy updatedBy", "name email");
 
     if (!updatedMethod) {
@@ -1499,7 +1499,7 @@ export const calculateCheckoutShipping = async (request, response) => {
         const stateMatch = testZone.states.find(
           (state) =>
             state.name.toLowerCase().trim() ===
-            address.state.toLowerCase().trim()
+            address.state.toLowerCase().trim(),
         );
 
         if (stateMatch) {
@@ -1520,7 +1520,7 @@ export const calculateCheckoutShipping = async (request, response) => {
             // Only check specific LGAs if explicitly set to specific AND has covered_lgas
             lgaCovered = stateMatch.covered_lgas?.some(
               (lga) =>
-                lga.toLowerCase().trim() === address.lga.toLowerCase().trim()
+                lga.toLowerCase().trim() === address.lga.toLowerCase().trim(),
             );
             console.log(`LGA ${address.lga} covered: ${lgaCovered}`);
           }
@@ -1570,7 +1570,7 @@ export const calculateCheckoutShipping = async (request, response) => {
     if (!calculatedWeight) {
       for (const item of items) {
         const product = products.find(
-          (p) => p._id.toString() === (item.productId || item._id).toString()
+          (p) => p._id.toString() === (item.productId || item._id).toString(),
         );
         if (product && product.weight) {
           calculatedWeight += product.weight * item.quantity;
@@ -1613,17 +1613,17 @@ export const calculateCheckoutShipping = async (request, response) => {
 
         if (!config) {
           console.log(
-            `❌ No configuration found for type: ${method.type} (tried key: ${configKey})`
+            `❌ No configuration found for type: ${method.type} (tried key: ${configKey})`,
           );
           console.log(
             `Available keys:`,
-            Object.keys(method.toObject ? method.toObject() : method)
+            Object.keys(method.toObject ? method.toObject() : method),
           );
           continue;
         }
 
         console.log(
-          `✅ Found config for ${method.type} using key: ${configKey}`
+          `✅ Found config for ${method.type} using key: ${configKey}`,
         );
 
         // STEP 1: Check product/category assignment
@@ -1652,8 +1652,8 @@ export const calculateCheckoutShipping = async (request, response) => {
             } else {
               appliesToItems = categoryIds.some((catId) =>
                 config.categories.some(
-                  (methodCatId) => methodCatId.toString() === catId.toString()
-                )
+                  (methodCatId) => methodCatId.toString() === catId.toString(),
+                ),
               );
               console.log(`Category match: ${appliesToItems}`, {
                 cartCategories: categoryIds.map((c) => c.toString()),
@@ -1670,8 +1670,8 @@ export const calculateCheckoutShipping = async (request, response) => {
               appliesToItems = productIds.some((prodId) =>
                 config.products.some(
                   (methodProdId) =>
-                    methodProdId.toString() === prodId.toString()
-                )
+                    methodProdId.toString() === prodId.toString(),
+                ),
               );
               console.log(`Product match: ${appliesToItems}`);
             }
@@ -1704,7 +1704,7 @@ export const calculateCheckoutShipping = async (request, response) => {
           if (hasZoneLocations && zone) {
             // Check if this zone has locations
             const zoneLocation = config.zoneLocations.find(
-              (zl) => zl.zone && zl.zone.toString() === zone._id.toString()
+              (zl) => zl.zone && zl.zone.toString() === zone._id.toString(),
             );
             if (zoneLocation && zoneLocation.locations?.length > 0) {
               isAvailableForAddress = true;
@@ -1732,7 +1732,7 @@ export const calculateCheckoutShipping = async (request, response) => {
           const hasZoneRate =
             zone &&
             config.zoneRates?.some(
-              (zr) => zr.zone && zr.zone.toString() === zone._id.toString()
+              (zr) => zr.zone && zr.zone.toString() === zone._id.toString(),
             );
           const hasDefaultCost =
             config.defaultCost !== undefined && config.defaultCost !== null;
@@ -1764,7 +1764,7 @@ export const calculateCheckoutShipping = async (request, response) => {
           }
 
           const hasZoneRate = config.zoneRates?.some(
-            (zr) => zr.zone && zr.zone.toString() === zone._id.toString()
+            (zr) => zr.zone && zr.zone.toString() === zone._id.toString(),
           );
 
           console.log("Table shipping availability:", {
@@ -1815,7 +1815,7 @@ export const calculateCheckoutShipping = async (request, response) => {
             // Add zone-specific locations if available
             if (zone && config.zoneLocations) {
               const zoneLocation = config.zoneLocations.find(
-                (zl) => zl.zone && zl.zone.toString() === zone._id.toString()
+                (zl) => zl.zone && zl.zone.toString() === zone._id.toString(),
               );
               if (zoneLocation?.locations) {
                 locations.push(...zoneLocation.locations);
@@ -1842,7 +1842,7 @@ export const calculateCheckoutShipping = async (request, response) => {
           console.log(`✅ Added to available methods`);
         } else {
           console.log(
-            `❌ Not eligible: ${calculationResult?.reason || "Unknown reason"}`
+            `❌ Not eligible: ${calculationResult?.reason || "Unknown reason"}`,
           );
         }
       } catch (methodError) {
@@ -1930,7 +1930,7 @@ export const calculateManualOrderShipping = async (request, response) => {
       const stateMatch = testZone.states.find(
         (state) =>
           state.name.toLowerCase().trim() ===
-          deliveryAddress.state.toLowerCase().trim()
+          deliveryAddress.state.toLowerCase().trim(),
       );
 
       if (stateMatch) {
@@ -1946,7 +1946,7 @@ export const calculateManualOrderShipping = async (request, response) => {
           lgaCovered = stateMatch.covered_lgas?.some(
             (lga) =>
               lga.toLowerCase().trim() ===
-              deliveryAddress.lga.toLowerCase().trim()
+              deliveryAddress.lga.toLowerCase().trim(),
           );
         }
 
@@ -1984,7 +1984,7 @@ export const calculateManualOrderShipping = async (request, response) => {
     if (!calculatedWeight) {
       for (const item of items) {
         const product = products.find(
-          (p) => p._id.toString() === item.productId.toString()
+          (p) => p._id.toString() === item.productId.toString(),
         );
         if (product && product.weight) {
           calculatedWeight += product.weight * item.quantity;
@@ -2029,8 +2029,8 @@ export const calculateManualOrderShipping = async (request, response) => {
           } else {
             appliesToItems = categoryIds.some((catId) =>
               config.categories.some(
-                (methodCatId) => methodCatId.toString() === catId.toString()
-              )
+                (methodCatId) => methodCatId.toString() === catId.toString(),
+              ),
             );
           }
           break;
@@ -2040,8 +2040,8 @@ export const calculateManualOrderShipping = async (request, response) => {
           } else {
             appliesToItems = productIds.some((prodId) =>
               config.products.some(
-                (methodProdId) => methodProdId.toString() === prodId.toString()
-              )
+                (methodProdId) => methodProdId.toString() === prodId.toString(),
+              ),
             );
           }
           break;
@@ -2061,7 +2061,7 @@ export const calculateManualOrderShipping = async (request, response) => {
 
         if (hasZoneLocations) {
           const zoneLocation = config.zoneLocations.find(
-            (zl) => zl.zone && zl.zone.toString() === zone._id.toString()
+            (zl) => zl.zone && zl.zone.toString() === zone._id.toString(),
           );
           if (zoneLocation && zoneLocation.locations?.length > 0) {
             isAvailableForAddress = true;
@@ -2082,7 +2082,7 @@ export const calculateManualOrderShipping = async (request, response) => {
         }
       } else if (method.type === "flat_rate") {
         const hasZoneRate = config.zoneRates?.some(
-          (zr) => zr.zone && zr.zone.toString() === zone._id.toString()
+          (zr) => zr.zone && zr.zone.toString() === zone._id.toString(),
         );
         const hasDefaultCost =
           config.defaultCost !== undefined && config.defaultCost !== null;
@@ -2098,7 +2098,7 @@ export const calculateManualOrderShipping = async (request, response) => {
         }
       } else if (method.type === "table_shipping") {
         const hasZoneRate = config.zoneRates?.some(
-          (zr) => zr.zone && zr.zone.toString() === zone._id.toString()
+          (zr) => zr.zone && zr.zone.toString() === zone._id.toString(),
         );
 
         if (hasZoneRate) {
@@ -2128,7 +2128,7 @@ export const calculateManualOrderShipping = async (request, response) => {
           const locations = [];
           if (zone && config.zoneLocations) {
             const zoneLocation = config.zoneLocations.find(
-              (zl) => zl.zone && zl.zone.toString() === zone._id.toString()
+              (zl) => zl.zone && zl.zone.toString() === zone._id.toString(),
             );
             if (zoneLocation?.locations) {
               locations.push(...zoneLocation.locations);
@@ -2363,7 +2363,7 @@ export const createShipment = async (request, response) => {
             country: "Nigeria",
           },
         },
-        userId
+        userId,
       );
 
       // Update order with tracking information
@@ -2404,7 +2404,7 @@ export const createShipment = async (request, response) => {
 
     // Return the first tracking record with populated data
     const populatedTracking = await ShippingTrackingModel.findById(
-      trackingRecords[0]._id
+      trackingRecords[0]._id,
     )
       .populate("orderId")
       .populate("shippingMethod")
@@ -2474,7 +2474,7 @@ export const updateTracking = async (request, response) => {
       for (const trackingItem of trackingsToUpdate) {
         await trackingItem.updateEstimatedDelivery(
           new Date(estimatedDelivery),
-          userId
+          userId,
         );
       }
     }
@@ -2491,7 +2491,7 @@ export const updateTracking = async (request, response) => {
                 : description,
             location,
           },
-          userId
+          userId,
         );
 
         // Update order status based on tracking status
@@ -2544,7 +2544,7 @@ export const updateTracking = async (request, response) => {
         } catch (emailError) {
           console.error(
             "Failed to send shipping notification email:",
-            emailError
+            emailError,
           );
         }
       }
@@ -2583,9 +2583,8 @@ export const getTrackingByNumber = async (request, response) => {
   try {
     const { trackingNumber } = request.params;
 
-    const tracking = await ShippingTrackingModel.getByTrackingNumber(
-      trackingNumber
-    );
+    const tracking =
+      await ShippingTrackingModel.getByTrackingNumber(trackingNumber);
 
     if (!tracking) {
       return response.status(404).json({
@@ -2596,7 +2595,7 @@ export const getTrackingByNumber = async (request, response) => {
     }
 
     const customerVisibleEvents = tracking.trackingEvents.filter(
-      (event) => event.isCustomerVisible
+      (event) => event.isCustomerVisible,
     );
 
     const customerData = {
@@ -2681,7 +2680,7 @@ export const getTrackingStats = async (request, response) => {
         avgDeliveryTime: avgDeliveryTime[0]?.avgDays || 0,
         inTransit:
           stats.find((s) =>
-            ["PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY"].includes(s._id)
+            ["PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY"].includes(s._id),
           )?.count || 0,
       },
       error: false,
@@ -3046,7 +3045,7 @@ export const getShippingZones = async (request, response) => {
     console.log(
       `✅ Fetched ${
         zonesWithLGACount.length
-      } zones (page ${pageNum}/${Math.ceil(totalCount / limitNum)})`
+      } zones (page ${pageNum}/${Math.ceil(totalCount / limitNum)})`,
     );
 
     return response.json({

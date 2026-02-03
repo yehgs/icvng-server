@@ -1,11 +1,11 @@
 // models/directPricing.model.js
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const directPricingSchema = new mongoose.Schema(
   {
     product: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Product',
+      ref: "Product",
       required: true,
       unique: true,
     },
@@ -31,7 +31,7 @@ const directPricingSchema = new mongoose.Schema(
       btcPrice: {
         updatedBy: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
+          ref: "User",
         },
         updatedAt: {
           type: Date,
@@ -40,7 +40,7 @@ const directPricingSchema = new mongoose.Schema(
       price3weeksDelivery: {
         updatedBy: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
+          ref: "User",
         },
         updatedAt: {
           type: Date,
@@ -49,7 +49,7 @@ const directPricingSchema = new mongoose.Schema(
       price5weeksDelivery: {
         updatedBy: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
+          ref: "User",
         },
         updatedAt: {
           type: Date,
@@ -64,12 +64,12 @@ const directPricingSchema = new mongoose.Schema(
 
     notes: {
       type: String,
-      default: '',
+      default: "",
     },
 
     lastUpdatedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
 
@@ -85,7 +85,7 @@ const directPricingSchema = new mongoose.Schema(
 
     approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
 
     approvedAt: {
@@ -103,17 +103,17 @@ const directPricingSchema = new mongoose.Schema(
         priceType: {
           type: String,
           enum: [
-            'btcPrice',
-            'price3weeksDelivery',
-            'price5weeksDelivery',
-            'bulk',
+            "btcPrice",
+            "price3weeksDelivery",
+            "price5weeksDelivery",
+            "bulk",
           ],
         },
         previousValue: Number,
         newValue: Number,
         updatedBy: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
+          ref: "User",
         },
         updatedAt: {
           type: Date,
@@ -122,16 +122,16 @@ const directPricingSchema = new mongoose.Schema(
         notes: String,
         updateSource: {
           type: String,
-          enum: ['DIRECT_ENTRY', 'BULK_UPDATE', 'ADMIN_OVERRIDE'],
-          default: 'DIRECT_ENTRY',
+          enum: ["DIRECT_ENTRY", "BULK_UPDATE", "ADMIN_OVERRIDE"],
+          default: "DIRECT_ENTRY",
         },
       },
     ],
 
     pricingSource: {
       type: String,
-      enum: ['DIRECT_PRICING', 'CONFIG_BASED'],
-      default: 'DIRECT_PRICING',
+      enum: ["DIRECT_PRICING", "CONFIG_BASED"],
+      default: "DIRECT_PRICING",
     },
 
     overrideConfigPricing: {
@@ -141,17 +141,16 @@ const directPricingSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Indexes
-directPricingSchema.index({ product: 1 });
 directPricingSchema.index({ isActive: 1 });
 directPricingSchema.index({ lastUpdatedAt: -1 });
-directPricingSchema.index({ 'priceUpdatedBy.btcPrice.updatedBy': 1 });
+directPricingSchema.index({ "priceUpdatedBy.btcPrice.updatedBy": 1 });
 
 // Pre-save middleware
-directPricingSchema.pre('save', function (next) {
+directPricingSchema.pre("save", function (next) {
   if (this.isModified()) {
     this.lastUpdatedAt = new Date();
   }
@@ -159,13 +158,13 @@ directPricingSchema.pre('save', function (next) {
 });
 
 // Virtual to check if any prices are set
-directPricingSchema.virtual('hasPrices').get(function () {
+directPricingSchema.virtual("hasPrices").get(function () {
   const prices = this.directPrices;
   return Object.values(prices).some((price) => price && price > 0);
 });
 
 // Virtual to get the latest price update info
-directPricingSchema.virtual('latestUpdate').get(function () {
+directPricingSchema.virtual("latestUpdate").get(function () {
   if (this.priceHistory && this.priceHistory.length > 0) {
     return this.priceHistory[this.priceHistory.length - 1];
   }
@@ -177,12 +176,12 @@ directPricingSchema.methods.updateSpecificPrice = function (
   priceType,
   newValue,
   updatedBy,
-  notes = ''
+  notes = "",
 ) {
   const validPriceTypes = [
-    'btcPrice',
-    'price3weeksDelivery',
-    'price5weeksDelivery',
+    "btcPrice",
+    "price3weeksDelivery",
+    "price5weeksDelivery",
   ];
 
   if (!validPriceTypes.includes(priceType)) {
@@ -206,7 +205,7 @@ directPricingSchema.methods.updateSpecificPrice = function (
     updatedBy: updatedBy,
     updatedAt: new Date(),
     notes: notes,
-    updateSource: 'DIRECT_ENTRY',
+    updateSource: "DIRECT_ENTRY",
   });
 
   this.lastUpdatedBy = updatedBy;
@@ -217,12 +216,12 @@ directPricingSchema.methods.updateSpecificPrice = function (
 directPricingSchema.methods.bulkUpdatePrices = function (
   priceUpdates,
   updatedBy,
-  notes = ''
+  notes = "",
 ) {
   const validPriceTypes = [
-    'btcPrice',
-    'price3weeksDelivery',
-    'price5weeksDelivery',
+    "btcPrice",
+    "price3weeksDelivery",
+    "price5weeksDelivery",
   ];
 
   Object.entries(priceUpdates).forEach(([priceType, newValue]) => {
@@ -238,13 +237,13 @@ directPricingSchema.methods.bulkUpdatePrices = function (
 
   this.priceHistory.push({
     prices: { ...this.directPrices },
-    priceType: 'bulk',
+    priceType: "bulk",
     previousValue: null,
     newValue: null,
     updatedBy: updatedBy,
     updatedAt: new Date(),
     notes: notes,
-    updateSource: 'BULK_UPDATE',
+    updateSource: "BULK_UPDATE",
   });
 
   this.lastUpdatedBy = updatedBy;
@@ -254,7 +253,7 @@ directPricingSchema.methods.bulkUpdatePrices = function (
 // Static method to find or create direct pricing for a product
 directPricingSchema.statics.findOrCreateForProduct = async function (
   productId,
-  userId
+  userId,
 ) {
   let directPricing = await this.findOne({
     product: productId,
@@ -273,6 +272,6 @@ directPricingSchema.statics.findOrCreateForProduct = async function (
   return directPricing;
 };
 
-const DirectPricingModel = mongoose.model('DirectPricing', directPricingSchema);
+const DirectPricingModel = mongoose.model("DirectPricing", directPricingSchema);
 
 export default DirectPricingModel;

@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const productSchema = new mongoose.Schema(
   {
@@ -21,31 +21,31 @@ const productSchema = new mongoose.Schema(
     brand: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'brand',
+        ref: "brand",
       },
     ],
     compatibleSystem: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'brand',
+      ref: "brand",
     },
     producer: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'brand',
+      ref: "brand",
     },
     productType: {
       type: String,
       enum: [
-        'COFFEE',
-        'MACHINE',
-        'ACCESSORIES',
-        'COFFEE_BEANS',
-        'TEA',
-        'DRINKS',
+        "COFFEE",
+        "MACHINE",
+        "ACCESSORIES",
+        "COFFEE_BEANS",
+        "TEA",
+        "DRINKS",
       ],
     },
     roastLevel: {
       type: String,
-      enum: ['LIGHT', 'MEDIUM', 'DARK'],
+      enum: ["LIGHT", "MEDIUM", "DARK"],
       required: false,
     },
     roastOrigin: {
@@ -55,35 +55,40 @@ const productSchema = new mongoose.Schema(
     blend: {
       type: String,
       enum: [
-        '100% Arabica',
-        '100% Robusta',
-        'Arabica/Robusta Blend (70/30)',
-        'Arabica/Robusta Blend (30/70)',
-        'Arabica/Robusta Blend (80/20)',
-        'Arabica/Robusta Blend (40/60)',
-        'Arabica/Robusta Blend (60/40)',
-        'Arabica/Robusta Blend (20/80)',
-        'Arabica/Robusta Blend (50/50)',
-        'Arabica/Robusta Blend (90/10)',
-        'Arabica/Robusta Blend (10/90)',
-        'Single Origin Arabica',
-        'Estate Blend',
-        'House Blend',
-        'Breakfast Blend',
-        'Espresso Blend',
-        'Mocha-Java Blend',
-        'Mocha Italia',
-        'Cappuccino Blend',
-        'African Blend',
-        'Latin American Blend',
-        'Indonesian Blend',
-        'Italian Roast Blend',
-        'French Roast Blend',
-        'Varius Blend',
+        "100% Arabica",
+        "100% Robusta",
+        "Arabica/Robusta Blend (70/30)",
+        "Arabica/Robusta Blend (30/70)",
+        "Arabica/Robusta Blend (80/20)",
+        "Arabica/Robusta Blend (40/60)",
+        "Arabica/Robusta Blend (60/40)",
+        "Arabica/Robusta Blend (20/80)",
+        "Arabica/Robusta Blend (50/50)",
+        "Arabica/Robusta Blend (90/10)",
+        "Arabica/Robusta Blend (10/90)",
+        "Single Origin Arabica",
+        "Estate Blend",
+        "House Blend",
+        "Breakfast Blend",
+        "Espresso Blend",
+        "Mocha-Java Blend",
+        "Mocha Italia",
+        "Cappuccino Blend",
+        "African Blend",
+        "Latin American Blend",
+        "Indonesian Blend",
+        "Italian Roast Blend",
+        "French Roast Blend",
+        "Varius Blend",
       ],
       required: false,
     },
     featured: {
+      type: Boolean,
+      default: false,
+      required: false,
+    },
+    btbProduct: {
       type: Boolean,
       default: false,
       required: false,
@@ -103,66 +108,66 @@ const productSchema = new mongoose.Schema(
     intensity: {
       type: String,
       enum: [
-        '1/10',
-        '2/10',
-        '3/10',
-        '4/10',
-        '5/10',
-        '6/10',
-        '7/10',
-        '8/10',
-        '9/10',
-        '10/10',
+        "1/10",
+        "2/10",
+        "3/10",
+        "4/10",
+        "5/10",
+        "6/10",
+        "7/10",
+        "8/10",
+        "9/10",
+        "10/10",
       ],
       required: false,
     },
     colors: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Color',
+        ref: "Color",
       },
     ],
     coffeeRoastAreas: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'coffee_roast_area',
+      ref: "coffee_roast_area",
       required: false,
     },
     category: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'category',
+      ref: "category",
       required: true,
     },
     subCategory: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'subCategory',
+      ref: "subCategory",
       required: false,
     },
     tags: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'tag',
+        ref: "tag",
       },
     ],
     attributes: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'attribute',
+        ref: "attribute",
       },
     ],
     ratings: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Rating',
+        ref: "Rating",
       },
     ],
     averageRating: { type: Number, default: 0 },
     unit: {
       type: String,
-      default: '',
+      default: "",
     },
     packaging: {
       type: String,
-      default: '',
+      default: "",
     },
     stock: {
       type: Number,
@@ -210,7 +215,7 @@ const productSchema = new mongoose.Schema(
       },
       notes: {
         type: String,
-        default: '',
+        default: "",
       },
       lastUpdated: {
         type: Date,
@@ -218,14 +223,14 @@ const productSchema = new mongoose.Schema(
       },
       updatedBy: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+        ref: "User",
       },
     },
 
     stockSource: {
       type: String,
-      enum: ['WAREHOUSE_MANUAL', 'STOCK_BATCHES', 'PRODUCT_DEFAULT'],
-      default: 'PRODUCT_DEFAULT',
+      enum: ["WAREHOUSE_MANUAL", "STOCK_BATCHES", "PRODUCT_DEFAULT"],
+      default: "PRODUCT_DEFAULT",
     },
     productAvailability: {
       type: Boolean,
@@ -258,13 +263,13 @@ const productSchema = new mongoose.Schema(
     },
     pricing: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'ProductPricing',
+      ref: "ProductPricing",
     },
     isPerishable: {
       type: Boolean,
       default: function () {
         // Auto-determine based on product type
-        const perishableTypes = ['COFFEE_BEANS', 'COFFEE', 'TEA', 'DRINKS'];
+        const perishableTypes = ["COFFEE_BEANS", "COFFEE", "TEA", "DRINKS"];
         return perishableTypes.includes(this.productType);
       },
     },
@@ -301,15 +306,15 @@ const productSchema = new mongoose.Schema(
     },
     description: {
       type: String,
-      default: '',
+      default: "",
     },
     shortDescription: {
       type: String,
-      default: '',
+      default: "",
     },
     additionalInfo: {
       type: String,
-      default: '',
+      default: "",
     },
     more_details: {
       type: Object,
@@ -317,39 +322,39 @@ const productSchema = new mongoose.Schema(
     },
     seoTitle: {
       type: String,
-      default: '',
+      default: "",
     },
     seoDescription: {
       type: String,
-      default: '',
+      default: "",
     },
     publish: {
       type: String,
-      enum: ['PUBLISHED', 'PENDING', 'DRAFT'],
-      default: 'PENDING',
+      enum: ["PUBLISHED", "PENDING", "DRAFT"],
+      default: "PENDING",
     },
-    relatedProducts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
+    relatedProducts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Create a text index for search functionality
 productSchema.index(
   {
-    name: 'text',
-    description: 'text',
-    seoTitle: 'text',
-    seoDescription: 'text',
+    name: "text",
+    description: "text",
+    seoTitle: "text",
+    seoDescription: "text",
   },
   {
     weights: {
@@ -358,19 +363,16 @@ productSchema.index(
       seoTitle: 8,
       seoDescription: 6,
     },
-  }
+  },
 );
 
-// Add index for SKU for better performance
-productSchema.index({ sku: 1 });
-
 // Virtual to check if warehouse override is active
-productSchema.virtual('isWarehouseManaged').get(function () {
+productSchema.virtual("isWarehouseManaged").get(function () {
   return this.warehouseStock?.enabled === true;
 });
 
 // Virtual to get effective stock (prioritizes warehouse override)
-productSchema.virtual('effectiveStock').get(function () {
+productSchema.virtual("effectiveStock").get(function () {
   if (this.warehouseStock?.enabled) {
     return this.warehouseStock.finalStock || 0;
   }
@@ -378,24 +380,24 @@ productSchema.virtual('effectiveStock').get(function () {
 });
 
 // Virtual to get stock status based on effective stock
-productSchema.virtual('stockStatus').get(function () {
+productSchema.virtual("stockStatus").get(function () {
   const stock = this.effectiveStock;
 
-  if (stock === 0) return 'OUT_OF_STOCK';
-  if (stock <= 5) return 'CRITICAL_STOCK';
-  if (stock <= 10) return 'LOW_STOCK';
-  return 'IN_STOCK';
+  if (stock === 0) return "OUT_OF_STOCK";
+  if (stock <= 5) return "CRITICAL_STOCK";
+  if (stock <= 10) return "LOW_STOCK";
+  return "IN_STOCK";
 });
 
 // Add index for warehouse stock queries
-productSchema.index({ 'warehouseStock.enabled': 1 });
+productSchema.index({ "warehouseStock.enabled": 1 });
 productSchema.index({ stockSource: 1 });
-productSchema.index({ 'warehouseStock.lastUpdated': -1 });
+productSchema.index({ "warehouseStock.lastUpdated": -1 });
 
 // Note: Your existing Stock model remains unchanged!
 // The warehouse system works as an overlay that can optionally override
 // the stock calculations from your existing Stock model.
 
-const ProductModel = mongoose.model('Product', productSchema);
+const ProductModel = mongoose.model("Product", productSchema);
 
 export default ProductModel;

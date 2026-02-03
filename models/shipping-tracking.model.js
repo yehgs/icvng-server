@@ -1,17 +1,17 @@
 // models/shippingTracking.model.js
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const shippingTrackingSchema = new mongoose.Schema(
   {
     orderId: {
       type: mongoose.Schema.ObjectId,
-      ref: 'order',
+      ref: "order",
       required: true,
       unique: true,
     },
     trackingNumber: {
       type: String,
-      required: [true, 'Tracking number is required'],
+      required: [true, "Tracking number is required"],
       unique: true,
       uppercase: true,
       trim: true,
@@ -33,24 +33,24 @@ const shippingTrackingSchema = new mongoose.Schema(
     },
     shippingMethod: {
       type: mongoose.Schema.ObjectId,
-      ref: 'ShippingMethod',
+      ref: "ShippingMethod",
       required: true,
     },
     status: {
       type: String,
       enum: [
-        'PENDING', // Order received, not yet shipped
-        'PROCESSING', // Order being prepared
-        'PICKED_UP', // Picked up by carrier
-        'IN_TRANSIT', // In transit to destination
-        'OUT_FOR_DELIVERY', // Out for delivery
-        'DELIVERED', // Successfully delivered
-        'ATTEMPTED', // Delivery attempted but failed
-        'RETURNED', // Returned to sender
-        'LOST', // Package lost
-        'CANCELLED', // Shipment cancelled
+        "PENDING", // Order received, not yet shipped
+        "PROCESSING", // Order being prepared
+        "PICKED_UP", // Picked up by carrier
+        "IN_TRANSIT", // In transit to destination
+        "OUT_FOR_DELIVERY", // Out for delivery
+        "DELIVERED", // Successfully delivered
+        "ATTEMPTED", // Delivery attempted but failed
+        "RETURNED", // Returned to sender
+        "LOST", // Package lost
+        "CANCELLED", // Shipment cancelled
       ],
-      default: 'PENDING',
+      default: "PENDING",
     },
     trackingEvents: [
       {
@@ -75,7 +75,7 @@ const shippingTrackingSchema = new mongoose.Schema(
         },
         updatedBy: {
           type: mongoose.Schema.ObjectId,
-          ref: 'User',
+          ref: "User",
         },
         isCustomerVisible: {
           type: Boolean,
@@ -116,7 +116,7 @@ const shippingTrackingSchema = new mongoose.Schema(
     },
     deliveryInstructions: {
       type: String,
-      default: '',
+      default: "",
     },
     recipientInfo: {
       name: String,
@@ -146,8 +146,8 @@ const shippingTrackingSchema = new mongoose.Schema(
         height: Number,
         unit: {
           type: String,
-          enum: ['cm', 'in'],
-          default: 'cm',
+          enum: ["cm", "in"],
+          default: "cm",
         },
       },
       fragile: {
@@ -198,16 +198,16 @@ const shippingTrackingSchema = new mongoose.Schema(
     },
     internalNotes: {
       type: String,
-      default: '',
+      default: "",
     },
     customerNotes: {
       type: String,
-      default: '',
+      default: "",
     },
     priority: {
       type: String,
-      enum: ['LOW', 'NORMAL', 'HIGH', 'URGENT'],
-      default: 'NORMAL',
+      enum: ["LOW", "NORMAL", "HIGH", "URGENT"],
+      default: "NORMAL",
     },
     orderGroupId: {
       type: String,
@@ -223,30 +223,28 @@ const shippingTrackingSchema = new mongoose.Schema(
     },
     createdBy: {
       type: mongoose.Schema.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     updatedBy: {
       type: mongoose.Schema.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Indexes
-shippingTrackingSchema.index({ trackingNumber: 1 });
-shippingTrackingSchema.index({ orderId: 1 });
 shippingTrackingSchema.index({ status: 1 });
-shippingTrackingSchema.index({ 'carrier.code': 1 });
+shippingTrackingSchema.index({ "carrier.code": 1 });
 shippingTrackingSchema.index({ estimatedDelivery: 1 });
 shippingTrackingSchema.index({ actualDelivery: 1 });
 
 // Virtual for current location
-shippingTrackingSchema.virtual('currentLocation').get(function () {
+shippingTrackingSchema.virtual("currentLocation").get(function () {
   if (this.trackingEvents && this.trackingEvents.length > 0) {
     const latestEvent = this.trackingEvents[this.trackingEvents.length - 1];
     return latestEvent.location;
@@ -255,7 +253,7 @@ shippingTrackingSchema.virtual('currentLocation').get(function () {
 });
 
 // Virtual for days in transit
-shippingTrackingSchema.virtual('daysInTransit').get(function () {
+shippingTrackingSchema.virtual("daysInTransit").get(function () {
   const startDate = this.createdAt;
   const endDate = this.actualDelivery || new Date();
   const diffTime = Math.abs(endDate - startDate);
@@ -266,7 +264,7 @@ shippingTrackingSchema.virtual('daysInTransit').get(function () {
 // Method to add tracking event
 shippingTrackingSchema.methods.addTrackingEvent = function (
   eventData,
-  updatedBy
+  updatedBy,
 ) {
   const event = {
     status: eventData.status,
@@ -282,7 +280,7 @@ shippingTrackingSchema.methods.addTrackingEvent = function (
   this.updatedBy = updatedBy;
 
   // Update delivery date if delivered
-  if (eventData.status === 'DELIVERED' && !this.actualDelivery) {
+  if (eventData.status === "DELIVERED" && !this.actualDelivery) {
     this.actualDelivery = event.timestamp;
   }
 
@@ -292,7 +290,7 @@ shippingTrackingSchema.methods.addTrackingEvent = function (
 // Method to update estimated delivery
 shippingTrackingSchema.methods.updateEstimatedDelivery = function (
   newDate,
-  updatedBy
+  updatedBy,
 ) {
   this.estimatedDelivery = newDate;
   this.updatedBy = updatedBy;
@@ -304,28 +302,28 @@ shippingTrackingSchema.methods.updateEstimatedDelivery = function (
       description: `Estimated delivery updated to ${newDate.toLocaleDateString()}`,
       isCustomerVisible: true,
     },
-    updatedBy
+    updatedBy,
   );
 };
 
 // Static method to get tracking by order ID
 shippingTrackingSchema.statics.getByOrderId = function (orderId) {
   return this.findOne({ orderId })
-    .populate('orderId')
-    .populate('shippingMethod')
-    .populate('createdBy', 'name email')
-    .populate('updatedBy', 'name email')
-    .populate('trackingEvents.updatedBy', 'name');
+    .populate("orderId")
+    .populate("shippingMethod")
+    .populate("createdBy", "name email")
+    .populate("updatedBy", "name email")
+    .populate("trackingEvents.updatedBy", "name");
 };
 
 // Static method to get tracking by tracking number
 shippingTrackingSchema.statics.getByTrackingNumber = function (trackingNumber) {
   return this.findOne({ trackingNumber: trackingNumber.toUpperCase() })
-    .populate('orderId')
-    .populate('shippingMethod')
-    .populate('createdBy', 'name email')
-    .populate('updatedBy', 'name email')
-    .populate('trackingEvents.updatedBy', 'name');
+    .populate("orderId")
+    .populate("shippingMethod")
+    .populate("createdBy", "name email")
+    .populate("updatedBy", "name email")
+    .populate("trackingEvents.updatedBy", "name");
 };
 
 // Static method to get overdue deliveries
@@ -333,23 +331,23 @@ shippingTrackingSchema.statics.getOverdueDeliveries = function () {
   const now = new Date();
   return this.find({
     estimatedDelivery: { $lt: now },
-    status: { $nin: ['DELIVERED', 'RETURNED', 'LOST', 'CANCELLED'] },
+    status: { $nin: ["DELIVERED", "RETURNED", "LOST", "CANCELLED"] },
   })
-    .populate('orderId')
-    .populate('shippingMethod')
+    .populate("orderId")
+    .populate("shippingMethod")
     .sort({ estimatedDelivery: 1 });
 };
 
 // Static method to get shipments by status
 shippingTrackingSchema.statics.getByStatus = function (status) {
   return this.find({ status })
-    .populate('orderId')
-    .populate('shippingMethod')
+    .populate("orderId")
+    .populate("shippingMethod")
     .sort({ createdAt: -1 });
 };
 
 // Pre-save middleware to generate tracking number if not provided
-shippingTrackingSchema.pre('save', function (next) {
+shippingTrackingSchema.pre("save", function (next) {
   if (this.isNew && !this.trackingNumber) {
     // Generate tracking number: ICF + timestamp + random
     const timestamp = Date.now().toString().slice(-6);
@@ -360,8 +358,8 @@ shippingTrackingSchema.pre('save', function (next) {
 });
 
 const ShippingTrackingModel = mongoose.model(
-  'ShippingTracking',
-  shippingTrackingSchema
+  "ShippingTracking",
+  shippingTrackingSchema,
 );
 
 export default ShippingTrackingModel;

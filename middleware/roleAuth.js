@@ -1,19 +1,20 @@
+//icvng-server/middleware/roleAuth.js
 export const requireRole = (allowedRoles) => {
   return (req, res, next) => {
     const user = req.user;
 
     if (!user) {
       return res.status(401).json({
-        message: 'Authentication required',
+        message: "Authentication required",
         error: true,
         success: false,
       });
     }
 
     // Check if user has required role
-    if (user.role !== 'ADMIN') {
+    if (user.role !== "ADMIN") {
       return res.status(403).json({
-        message: 'Admin access required',
+        message: "Admin access required",
         error: true,
         success: false,
       });
@@ -23,7 +24,7 @@ export const requireRole = (allowedRoles) => {
     if (allowedRoles && allowedRoles.length > 0) {
       if (!allowedRoles.includes(user.subRole)) {
         return res.status(403).json({
-          message: `Access denied. Required roles: ${allowedRoles.join(', ')}`,
+          message: `Access denied. Required roles: ${allowedRoles.join(", ")}`,
           error: true,
           success: false,
         });

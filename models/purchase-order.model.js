@@ -1,10 +1,10 @@
 // models/purchaseOrder.model.js
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const purchaseOrderItemSchema = new mongoose.Schema({
   product: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Product',
+    ref: "Product",
     required: true,
   },
   quantity: {
@@ -20,7 +20,7 @@ const purchaseOrderItemSchema = new mongoose.Schema({
   currency: {
     type: String,
     required: true,
-    default: 'USD',
+    default: "USD",
     uppercase: true,
   },
   totalPrice: {
@@ -37,7 +37,7 @@ const purchaseOrderItemSchema = new mongoose.Schema({
   },
   notes: {
     type: String,
-    default: '',
+    default: "",
   },
   receipts: [
     {
@@ -51,7 +51,7 @@ const purchaseOrderItemSchema = new mongoose.Schema({
       },
       type: {
         type: String,
-        enum: ['image', 'pdf'],
+        enum: ["image", "pdf"],
         required: true,
       },
       size: {
@@ -64,7 +64,7 @@ const purchaseOrderItemSchema = new mongoose.Schema({
       },
       uploadedBy: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+        ref: "User",
       },
     },
   ],
@@ -75,29 +75,29 @@ const statusHistorySchema = new mongoose.Schema(
     previousStatus: {
       type: String,
       enum: [
-        'DRAFT',
-        'PENDING',
-        'APPROVED',
-        'DELIVERED',
-        'COMPLETED',
-        'CANCELLED',
+        "DRAFT",
+        "PENDING",
+        "APPROVED",
+        "DELIVERED",
+        "COMPLETED",
+        "CANCELLED",
       ],
     },
     newStatus: {
       type: String,
       enum: [
-        'DRAFT',
-        'PENDING',
-        'APPROVED',
-        'DELIVERED',
-        'COMPLETED',
-        'CANCELLED',
+        "DRAFT",
+        "PENDING",
+        "APPROVED",
+        "DELIVERED",
+        "COMPLETED",
+        "CANCELLED",
       ],
       required: true,
     },
     changedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     changedAt: {
@@ -106,18 +106,18 @@ const statusHistorySchema = new mongoose.Schema(
     },
     notes: {
       type: String,
-      default: '',
+      default: "",
     },
     reason: {
       type: String,
-      default: '',
+      default: "",
     },
     userRole: {
       type: String,
-      enum: ['EMPLOYEE', 'IT', 'DIRECTOR', 'WAREHOUSE', 'ADMIN'],
+      enum: ["EMPLOYEE", "IT", "DIRECTOR", "WAREHOUSE", "ADMIN"],
     },
   },
-  { _id: true }
+  { _id: true },
 );
 
 const purchaseOrderSchema = new mongoose.Schema(
@@ -134,7 +134,7 @@ const purchaseOrderSchema = new mongoose.Schema(
     },
     supplier: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Supplier',
+      ref: "Supplier",
       required: true,
     },
     items: [purchaseOrderItemSchema],
@@ -156,20 +156,20 @@ const purchaseOrderSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: [
-        'DRAFT',
-        'PENDING',
-        'APPROVED',
+        "DRAFT",
+        "PENDING",
+        "APPROVED",
         ,
-        'DELIVERED',
-        'CANCELLED',
-        'COMPLETED',
+        "DELIVERED",
+        "CANCELLED",
+        "COMPLETED",
       ],
-      default: 'DRAFT',
+      default: "DRAFT",
     },
 
     approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
     approvedAt: {
       type: Date,
@@ -182,7 +182,7 @@ const purchaseOrderSchema = new mongoose.Schema(
     },
     cancelledBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
     cancelledAt: {
       type: Date,
@@ -220,7 +220,7 @@ const purchaseOrderSchema = new mongoose.Schema(
     currency: {
       type: String,
       required: true,
-      default: 'USD',
+      default: "USD",
       uppercase: true,
     },
 
@@ -231,7 +231,7 @@ const purchaseOrderSchema = new mongoose.Schema(
     },
     baseCurrency: {
       type: String,
-      default: 'USD',
+      default: "USD",
       uppercase: true,
     },
 
@@ -245,26 +245,26 @@ const purchaseOrderSchema = new mongoose.Schema(
     },
     trackingNumber: {
       type: String,
-      default: '',
+      default: "",
     },
 
     // Terms and conditions
     paymentTerms: {
       type: String,
-      default: 'NET_30',
+      default: "NET_30",
     },
     deliveryTerms: {
       type: String,
-      default: 'FOB',
+      default: "FOB",
     },
 
     // Logistics information
     logistics: {
       transportMode: {
         type: String,
-        enum: ['AIR', 'SEA', 'LAND', 'RAIL', 'MULTIMODAL'],
+        enum: ["AIR", "SEA", "LAND", "RAIL", "MULTIMODAL"],
         required: true,
-        default: 'SEA',
+        default: "SEA",
       },
       freightCost: {
         type: Number,
@@ -298,17 +298,17 @@ const purchaseOrderSchema = new mongoose.Schema(
     // Additional information
     notes: {
       type: String,
-      default: '',
+      default: "",
     },
     internalNotes: {
       type: String,
-      default: '',
+      default: "",
     },
 
     // Approval workflow
     approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
     approvalDate: {
       type: Date,
@@ -317,12 +317,12 @@ const purchaseOrderSchema = new mongoose.Schema(
     // User tracking
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
 
     // Quality control tracking
@@ -335,34 +335,34 @@ const purchaseOrderSchema = new mongoose.Schema(
     },
     qualityCheckBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
     qualityNotes: {
       type: String,
-      default: '',
+      default: "",
     },
     statusHistory: [statusHistorySchema],
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Generate order number
-purchaseOrderSchema.pre('save', async function (next) {
+purchaseOrderSchema.pre("save", async function (next) {
   if (!this.orderNumber) {
     const count = await this.constructor.countDocuments();
     const year = new Date().getFullYear();
-    this.orderNumber = `PO-${year}-${String(count + 1).padStart(4, '0')}`;
+    this.orderNumber = `PO-${year}-${String(count + 1).padStart(4, "0")}`;
   }
 
   if (!this.batchNumber) {
     const count = await this.constructor.countDocuments();
     const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+    const month = String(new Date().getMonth() + 1).padStart(2, "0");
     this.batchNumber = `BATCH-${year}${month}-${String(count + 1).padStart(
       4,
-      '0'
+      "0",
     )}`;
   }
 
@@ -370,11 +370,11 @@ purchaseOrderSchema.pre('save', async function (next) {
 });
 
 // Calculate totals before saving
-purchaseOrderSchema.pre('save', function (next) {
+purchaseOrderSchema.pre("save", function (next) {
   // Calculate subtotal from items
   this.subtotal = this.items.reduce(
     (total, item) => total + item.totalPrice,
-    0
+    0,
   );
 
   // Calculate total logistics cost
@@ -397,15 +397,13 @@ purchaseOrderSchema.pre('save', function (next) {
 });
 
 // Index for better performance
-purchaseOrderSchema.index({ orderNumber: 1 });
-purchaseOrderSchema.index({ batchNumber: 1 });
 purchaseOrderSchema.index({ supplier: 1 });
 purchaseOrderSchema.index({ status: 1 });
 purchaseOrderSchema.index({ orderDate: -1 });
 purchaseOrderSchema.index({ expectedDeliveryDate: 1 });
 
 // Virtual for days until delivery
-purchaseOrderSchema.virtual('daysUntilDelivery').get(function () {
+purchaseOrderSchema.virtual("daysUntilDelivery").get(function () {
   if (!this.expectedDeliveryDate) return null;
   const today = new Date();
   const deliveryDate = new Date(this.expectedDeliveryDate);
@@ -415,7 +413,7 @@ purchaseOrderSchema.virtual('daysUntilDelivery').get(function () {
 });
 
 // Virtual for order age
-purchaseOrderSchema.virtual('orderAge').get(function () {
+purchaseOrderSchema.virtual("orderAge").get(function () {
   const today = new Date();
   const orderDate = new Date(this.orderDate);
   const diffTime = today - orderDate;
@@ -424,20 +422,20 @@ purchaseOrderSchema.virtual('orderAge').get(function () {
 });
 
 // Virtual for logistics cost percentage
-purchaseOrderSchema.virtual('logisticsCostPercentage').get(function () {
+purchaseOrderSchema.virtual("logisticsCostPercentage").get(function () {
   if (!this.subtotal || this.subtotal === 0) return 0;
   return ((this.logistics?.totalLogisticsCost || 0) / this.subtotal) * 100;
 });
 
 // Virtual for total cost per unit (including logistics)
-purchaseOrderSchema.virtual('totalCostPerUnit').get(function () {
+purchaseOrderSchema.virtual("totalCostPerUnit").get(function () {
   const totalUnits = this.items.reduce((sum, item) => sum + item.quantity, 0);
   if (totalUnits === 0) return 0;
   return this.grandTotal / totalUnits;
 });
 
 // Virtual for logistics cost per unit
-purchaseOrderSchema.virtual('logisticsCostPerUnit').get(function () {
+purchaseOrderSchema.virtual("logisticsCostPerUnit").get(function () {
   const totalUnits = this.items.reduce((sum, item) => sum + item.quantity, 0);
   if (totalUnits === 0) return 0;
   return (this.logistics?.totalLogisticsCost || 0) / totalUnits;
@@ -446,9 +444,9 @@ purchaseOrderSchema.virtual('logisticsCostPerUnit').get(function () {
 // Static method to get orders by status
 purchaseOrderSchema.statics.getByStatus = function (status) {
   return this.find({ status })
-    .populate('supplier', 'name email phone')
-    .populate('items.product', 'name sku')
-    .populate('createdBy updatedBy approvedBy', 'name email')
+    .populate("supplier", "name email phone")
+    .populate("items.product", "name sku")
+    .populate("createdBy updatedBy approvedBy", "name email")
     .sort({ createdAt: -1 });
 };
 
@@ -457,12 +455,12 @@ purchaseOrderSchema.methods.updateStatus = function (status, userId) {
   this.status = status;
   this.updatedBy = userId;
 
-  if (status === 'APPROVED') {
+  if (status === "APPROVED") {
     this.approvedBy = userId;
     this.approvalDate = new Date();
   }
 
-  if (status === 'DELIVERED') {
+  if (status === "DELIVERED") {
     this.actualDeliveryDate = new Date();
   }
 
@@ -476,6 +474,6 @@ purchaseOrderSchema.methods.updateStatus = function (status, userId) {
   return this.save();
 };
 
-const PurchaseOrderModel = mongoose.model('PurchaseOrder', purchaseOrderSchema);
+const PurchaseOrderModel = mongoose.model("PurchaseOrder", purchaseOrderSchema);
 
 export default PurchaseOrderModel;

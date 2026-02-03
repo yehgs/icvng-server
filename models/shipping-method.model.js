@@ -1,27 +1,27 @@
 // models/shippingMethod.model.js - FIXED VERSION with enhanced assignment logic
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const shippingMethodSchema = new mongoose.Schema(
   {
     name: {
       type: String,
-      required: [true, 'Shipping method name is required'],
+      required: [true, "Shipping method name is required"],
       trim: true,
     },
     code: {
       type: String,
-      required: [true, 'Shipping method code is required'],
+      required: [true, "Shipping method code is required"],
       unique: true,
       uppercase: true,
       trim: true,
     },
     description: {
       type: String,
-      default: '',
+      default: "",
     },
     type: {
       type: String,
-      enum: ['flat_rate', 'table_shipping', 'pickup'],
+      enum: ["flat_rate", "table_shipping", "pickup"],
       required: true,
     },
     isActive: {
@@ -43,7 +43,7 @@ const shippingMethodSchema = new mongoose.Schema(
         {
           zone: {
             type: mongoose.Schema.ObjectId,
-            ref: 'ShippingZone',
+            ref: "ShippingZone",
             required: true,
           },
           cost: {
@@ -62,19 +62,19 @@ const shippingMethodSchema = new mongoose.Schema(
       },
       assignment: {
         type: String,
-        enum: ['all_products', 'categories', 'specific_products'],
-        default: 'all_products',
+        enum: ["all_products", "categories", "specific_products"],
+        default: "all_products",
       },
       categories: [
         {
           type: mongoose.Schema.ObjectId,
-          ref: 'Category',
+          ref: "Category",
         },
       ],
       products: [
         {
           type: mongoose.Schema.ObjectId,
-          ref: 'Product',
+          ref: "Product",
         },
       ],
       freeShipping: {
@@ -95,26 +95,26 @@ const shippingMethodSchema = new mongoose.Schema(
     tableShipping: {
       assignment: {
         type: String,
-        enum: ['all_products', 'categories', 'specific_products'],
-        default: 'all_products',
+        enum: ["all_products", "categories", "specific_products"],
+        default: "all_products",
       },
       categories: [
         {
           type: mongoose.Schema.ObjectId,
-          ref: 'Category',
+          ref: "Category",
         },
       ],
       products: [
         {
           type: mongoose.Schema.ObjectId,
-          ref: 'Product',
+          ref: "Product",
         },
       ],
       zoneRates: [
         {
           zone: {
             type: mongoose.Schema.ObjectId,
-            ref: 'ShippingZone',
+            ref: "ShippingZone",
             required: true,
           },
           weightRanges: [
@@ -142,7 +142,7 @@ const shippingMethodSchema = new mongoose.Schema(
         {
           zone: {
             type: mongoose.Schema.ObjectId,
-            ref: 'ShippingZone',
+            ref: "ShippingZone",
             required: true,
           },
           locations: [
@@ -195,19 +195,19 @@ const shippingMethodSchema = new mongoose.Schema(
       },
       assignment: {
         type: String,
-        enum: ['all_products', 'categories', 'specific_products'],
-        default: 'all_products',
+        enum: ["all_products", "categories", "specific_products"],
+        default: "all_products",
       },
       categories: [
         {
           type: mongoose.Schema.ObjectId,
-          ref: 'Category',
+          ref: "Category",
         },
       ],
       products: [
         {
           type: mongoose.Schema.ObjectId,
-          ref: 'Product',
+          ref: "Product",
         },
       ],
     },
@@ -226,22 +226,21 @@ const shippingMethodSchema = new mongoose.Schema(
 
     createdBy: {
       type: mongoose.Schema.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     updatedBy: {
       type: mongoose.Schema.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Indexes
-shippingMethodSchema.index({ code: 1 });
 shippingMethodSchema.index({ type: 1 });
 shippingMethodSchema.index({ isActive: 1 });
 shippingMethodSchema.index({ sortOrder: 1 });
@@ -252,9 +251,9 @@ shippingMethodSchema.methods.isCurrentlyValid = function () {
 
   // Get the correct config based on type
   const configKeyMap = {
-    flat_rate: 'flatRate',
-    table_shipping: 'tableShipping',
-    pickup: 'pickup',
+    flat_rate: "flatRate",
+    table_shipping: "tableShipping",
+    pickup: "pickup",
   };
 
   const configKey = configKeyMap[this.type];
@@ -276,25 +275,25 @@ shippingMethodSchema.methods.isCurrentlyValid = function () {
 // Get assignment display text
 shippingMethodSchema.methods.getAssignmentDisplay = function () {
   const configKeyMap = {
-    flat_rate: 'flatRate',
-    table_shipping: 'tableShipping',
-    pickup: 'pickup',
+    flat_rate: "flatRate",
+    table_shipping: "tableShipping",
+    pickup: "pickup",
   };
 
   const configKey = configKeyMap[this.type];
   const config = this[configKey];
 
-  if (!config) return 'All Products';
+  if (!config) return "All Products";
 
   switch (config.assignment) {
-    case 'all_products':
-      return 'All Products';
-    case 'categories':
+    case "all_products":
+      return "All Products";
+    case "categories":
       return `Categories (${config.categories?.length || 0})`;
-    case 'specific_products':
+    case "specific_products":
       return `Products (${config.products?.length || 0})`;
     default:
-      return 'All Products';
+      return "All Products";
   }
 };
 
@@ -307,9 +306,9 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
 }) {
   // CRITICAL FIX: Map type to correct config key
   const configKeyMap = {
-    flat_rate: 'flatRate',
-    table_shipping: 'tableShipping',
-    pickup: 'pickup',
+    flat_rate: "flatRate",
+    table_shipping: "tableShipping",
+    pickup: "pickup",
   };
 
   const configKey = configKeyMap[this.type] || this.type;
@@ -317,21 +316,21 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
 
   console.log(`💰 calculateShippingCost called for ${this.name}`);
   console.log(
-    `Type: ${this.type}, Config Key: ${configKey}, Has Config: ${!!config}`
+    `Type: ${this.type}, Config Key: ${configKey}, Has Config: ${!!config}`,
   );
 
   if (!config) {
-    console.log('❌ No config found!');
+    console.log("❌ No config found!");
     return {
       eligible: false,
       cost: 0,
-      reason: 'Invalid method configuration',
+      reason: "Invalid method configuration",
     };
   }
 
   try {
     // PICKUP METHOD
-    if (this.type === 'pickup') {
+    if (this.type === "pickup") {
       const hasDefaultLocations = config.defaultLocations?.length > 0;
       const hasZoneLocations = config.zoneLocations?.length > 0;
 
@@ -339,19 +338,19 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
         return {
           eligible: true,
           cost: config.cost || 0,
-          reason: 'Free pickup available',
+          reason: "Free pickup available",
         };
       }
 
       return {
         eligible: false,
         cost: 0,
-        reason: 'No pickup locations available',
+        reason: "No pickup locations available",
       };
     }
 
     // FLAT_RATE METHOD
-    if (this.type === 'flat_rate') {
+    if (this.type === "flat_rate") {
       let baseCost = config.defaultCost || config.cost || 0;
 
       console.log(`💵 Flat rate base cost: ${baseCost}`);
@@ -359,7 +358,7 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
       // Check for zone-specific rate
       if (zone && config.zoneRates?.length > 0) {
         const zoneRate = config.zoneRates.find(
-          (zr) => zr.zone && zr.zone.toString() === zone.toString()
+          (zr) => zr.zone && zr.zone.toString() === zone.toString(),
         );
         if (zoneRate) {
           baseCost = zoneRate.cost;
@@ -383,25 +382,25 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
         eligible: true,
         cost: baseCost,
         reason:
-          baseCost === 0 ? 'Free flat rate shipping' : 'Flat rate shipping',
+          baseCost === 0 ? "Free flat rate shipping" : "Flat rate shipping",
       };
     }
 
     // TABLE_SHIPPING METHOD
-    if (this.type === 'table_shipping') {
+    if (this.type === "table_shipping") {
       console.log(`📊 Table shipping - checking zone: ${zone}`);
 
       if (!zone) {
         return {
           eligible: false,
           cost: 0,
-          reason: 'Zone required for table shipping',
+          reason: "Zone required for table shipping",
         };
       }
 
       // Find zone rate configuration
       const zoneRate = config.zoneRates?.find(
-        (zr) => zr.zone && zr.zone.toString() === zone.toString()
+        (zr) => zr.zone && zr.zone.toString() === zone.toString(),
       );
 
       console.log(`Zone rate found: ${!!zoneRate}`);
@@ -410,14 +409,14 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
         return {
           eligible: false,
           cost: 0,
-          reason: 'No shipping rates configured for this zone',
+          reason: "No shipping rates configured for this zone",
         };
       }
 
       // Find matching weight range
       console.log(`Looking for weight range for ${weight}kg`);
       const weightRange = zoneRate.weightRanges.find(
-        (wr) => weight >= wr.minWeight && weight <= wr.maxWeight
+        (wr) => weight >= wr.minWeight && weight <= wr.maxWeight,
       );
 
       if (!weightRange) {
@@ -430,7 +429,7 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
       }
 
       console.log(
-        `✅ Found weight range: ${weightRange.minWeight}-${weightRange.maxWeight}kg = ${weightRange.shippingCost}`
+        `✅ Found weight range: ${weightRange.minWeight}-${weightRange.maxWeight}kg = ${weightRange.shippingCost}`,
       );
 
       return {
@@ -443,14 +442,14 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
     return {
       eligible: false,
       cost: 0,
-      reason: 'Unknown shipping method type',
+      reason: "Unknown shipping method type",
     };
   } catch (error) {
-    console.error('Error calculating shipping cost:', error);
+    console.error("Error calculating shipping cost:", error);
     return {
       eligible: false,
       cost: 0,
-      reason: 'Error calculating shipping cost',
+      reason: "Error calculating shipping cost",
     };
   }
 };
@@ -458,9 +457,9 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
 // Enhanced method to check if method applies to specific products
 shippingMethodSchema.methods.appliesToProducts = function (productIds) {
   const configKeyMap = {
-    flat_rate: 'flatRate',
-    table_shipping: 'tableShipping',
-    pickup: 'pickup',
+    flat_rate: "flatRate",
+    table_shipping: "tableShipping",
+    pickup: "pickup",
   };
 
   const configKey = configKeyMap[this.type];
@@ -471,7 +470,7 @@ shippingMethodSchema.methods.appliesToProducts = function (productIds) {
   }
 
   if (
-    config.assignment === 'all_products' ||
+    config.assignment === "all_products" ||
     (!config.assignment &&
       !config.categories?.length &&
       !config.products?.length)
@@ -479,15 +478,15 @@ shippingMethodSchema.methods.appliesToProducts = function (productIds) {
     return true;
   }
 
-  if (config.assignment === 'specific_products') {
+  if (config.assignment === "specific_products") {
     if (!config.products || config.products.length === 0) {
       return true;
     }
 
     return productIds.some((id) =>
       config.products.some(
-        (productId) => productId.toString() === id.toString()
-      )
+        (productId) => productId.toString() === id.toString(),
+      ),
     );
   }
 
@@ -497,9 +496,9 @@ shippingMethodSchema.methods.appliesToProducts = function (productIds) {
 // Enhanced method to check if method applies to categories
 shippingMethodSchema.methods.appliesToCategories = function (categoryIds) {
   const configKeyMap = {
-    flat_rate: 'flatRate',
-    table_shipping: 'tableShipping',
-    pickup: 'pickup',
+    flat_rate: "flatRate",
+    table_shipping: "tableShipping",
+    pickup: "pickup",
   };
 
   const configKey = configKeyMap[this.type];
@@ -510,7 +509,7 @@ shippingMethodSchema.methods.appliesToCategories = function (categoryIds) {
   }
 
   if (
-    config.assignment === 'all_products' ||
+    config.assignment === "all_products" ||
     (!config.assignment &&
       !config.categories?.length &&
       !config.products?.length)
@@ -518,12 +517,12 @@ shippingMethodSchema.methods.appliesToCategories = function (categoryIds) {
     return true;
   }
 
-  if (config.assignment === 'categories') {
+  if (config.assignment === "categories") {
     if (!config.categories || config.categories.length === 0) {
       return true;
     }
     return categoryIds.some((id) =>
-      config.categories.some((catId) => catId.toString() === id.toString())
+      config.categories.some((catId) => catId.toString() === id.toString()),
     );
   }
 
@@ -532,7 +531,7 @@ shippingMethodSchema.methods.appliesToCategories = function (categoryIds) {
 
 // Get pickup locations for a specific zone
 shippingMethodSchema.methods.getPickupLocationsForZone = function (zoneId) {
-  if (this.type !== 'pickup') {
+  if (this.type !== "pickup") {
     return [];
   }
 
@@ -545,7 +544,7 @@ shippingMethodSchema.methods.getPickupLocationsForZone = function (zoneId) {
 
   if (zoneId && config.zoneLocations?.length > 0) {
     const zoneLocation = config.zoneLocations.find(
-      (zl) => zl.zone && zl.zone.toString() === zoneId.toString()
+      (zl) => zl.zone && zl.zone.toString() === zoneId.toString(),
     );
 
     if (zoneLocation?.locations?.length > 0) {
@@ -563,9 +562,9 @@ shippingMethodSchema.methods.getPickupLocationsForZone = function (zoneId) {
 // Enhanced method to check if method is available in a specific zone
 shippingMethodSchema.methods.isAvailableInZone = function (zoneId) {
   const configKeyMap = {
-    flat_rate: 'flatRate',
-    table_shipping: 'tableShipping',
-    pickup: 'pickup',
+    flat_rate: "flatRate",
+    table_shipping: "tableShipping",
+    pickup: "pickup",
   };
 
   const configKey = configKeyMap[this.type] || this.type;
@@ -575,7 +574,7 @@ shippingMethodSchema.methods.isAvailableInZone = function (zoneId) {
     return false;
   }
 
-  if (this.type === 'pickup') {
+  if (this.type === "pickup") {
     const hasDefaultLocations = config.defaultLocations?.length > 0;
     const hasZoneLocations = config.zoneLocations?.length > 0;
 
@@ -585,7 +584,7 @@ shippingMethodSchema.methods.isAvailableInZone = function (zoneId) {
 
     if (hasZoneLocations && zoneId) {
       const zoneLocation = config.zoneLocations.find(
-        (zl) => zl.zone && zl.zone.toString() === zoneId.toString()
+        (zl) => zl.zone && zl.zone.toString() === zoneId.toString(),
       );
       return zoneLocation && zoneLocation.locations?.length > 0;
     }
@@ -593,11 +592,11 @@ shippingMethodSchema.methods.isAvailableInZone = function (zoneId) {
     return false;
   }
 
-  if (this.type === 'flat_rate') {
+  if (this.type === "flat_rate") {
     if (!zoneId) return false;
 
     const hasZoneRate = config.zoneRates?.some(
-      (zr) => zr.zone && zr.zone.toString() === zoneId.toString()
+      (zr) => zr.zone && zr.zone.toString() === zoneId.toString(),
     );
 
     const hasDefaultCost =
@@ -606,11 +605,11 @@ shippingMethodSchema.methods.isAvailableInZone = function (zoneId) {
     return hasZoneRate || hasDefaultCost;
   }
 
-  if (this.type === 'table_shipping') {
+  if (this.type === "table_shipping") {
     if (!zoneId) return false;
 
     return config.zoneRates?.some(
-      (zr) => zr.zone && zr.zone.toString() === zoneId.toString()
+      (zr) => zr.zone && zr.zone.toString() === zoneId.toString(),
     );
   }
 
@@ -618,8 +617,8 @@ shippingMethodSchema.methods.isAvailableInZone = function (zoneId) {
 };
 
 const ShippingMethodModel = mongoose.model(
-  'ShippingMethod',
-  shippingMethodSchema
+  "ShippingMethod",
+  shippingMethodSchema,
 );
 
 export default ShippingMethodModel;

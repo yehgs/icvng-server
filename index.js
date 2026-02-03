@@ -39,6 +39,10 @@ import directPricingRouter from "./route/direct-pricing.route.js";
 import customerRouter from "./route/customer.route.js";
 import formEmailRouter from "./route/form-email.route.js";
 import adminOrderRouter from "./route/admin-order.route.js";
+import orderRequestRouter from "./route/order-request.route.js";
+import couponRouter from "./route/coupon.route.js";
+import orderRequestAuthRouter from "./route/order-request-auth.route.js";
+import invoiceRouter from "./route/invoice.route.js";
 
 dotenv.config();
 
@@ -170,6 +174,10 @@ app.use("/api/direct-pricing", directPricingRouter);
 app.use("/api/admin/customers", customerRouter);
 app.use("/api/send-email", formEmailRouter);
 app.use("/api/admin/orders", adminOrderRouter);
+app.use("/api/order-requests", orderRequestRouter);
+app.use("/api/coupons", couponRouter);
+app.use("/api/btb-auth", orderRequestAuthRouter);
+app.use("/api/invoices", invoiceRouter);
 
 // ============================================
 // Error handling middleware

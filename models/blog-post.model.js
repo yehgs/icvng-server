@@ -1,13 +1,13 @@
 // models/blogPost.model.js
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const blogPostSchema = new mongoose.Schema(
   {
     title: {
       type: String,
-      required: [true, 'Title is required'],
+      required: [true, "Title is required"],
       trim: true,
-      maxLength: [200, 'Title cannot exceed 200 characters'],
+      maxLength: [200, "Title cannot exceed 200 characters"],
     },
     slug: {
       type: String,
@@ -18,43 +18,43 @@ const blogPostSchema = new mongoose.Schema(
     },
     excerpt: {
       type: String,
-      required: [true, 'Excerpt is required'],
+      required: [true, "Excerpt is required"],
       trim: true,
-      maxLength: [300, 'Excerpt cannot exceed 300 characters'],
+      maxLength: [300, "Excerpt cannot exceed 300 characters"],
     },
     content: {
       type: String,
-      required: [true, 'Content is required'],
+      required: [true, "Content is required"],
     },
     featuredImage: {
       type: String,
-      required: [true, 'Featured image is required'],
+      required: [true, "Featured image is required"],
     },
     imageAlt: {
       type: String,
       trim: true,
-      maxLength: [100, 'Image alt text cannot exceed 100 characters'],
+      maxLength: [100, "Image alt text cannot exceed 100 characters"],
     },
     category: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'BlogCategory',
-      required: [true, 'Category is required'],
+      ref: "BlogCategory",
+      required: [true, "Category is required"],
     },
     tags: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'BlogTag',
+        ref: "BlogTag",
       },
     ],
     author: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: [true, 'Author is required'],
+      ref: "User",
+      required: [true, "Author is required"],
     },
     status: {
       type: String,
-      enum: ['DRAFT', 'PUBLISHED', 'ARCHIVED'],
-      default: 'DRAFT',
+      enum: ["DRAFT", "PUBLISHED", "ARCHIVED"],
+      default: "DRAFT",
     },
     publishedAt: {
       type: Date,
@@ -79,12 +79,12 @@ const blogPostSchema = new mongoose.Schema(
     seoTitle: {
       type: String,
       trim: true,
-      maxLength: [60, 'SEO title cannot exceed 60 characters'],
+      maxLength: [60, "SEO title cannot exceed 60 characters"],
     },
     seoDescription: {
       type: String,
       trim: true,
-      maxLength: [160, 'SEO description cannot exceed 160 characters'],
+      maxLength: [160, "SEO description cannot exceed 160 characters"],
     },
     seoKeywords: {
       type: String,
@@ -97,8 +97,8 @@ const blogPostSchema = new mongoose.Schema(
     // Schema.org structured data
     schemaType: {
       type: String,
-      enum: ['Article', 'BlogPosting', 'NewsArticle'],
-      default: 'BlogPosting',
+      enum: ["Article", "BlogPosting", "NewsArticle"],
+      default: "BlogPosting",
     },
     // Social Media
     socialImage: {
@@ -107,47 +107,47 @@ const blogPostSchema = new mongoose.Schema(
     socialTitle: {
       type: String,
       trim: true,
-      maxLength: [100, 'Social title cannot exceed 100 characters'],
+      maxLength: [100, "Social title cannot exceed 100 characters"],
     },
     socialDescription: {
       type: String,
       trim: true,
-      maxLength: [200, 'Social description cannot exceed 200 characters'],
+      maxLength: [200, "Social description cannot exceed 200 characters"],
     },
     // Related Products (for coffee origin posts)
     relatedProducts: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Product',
+        ref: "Product",
       },
     ],
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Create slug from title before saving
-blogPostSchema.pre('save', function (next) {
-  if (this.isModified('title') || this.isNew) {
+blogPostSchema.pre("save", function (next) {
+  if (this.isModified("title") || this.isNew) {
     this.slug = this.title
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '');
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
   }
 
   // Set published date when status changes to PUBLISHED
   if (
-    this.isModified('status') &&
-    this.status === 'PUBLISHED' &&
+    this.isModified("status") &&
+    this.status === "PUBLISHED" &&
     !this.publishedAt
   ) {
     this.publishedAt = new Date();
   }
 
   // Calculate read time (average 200 words per minute)
-  if (this.isModified('content')) {
-    const wordCount = this.content.replace(/<[^>]*>/g, '').split(/\s+/).length;
+  if (this.isModified("content")) {
+    const wordCount = this.content.replace(/<[^>]*>/g, "").split(/\s+/).length;
     this.readTime = Math.ceil(wordCount / 200);
   }
 
@@ -155,16 +155,15 @@ blogPostSchema.pre('save', function (next) {
 });
 
 // Index for SEO and performance
-blogPostSchema.index({ slug: 1 });
 blogPostSchema.index({ category: 1, status: 1 });
 blogPostSchema.index({ tags: 1, status: 1 });
 blogPostSchema.index({ status: 1, publishedAt: -1 });
 blogPostSchema.index({ author: 1, status: 1 });
 
 // Update category and tag post counts after save
-blogPostSchema.post('save', async function () {
+blogPostSchema.post("save", async function () {
   if (this.category) {
-    const BlogCategory = mongoose.model('BlogCategory');
+    const BlogCategory = mongoose.model("BlogCategory");
     const category = await BlogCategory.findById(this.category);
     if (category) {
       await category.updatePostCount();
@@ -172,7 +171,7 @@ blogPostSchema.post('save', async function () {
   }
 
   if (this.tags && this.tags.length > 0) {
-    const BlogTag = mongoose.model('BlogTag');
+    const BlogTag = mongoose.model("BlogTag");
     for (const tagId of this.tags) {
       const tag = await BlogTag.findById(tagId);
       if (tag) {
@@ -182,6 +181,6 @@ blogPostSchema.post('save', async function () {
   }
 });
 
-const BlogPostModel = mongoose.model('BlogPost', blogPostSchema);
+const BlogPostModel = mongoose.model("BlogPost", blogPostSchema);
 
 export default BlogPostModel;

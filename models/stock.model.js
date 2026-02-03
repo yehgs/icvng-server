@@ -1,5 +1,5 @@
 // models/stock.model.js
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const stockSchema = new mongoose.Schema(
   {
@@ -10,17 +10,17 @@ const stockSchema = new mongoose.Schema(
     },
     product: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Product',
+      ref: "Product",
       required: true,
     },
     purchaseOrder: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'PurchaseOrder',
+      ref: "PurchaseOrder",
       required: true,
     },
     supplier: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Supplier',
+      ref: "Supplier",
       required: true,
     },
 
@@ -49,19 +49,19 @@ const stockSchema = new mongoose.Schema(
     // Quality control
     qualityStatus: {
       type: String,
-      enum: ['PENDING', 'PASSED', 'FAILED', 'REFURBISHED'],
-      default: 'PENDING',
+      enum: ["PENDING", "PASSED", "FAILED", "REFURBISHED"],
+      default: "PENDING",
     },
     qualityCheckDate: {
       type: Date,
     },
     qualityCheckBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
     qualityNotes: {
       type: String,
-      default: '',
+      default: "",
     },
 
     // Quantity breakdown by quality
@@ -97,19 +97,19 @@ const stockSchema = new mongoose.Schema(
     warehouseLocation: {
       zone: {
         type: String,
-        default: 'A',
+        default: "A",
       },
       aisle: {
         type: String,
-        default: '01',
+        default: "01",
       },
       shelf: {
         type: String,
-        default: '01',
+        default: "01",
       },
       bin: {
         type: String,
-        default: '01',
+        default: "01",
       },
     },
 
@@ -117,16 +117,16 @@ const stockSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: [
-        'RECEIVED',
-        'IN_QUALITY_CHECK',
-        'AVAILABLE',
-        'PARTIALLY_ALLOCATED',
-        'ALLOCATED',
-        'EXPIRED',
-        'DAMAGED',
-        'DISPOSED',
+        "RECEIVED",
+        "IN_QUALITY_CHECK",
+        "AVAILABLE",
+        "PARTIALLY_ALLOCATED",
+        "ALLOCATED",
+        "EXPIRED",
+        "DAMAGED",
+        "DISPOSED",
       ],
-      default: 'RECEIVED',
+      default: "RECEIVED",
     },
 
     // Cost information
@@ -142,7 +142,7 @@ const stockSchema = new mongoose.Schema(
     },
     currency: {
       type: String,
-      default: 'USD',
+      default: "USD",
       uppercase: true,
     },
 
@@ -171,20 +171,20 @@ const stockSchema = new mongoose.Schema(
     // Notes and tracking
     notes: {
       type: String,
-      default: '',
+      default: "",
     },
     movementHistory: [
       {
         type: {
           type: String,
           enum: [
-            'RECEIVED',
-            'QUALITY_CHECK',
-            'ALLOCATED',
-            'MOVED',
-            'ADJUSTED',
-            'EXPIRED',
-            'DAMAGED',
+            "RECEIVED",
+            "QUALITY_CHECK",
+            "ALLOCATED",
+            "MOVED",
+            "ADJUSTED",
+            "EXPIRED",
+            "DAMAGED",
           ],
           required: true,
         },
@@ -194,15 +194,15 @@ const stockSchema = new mongoose.Schema(
         },
         fromLocation: {
           type: String,
-          default: '',
+          default: "",
         },
         toLocation: {
           type: String,
-          default: '',
+          default: "",
         },
         reason: {
           type: String,
-          default: '',
+          default: "",
         },
         date: {
           type: Date,
@@ -210,11 +210,11 @@ const stockSchema = new mongoose.Schema(
         },
         performedBy: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
+          ref: "User",
         },
         notes: {
           type: String,
-          default: '',
+          default: "",
         },
       },
     ],
@@ -222,29 +222,29 @@ const stockSchema = new mongoose.Schema(
     // User tracking
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Generate batch number if not provided
-stockSchema.pre('save', async function (next) {
+stockSchema.pre("save", async function (next) {
   if (!this.batchNumber) {
     const count = await this.constructor.countDocuments();
     const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
-    const day = String(new Date().getDate()).padStart(2, '0');
+    const month = String(new Date().getMonth() + 1).padStart(2, "0");
+    const day = String(new Date().getDate()).padStart(2, "0");
     this.batchNumber = `SB-${year}${month}${day}-${String(count + 1).padStart(
       4,
-      '0'
+      "0",
     )}`;
   }
 
@@ -260,13 +260,13 @@ stockSchema.pre('save', async function (next) {
 });
 
 // Virtual for expiry status
-stockSchema.virtual('isExpired').get(function () {
+stockSchema.virtual("isExpired").get(function () {
   if (!this.expiryDate) return false;
   return new Date() > this.expiryDate;
 });
 
 // Virtual for days until expiry
-stockSchema.virtual('daysUntilExpiry').get(function () {
+stockSchema.virtual("daysUntilExpiry").get(function () {
   if (!this.expiryDate) return null;
   const today = new Date();
   const expiryDate = new Date(this.expiryDate);
@@ -276,13 +276,12 @@ stockSchema.virtual('daysUntilExpiry').get(function () {
 });
 
 // Virtual for location string
-stockSchema.virtual('locationString').get(function () {
+stockSchema.virtual("locationString").get(function () {
   const loc = this.warehouseLocation;
   return `${loc.zone}-${loc.aisle}-${loc.shelf}-${loc.bin}`;
 });
 
 // Index for better performance
-stockSchema.index({ batchNumber: 1 });
 stockSchema.index({ product: 1 });
 stockSchema.index({ purchaseOrder: 1 });
 stockSchema.index({ supplier: 1 });
@@ -298,11 +297,11 @@ stockSchema.statics.getExpiringBatches = function (days = 30) {
 
   return this.find({
     expiryDate: { $lte: futureDate, $gte: new Date() },
-    status: { $in: ['AVAILABLE', 'PARTIALLY_ALLOCATED'] },
+    status: { $in: ["AVAILABLE", "PARTIALLY_ALLOCATED"] },
     currentQuantity: { $gt: 0 },
   })
-    .populate('product', 'name sku')
-    .populate('supplier', 'name');
+    .populate("product", "name sku")
+    .populate("supplier", "name");
 };
 
 // Instance method to add movement history
@@ -315,14 +314,14 @@ stockSchema.methods.addMovement = function (movementData) {
 };
 
 // Instance method to allocate stock
-stockSchema.methods.allocateStock = function (quantity, userId, reason = '') {
+stockSchema.methods.allocateStock = function (quantity, userId, reason = "") {
   if (quantity > this.availableQuantity) {
-    throw new Error('Insufficient available stock');
+    throw new Error("Insufficient available stock");
   }
 
   this.reservedQuantity += quantity;
   this.addMovement({
-    type: 'ALLOCATED',
+    type: "ALLOCATED",
     quantity,
     reason,
     performedBy: userId,
@@ -330,14 +329,14 @@ stockSchema.methods.allocateStock = function (quantity, userId, reason = '') {
 
   // Update status based on allocation
   if (this.reservedQuantity >= this.currentQuantity) {
-    this.status = 'ALLOCATED';
+    this.status = "ALLOCATED";
   } else if (this.reservedQuantity > 0) {
-    this.status = 'PARTIALLY_ALLOCATED';
+    this.status = "PARTIALLY_ALLOCATED";
   }
 
   return this.save();
 };
 
-const StockModel = mongoose.model('Stock', stockSchema);
+const StockModel = mongoose.model("Stock", stockSchema);
 
 export default StockModel;

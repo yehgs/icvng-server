@@ -286,7 +286,7 @@ export const getCategoryStructureController = async (request, response) => {
               ...subcategory,
               brands: subcategoryBrands || [],
             };
-          })
+          }),
         );
 
         // Get brands directly related to this category
@@ -319,7 +319,7 @@ export const getCategoryStructureController = async (request, response) => {
           subcategories: enrichedSubcategories || [],
           brands: categoryBrands || [],
         };
-      })
+      }),
     );
 
     return response.json({
@@ -365,7 +365,7 @@ export const getProductControllerAdmin = async (request, response) => {
         .skip(skip)
         .limit(limit)
         .populate(
-          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy"
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy",
         ),
       ProductModel.countDocuments(query),
     ]);
@@ -488,7 +488,7 @@ export const getProductDetails = async (request, response) => {
     }
 
     const product = await ProductModel.findOne({ _id: productId }).populate(
-      "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
+      "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
     );
 
     if (!product) {
@@ -573,7 +573,7 @@ export const updateProductDetails = async (request, response) => {
       const generatedSKU = await generateSKU(
         productName,
         productCategory,
-        productBrand
+        productBrand,
       );
       updateData.sku = generatedSKU;
     } else if (sku && sku !== existingProduct.sku) {
@@ -595,9 +595,9 @@ export const updateProductDetails = async (request, response) => {
     const updateProduct = await ProductModel.findByIdAndUpdate(
       _id,
       updateData,
-      { new: true }
+      { new: true },
     ).populate(
-      "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
+      "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
     );
 
     return response.json({
@@ -795,7 +795,7 @@ export const searchProductAdmin = async (request, response) => {
         .skip(skip)
         .limit(limit)
         .populate(
-          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
         ),
       ProductModel.countDocuments(query),
     ]);
@@ -843,7 +843,7 @@ export const getProductByCategory = async (request, response) => {
         .skip(skip)
         .limit(pageSize)
         .populate(
-          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
         ),
       ProductModel.countDocuments({ category: categoryId }),
     ]);
@@ -893,7 +893,7 @@ export const getProductByCategoryAndSubCategory = async (request, response) => {
         .skip(skip)
         .limit(pageSize)
         .populate(
-          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
         ),
       ProductModel.countDocuments({
         category: categoryId,
@@ -943,7 +943,7 @@ export const getProductByBrand = async (request, response) => {
         .skip(skip)
         .limit(pageSize)
         .populate(
-          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
         ),
       ProductModel.countDocuments({ brand: brandId }),
     ]);
@@ -984,7 +984,7 @@ export const getProductsByAvailability = async (request, response) => {
         .skip(skip)
         .limit(pageSize)
         .populate(
-          "category subCategory brand tags attributes compatibleSystem producer"
+          "category subCategory brand tags attributes compatibleSystem producer",
         ),
       ProductModel.countDocuments(query),
     ]);
@@ -1193,7 +1193,7 @@ export const getProductBySKU = async (request, response) => {
     }
 
     const product = await ProductModel.findOne({ sku }).populate(
-      "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts"
+      "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
     );
 
     if (!product) {
@@ -1220,6 +1220,8 @@ export const getProductBySKU = async (request, response) => {
 };
 
 // Search product with comprehensive filters
+// Fixed searchProduct function - place this in your product.controller.js
+
 export const searchProduct = async (request, response) => {
   try {
     let {
@@ -1246,21 +1248,23 @@ export const searchProduct = async (request, response) => {
       limit = 10;
     }
 
-    const query = [
-      {
-        $match: {
-          publish: "PUBLISHED",
-        },
-      },
-    ];
+    const query = [];
 
-    // Search by text
+    // ✅ CRITICAL: $match with $text MUST be the first stage
     if (search) {
       query.push({
         $match: {
           $text: {
             $search: search,
           },
+          publish: "PUBLISHED",
+        },
+      });
+    } else {
+      // If no search, just filter by publish status first
+      query.push({
+        $match: {
+          publish: "PUBLISHED",
         },
       });
     }
@@ -1444,7 +1448,7 @@ export const searchProduct = async (request, response) => {
           foreignField: "_id",
           as: "producer",
         },
-      }
+      },
     );
 
     // Unwind arrays
@@ -1466,7 +1470,7 @@ export const searchProduct = async (request, response) => {
           path: "$producer",
           preserveNullAndEmptyArrays: true,
         },
-      }
+      },
     );
 
     // Sorting
@@ -1509,6 +1513,7 @@ export const searchProduct = async (request, response) => {
       limit: Number(limit),
     });
   } catch (error) {
+    console.error("Search product error:", error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
@@ -1594,7 +1599,7 @@ export const getFeaturedProducts = async (request, response) => {
           foreignField: "_id",
           as: "producer",
         },
-      }
+      },
     );
 
     query.push(
@@ -1615,7 +1620,7 @@ export const getFeaturedProducts = async (request, response) => {
           path: "$producer",
           preserveNullAndEmptyArrays: true,
         },
-      }
+      },
     );
 
     query.push({ $sort: { createdAt: -1 } });
@@ -1724,7 +1729,7 @@ export const getPopularProducts = async (request, response) => {
           foreignField: "_id",
           as: "producer",
         },
-      }
+      },
     );
 
     query.push(
@@ -1745,7 +1750,7 @@ export const getPopularProducts = async (request, response) => {
           path: "$producer",
           preserveNullAndEmptyArrays: true,
         },
-      }
+      },
     );
 
     query.push({ $sort: { averageRating: -1, createdAt: -1 } });
