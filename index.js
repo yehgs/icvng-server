@@ -69,6 +69,7 @@ app.use(
         process.env.FRONTEND_URL2,
         process.env.FRONTEND_URL3,
         process.env.FRONTEND_URL4,
+        process.env.REQUEST_FRONTEND_URL,
         process.env.ADMIN_FRONTEND_URL1,
         process.env.ADMIN_FRONTEND_URL2,
       ];

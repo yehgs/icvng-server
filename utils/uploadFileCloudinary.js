@@ -33,7 +33,7 @@ const uploadFileCloudinary = async (file) => {
             return reject(error);
           }
           return resolve(uploadResult);
-        }
+        },
       )
       .end(buffer);
   });
