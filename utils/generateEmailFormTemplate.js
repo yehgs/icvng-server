@@ -1,3 +1,5 @@
+// icvng-server/utils/generateEmailFormTemplate.js
+
 // Generate HTML email template
 export function generateEmailHTML(data) {
   const {
@@ -14,10 +16,10 @@ export function generateEmailHTML(data) {
     productCategories,
   } = data;
 
-  const isPartner = formType === 'partner';
+  const isPartner = formType === "partner";
   const submissionType = isPartner
-    ? 'PARTNERSHIP APPLICATION'
-    : 'CONTACT INQUIRY';
+    ? "PARTNERSHIP APPLICATION"
+    : "CONTACT INQUIRY";
 
   return `
     <!DOCTYPE html>
@@ -43,7 +45,7 @@ export function generateEmailHTML(data) {
                 box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             }
             .header {
-                background: linear-gradient(135deg, #92400e 0%, #d97706 100%);
+                background: linear-gradient(135deg, #15803d 0%, #16a34a 100%);
                 color: white;
                 padding: 30px;
                 text-align: center;
@@ -53,8 +55,8 @@ export function generateEmailHTML(data) {
                 font-size: 24px;
             }
             .submission-type {
-                background: #fef3c7;
-                color: #92400e;
+                background: #dcfce7;
+                color: #15803d;
                 padding: 8px 16px;
                 border-radius: 20px;
                 display: inline-block;
@@ -69,7 +71,7 @@ export function generateEmailHTML(data) {
             }
             .info-label {
                 font-weight: 600;
-                color: #92400e;
+                color: #15803d;
                 font-size: 13px;
                 text-transform: uppercase;
                 margin-bottom: 5px;
@@ -79,7 +81,7 @@ export function generateEmailHTML(data) {
                 font-size: 15px;
                 padding: 10px 15px;
                 background: #f9fafb;
-                border-left: 3px solid #d97706;
+                border-left: 3px solid #16a34a;
                 border-radius: 4px;
                 word-wrap: break-word;
             }
@@ -93,15 +95,15 @@ export function generateEmailHTML(data) {
                 word-wrap: break-word;
             }
             .partner-section {
-                background: #fef3c7;
+                background: #dcfce7;
                 padding: 20px;
                 border-radius: 8px;
                 margin: 20px 0;
-                border-left: 4px solid #d97706;
+                border-left: 4px solid #16a34a;
             }
             .partner-section h3 {
                 margin-top: 0;
-                color: #92400e;
+                color: #15803d;
                 font-size: 18px;
             }
             .action-box {
@@ -126,13 +128,27 @@ export function generateEmailHTML(data) {
                 font-size: 13px;
             }
             .footer a {
-                color: #fbbf24;
+                color: #86efac;
                 text-decoration: none;
             }
             .divider {
                 height: 1px;
-                background: linear-gradient(to right, transparent, #d97706, transparent);
+                background: linear-gradient(to right, transparent, #16a34a, transparent);
                 margin: 20px 0;
+            }
+            .optional-badge {
+                display: inline-block;
+                background: #fef3c7;
+                color: #92400e;
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-size: 11px;
+                font-weight: bold;
+                margin-left: 5px;
+            }
+            .not-provided {
+                color: #9ca3af;
+                font-style: italic;
             }
         </style>
     </head>
@@ -151,17 +167,17 @@ export function generateEmailHTML(data) {
 
                 <div class="info-section">
                     <div class="info-label">📧 Email Address</div>
-                    <div class="info-value"><a href="mailto:${email}" style="color: #d97706; text-decoration: none;">${email}</a></div>
+                    <div class="info-value"><a href="mailto:${email}" style="color: #16a34a; text-decoration: none;">${email}</a></div>
                 </div>
 
                 <div class="info-section">
                     <div class="info-label">📱 Phone Number</div>
-                    <div class="info-value"><a href="tel:${phone}" style="color: #d97706; text-decoration: none;">${phone}</a></div>
+                    <div class="info-value"><a href="tel:${phone}" style="color: #16a34a; text-decoration: none;">${phone}</a></div>
                 </div>
 
                 <div class="info-section">
                     <div class="info-label">🏢 Company/Organization</div>
-                    <div class="info-value">${company || 'Not provided'}</div>
+                    <div class="info-value">${company || '<span class="not-provided">Not provided</span>'}</div>
                 </div>
 
                 ${
@@ -172,7 +188,7 @@ export function generateEmailHTML(data) {
                     <div class="info-value">${subject}</div>
                 </div>
                 `
-                    : ''
+                    : ""
                 }
 
                 ${
@@ -181,16 +197,16 @@ export function generateEmailHTML(data) {
                 <div class="partner-section">
                     <h3>🤝 Partnership Details</h3>
                     <div class="info-section">
-                        <div class="info-label">Business Type</div>
-                        <div class="info-value">${businessType}</div>
+                        <div class="info-label">Business Type <span class="optional-badge">OPTIONAL</span></div>
+                        <div class="info-value">${businessType || '<span class="not-provided">Not provided</span>'}</div>
                     </div>
                     <div class="info-section">
-                        <div class="info-label">Product Categories</div>
-                        <div class="info-value">${productCategories}</div>
+                        <div class="info-label">Product Categories <span class="optional-badge">OPTIONAL</span></div>
+                        <div class="info-value">${productCategories || '<span class="not-provided">Not provided</span>'}</div>
                     </div>
                 </div>
                 `
-                    : ''
+                    : ""
                 }
 
                 <div class="divider"></div>
@@ -202,7 +218,7 @@ export function generateEmailHTML(data) {
 
                 <div class="info-section">
                     <div class="info-label">💬 Preferred Contact Method</div>
-                    <div class="info-value">${preferredContact}</div>
+                    <div class="info-value" style="text-transform: capitalize;">${preferredContact}</div>
                 </div>
 
                 <div class="info-section">
@@ -230,15 +246,20 @@ export function generateEmailHTML(data) {
                 </p>
                 <p style="margin: 5px 0;">
                     <a href="mailto:${
-                      isPartner ? 'partners@i-coffee.ng' : 'customercare@i-coffee.ng'
+                      isPartner
+                        ? "partners@i-coffee.ng"
+                        : "customercare@i-coffee.ng"
                     }">${
-    isPartner ? 'partners@i-coffee.ng' : 'customercare@i-coffee.ng'
-  }</a> | 
+                      isPartner
+                        ? "partners@i-coffee.ng"
+                        : "customercare@i-coffee.ng"
+                    }</a> | 
                     <a href="https://i-coffee.ng">www.i-coffee.ng</a>
                 </p>
                 <p style="margin: 15px 0 5px 0; font-size: 11px; color: #9ca3af;">
                     This email was sent from the I-Coffee contact form. 
-                    Form Type: <strong>${formType}</strong>
+                    Form Type: <strong>${formType}</strong> | 
+                    Submitted: <strong>${new Date().toLocaleString("en-NG", { timeZone: "Africa/Lagos" })}</strong>
                 </p>
             </div>
         </div>
@@ -263,41 +284,55 @@ export function generatePlainText(data) {
     productCategories,
   } = data;
 
-  const isPartner = formType === 'partner';
+  const isPartner = formType === "partner";
 
   return `
-New ${isPartner ? 'Partnership Application' : 'Contact Inquiry'} from I-Coffee Website
+New ${isPartner ? "Partnership Application" : "Contact Inquiry"} from I-Coffee Website
 
+============================================
 CONTACT INFORMATION:
+============================================
 Name: ${name}
 Email: ${email}
 Phone: ${phone}
-Company: ${company || 'Not provided'}
+Company: ${company || "Not provided"}
 
-${!isPartner && subject ? `Subject: ${subject}\n` : ''}
+${!isPartner && subject ? `Subject: ${subject}\n` : ""}
 
 ${
   isPartner
-    ? `PARTNERSHIP DETAILS:
-Business Type: ${businessType}
-Product Categories: ${productCategories}
+    ? `============================================
+PARTNERSHIP DETAILS (Optional Fields):
+============================================
+Business Type: ${businessType || "Not provided"}
+Product Categories: ${productCategories || "Not provided"}
 `
-    : ''
+    : ""
 }
 
-HOW THEY HEARD ABOUT US: ${howDidYouHear}
-PREFERRED CONTACT METHOD: ${preferredContact}
+============================================
+ADDITIONAL INFORMATION:
+============================================
+How They Heard About Us: ${howDidYouHear}
+Preferred Contact Method: ${preferredContact}
 
+============================================
 MESSAGE:
+============================================
 ${message}
 
----
-Action Required: Please respond within ${isPartner ? '48' : '24'} hours
+============================================
+ACTION REQUIRED:
+============================================
+Please respond within ${isPartner ? "48" : "24"} hours
 Reply to: ${email}
 
+---
 I-Coffee Nigeria
 3 Kaffi Street, Alausa, Ikeja, Lagos
 +234 803 982 7194
 www.i-coffee.ng
+
+Form submitted: ${new Date().toLocaleString("en-NG", { timeZone: "Africa/Lagos" })}
   `;
 }

@@ -1,7 +1,7 @@
-import CategoryModel from '../models/category.model.js';
-import SubCategoryModel from '../models/subCategory.model.js';
-import ProductModel from '../models/product.model.js';
-import generateSlug from '../utils/generateSlug.js';
+import CategoryModel from "../models/category.model.js";
+import SubCategoryModel from "../models/subCategory.model.js";
+import ProductModel from "../models/product.model.js";
+import generateSlug from "../utils/generateSlug.js";
 
 export const AddCategoryController = async (request, response) => {
   try {
@@ -9,7 +9,7 @@ export const AddCategoryController = async (request, response) => {
 
     if (!name) {
       return response.status(400).json({
-        message: 'Category name is required',
+        message: "Category name is required",
         error: true,
         success: false,
       });
@@ -24,7 +24,7 @@ export const AddCategoryController = async (request, response) => {
     });
     if (existingCategory) {
       return response.status(400).json({
-        message: 'A category with this slug already exists',
+        message: "A category with this slug already exists",
         error: true,
         success: false,
       });
@@ -32,7 +32,7 @@ export const AddCategoryController = async (request, response) => {
 
     const addCategory = new CategoryModel({
       name,
-      image: image || '',
+      image: image || "",
       slug: generatedSlug,
     });
 
@@ -40,14 +40,14 @@ export const AddCategoryController = async (request, response) => {
 
     if (!saveCategory) {
       return response.status(500).json({
-        message: 'Category could not be created',
+        message: "Category could not be created",
         error: true,
         success: false,
       });
     }
 
     return response.json({
-      message: 'Category Added Successfully',
+      message: "Category Added Successfully",
       data: saveCategory,
       success: true,
       error: false,
@@ -100,7 +100,7 @@ export const updateCategoryController = async (request, response) => {
 
       if (existingCategory) {
         return response.status(400).json({
-          message: 'A category with this slug already exists',
+          message: "A category with this slug already exists",
           error: true,
           success: false,
         });
@@ -110,7 +110,7 @@ export const updateCategoryController = async (request, response) => {
     const update = await CategoryModel.updateOne({ _id: _id }, updateData);
 
     return response.json({
-      message: 'Category Updated Successfully',
+      message: "Category Updated Successfully",
       success: true,
       error: false,
       data: update,
@@ -151,7 +151,7 @@ export const deleteCategoryController = async (request, response) => {
     const deleteCategory = await CategoryModel.deleteOne({ _id: _id });
 
     return response.json({
-      message: 'Delete category successfully',
+      message: "Delete category successfully",
       data: deleteCategory,
       error: false,
       success: true,
