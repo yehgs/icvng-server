@@ -1,7 +1,7 @@
-import PurchaseOrderModel from '../models/purchase-order.model.js';
-import { SupplierModel } from '../models/supplier.model.js';
-import ProductModel from '../models/product.model.js';
-import ExchangeRateModel from '../models/exchange-rate.model.js';
+import PurchaseOrderModel from "../models/purchase-order.model.js";
+import SupplierModel from "../models/supplier.model.js";
+import ProductModel from "../models/product.model.js";
+import ExchangeRateModel from "../models/exchange-rate.model.js";
 
 // Create purchase order
 export const createPurchaseOrder = async (request, response) => {
@@ -26,7 +26,7 @@ export const createPurchaseOrder = async (request, response) => {
 
     if (!supplier || !items || items.length === 0 || !expectedDeliveryDate) {
       return response.status(400).json({
-        message: 'Supplier, items, and expected delivery date are required',
+        message: "Supplier, items, and expected delivery date are required",
         error: true,
         success: false,
       });
@@ -36,7 +36,7 @@ export const createPurchaseOrder = async (request, response) => {
     if (logistics && !logistics.transportMode) {
       return response.status(400).json({
         message:
-          'Transport mode is required when logistics information is provided',
+          "Transport mode is required when logistics information is provided",
         error: true,
         success: false,
       });
@@ -46,7 +46,7 @@ export const createPurchaseOrder = async (request, response) => {
     const supplierDoc = await SupplierModel.findById(supplier);
     if (!supplierDoc) {
       return response.status(404).json({
-        message: 'Supplier not found',
+        message: "Supplier not found",
         error: true,
         success: false,
       });
@@ -86,18 +86,18 @@ export const createPurchaseOrder = async (request, response) => {
 
     // Get exchange rate if currency is different from base
     let finalExchangeRate = exchangeRate || 1;
-    const baseCurrency = 'USD';
+    const baseCurrency = "USD";
 
     if (currency && currency !== baseCurrency && !exchangeRate) {
       const dbExchangeRate = await ExchangeRateModel.getRate(
         baseCurrency,
-        currency
+        currency,
       );
       if (dbExchangeRate) {
         finalExchangeRate = dbExchangeRate;
       } else {
         console.warn(
-          `Exchange rate not found for ${baseCurrency} to ${currency}, using rate 1`
+          `Exchange rate not found for ${baseCurrency} to ${currency}, using rate 1`,
         );
       }
     }
@@ -115,7 +115,7 @@ export const createPurchaseOrder = async (request, response) => {
             (logistics.otherLogisticsCost || 0),
         }
       : {
-          transportMode: 'AIR',
+          transportMode: "AIR",
           freightCost: 0,
           clearanceCost: 0,
           otherLogisticsCost: 0,
@@ -158,11 +158,11 @@ export const createPurchaseOrder = async (request, response) => {
       exchangeRate: finalExchangeRate,
       baseCurrency,
       shippingAddress: shippingAddress || {},
-      paymentTerms: paymentTerms || 'NET_30',
-      deliveryTerms: deliveryTerms || 'FOB',
-      notes: notes || '',
-      internalNotes: internalNotes || '',
-      status: 'DRAFT',
+      paymentTerms: paymentTerms || "NET_30",
+      deliveryTerms: deliveryTerms || "FOB",
+      notes: notes || "",
+      internalNotes: internalNotes || "",
+      status: "DRAFT",
       orderDate: new Date(),
       createdBy: request.user._id,
       updatedBy: request.user._id,
@@ -172,20 +172,20 @@ export const createPurchaseOrder = async (request, response) => {
 
     // Populate the saved order
     const populatedOrder = await PurchaseOrderModel.findById(savedOrder._id)
-      .populate('supplier', 'name email phone')
-      .populate('items.product', 'name sku')
-      .populate('createdBy updatedBy', 'name email');
+      .populate("supplier", "name email phone")
+      .populate("items.product", "name sku")
+      .populate("createdBy updatedBy", "name email");
 
     return response.json({
-      message: 'Purchase order created successfully',
+      message: "Purchase order created successfully",
       data: populatedOrder,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Create purchase order error:', error);
+    console.error("Create purchase order error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to create purchase order',
+      message: error.message || "Failed to create purchase order",
       error: true,
       success: false,
     });
@@ -209,8 +209,8 @@ export const getPurchaseOrders = async (request, response) => {
 
     if (search) {
       query.$or = [
-        { orderNumber: { $regex: search, $options: 'i' } },
-        { batchNumber: { $regex: search, $options: 'i' } },
+        { orderNumber: { $regex: search, $options: "i" } },
+        { batchNumber: { $regex: search, $options: "i" } },
       ];
     }
 
@@ -232,9 +232,9 @@ export const getPurchaseOrders = async (request, response) => {
 
     const [orders, totalCount] = await Promise.all([
       PurchaseOrderModel.find(query)
-        .populate('supplier', 'name email phone')
-        .populate('items.product', 'name sku')
-        .populate('createdBy updatedBy approvedBy', 'name email')
+        .populate("supplier", "name email phone")
+        .populate("items.product", "name sku")
+        .populate("createdBy updatedBy approvedBy", "name email")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
@@ -242,7 +242,7 @@ export const getPurchaseOrders = async (request, response) => {
     ]);
 
     return response.json({
-      message: 'Purchase orders retrieved successfully',
+      message: "Purchase orders retrieved successfully",
       data: orders,
       totalCount,
       totalPages: Math.ceil(totalCount / limit),
@@ -251,9 +251,9 @@ export const getPurchaseOrders = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Get purchase orders error:', error);
+    console.error("Get purchase orders error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to retrieve purchase orders',
+      message: error.message || "Failed to retrieve purchase orders",
       error: true,
       success: false,
     });
@@ -266,28 +266,28 @@ export const getPurchaseOrderDetails = async (request, response) => {
     const { orderId } = request.params;
 
     const order = await PurchaseOrderModel.findById(orderId)
-      .populate('supplier')
-      .populate('items.product')
-      .populate('createdBy updatedBy approvedBy qualityCheckBy', 'name email');
+      .populate("supplier")
+      .populate("items.product")
+      .populate("createdBy updatedBy approvedBy qualityCheckBy", "name email");
 
     if (!order) {
       return response.status(404).json({
-        message: 'Purchase order not found',
+        message: "Purchase order not found",
         error: true,
         success: false,
       });
     }
 
     return response.json({
-      message: 'Purchase order details retrieved successfully',
+      message: "Purchase order details retrieved successfully",
       data: order,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Get purchase order details error:', error);
+    console.error("Get purchase order details error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to retrieve purchase order details',
+      message: error.message || "Failed to retrieve purchase order details",
       error: true,
       success: false,
     });
@@ -303,14 +303,14 @@ export const updatePurchaseOrder = async (request, response) => {
     const order = await PurchaseOrderModel.findById(orderId);
     if (!order) {
       return response.status(404).json({
-        message: 'Purchase order not found',
+        message: "Purchase order not found",
         error: true,
         success: false,
       });
     }
 
     // Prevent editing of delivered or completed orders
-    if (['DELIVERED', 'COMPLETED', 'CANCELLED'].includes(order.status)) {
+    if (["DELIVERED", "COMPLETED", "CANCELLED"].includes(order.status)) {
       return response.status(400).json({
         message: `Cannot edit ${order.status.toLowerCase()} purchase orders`,
         error: true,
@@ -349,22 +349,22 @@ export const updatePurchaseOrder = async (request, response) => {
     const updatedOrder = await PurchaseOrderModel.findByIdAndUpdate(
       orderId,
       updateData,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     )
-      .populate('supplier', 'name email phone')
-      .populate('items.product', 'name sku')
-      .populate('createdBy updatedBy approvedBy', 'name email');
+      .populate("supplier", "name email phone")
+      .populate("items.product", "name sku")
+      .populate("createdBy updatedBy approvedBy", "name email");
 
     return response.json({
-      message: 'Purchase order updated successfully',
+      message: "Purchase order updated successfully",
       data: updatedOrder,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Update purchase order error:', error);
+    console.error("Update purchase order error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to update purchase order',
+      message: error.message || "Failed to update purchase order",
       error: true,
       success: false,
     });
@@ -380,7 +380,7 @@ export const updateOrderStatus = async (request, response) => {
 
     if (!status) {
       return response.status(400).json({
-        message: 'Status is required',
+        message: "Status is required",
         error: true,
         success: false,
       });
@@ -390,7 +390,7 @@ export const updateOrderStatus = async (request, response) => {
     const order = await PurchaseOrderModel.findById(orderId);
     if (!order) {
       return response.status(404).json({
-        message: 'Purchase order not found',
+        message: "Purchase order not found",
         error: true,
         success: false,
       });
@@ -400,7 +400,7 @@ export const updateOrderStatus = async (request, response) => {
     const validationResult = validateStatusUpdate(
       order.status,
       status,
-      user.subRole || user.role
+      user.subRole || user.role,
     );
     if (!validationResult.isValid) {
       return response.status(403).json({
@@ -416,8 +416,8 @@ export const updateOrderStatus = async (request, response) => {
       newStatus: status,
       changedBy: user._id,
       changedAt: new Date(),
-      notes: notes || '',
-      reason: reason || '',
+      notes: notes || "",
+      reason: reason || "",
       userRole: user.subRole || user.role,
     };
 
@@ -431,38 +431,38 @@ export const updateOrderStatus = async (request, response) => {
 
     // Set specific fields based on status
     switch (status) {
-      case 'APPROVED':
+      case "APPROVED":
         updateData.approvedBy = user._id;
         updateData.approvedAt = new Date();
         break;
-      case 'DELIVERED':
+      case "DELIVERED":
         updateData.deliveredAt = new Date();
         break;
-      case 'COMPLETED':
+      case "COMPLETED":
         updateData.completedAt = new Date();
         break;
-      case 'CANCELLED':
+      case "CANCELLED":
         updateData.cancelledBy = user._id;
         updateData.cancelledAt = new Date();
-        updateData.cancellationReason = reason || notes || 'No reason provided';
+        updateData.cancellationReason = reason || notes || "No reason provided";
         break;
     }
 
     const updatedOrder = await PurchaseOrderModel.findByIdAndUpdate(
       orderId,
       updateData,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     )
-      .populate('supplier', 'name email phone')
-      .populate('items.product', 'name sku')
-      .populate('createdBy updatedBy approvedBy cancelledBy', 'name email role')
-      .populate('statusHistory.changedBy', 'name email role');
+      .populate("supplier", "name email phone")
+      .populate("items.product", "name sku")
+      .populate("createdBy updatedBy approvedBy cancelledBy", "name email role")
+      .populate("statusHistory.changedBy", "name email role");
 
     // Add internal notes for tracking
     const noteEntry = `[${new Date().toISOString()}] Status changed from ${
       order.status
     } to ${status} by ${user.name} (${user.subRole || user.role})${
-      notes ? `: ${notes}` : ''
+      notes ? `: ${notes}` : ""
     }`;
 
     if (updatedOrder.internalNotes) {
@@ -486,9 +486,9 @@ export const updateOrderStatus = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Update order status error:', error);
+    console.error("Update order status error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to update order status',
+      message: error.message || "Failed to update order status",
       error: true,
       success: false,
     });
@@ -499,10 +499,10 @@ export const updateOrderStatus = async (request, response) => {
 function validateStatusUpdate(currentStatus, newStatus, userRole) {
   // Define valid status transitions
   const statusTransitions = {
-    DRAFT: ['PENDING', 'CANCELLED'],
-    PENDING: ['APPROVED', 'CANCELLED', 'DRAFT'],
-    APPROVED: ['DELIVERED', 'CANCELLED'],
-    DELIVERED: ['COMPLETED', 'CANCELLED'],
+    DRAFT: ["PENDING", "CANCELLED"],
+    PENDING: ["APPROVED", "CANCELLED", "DRAFT"],
+    APPROVED: ["DELIVERED", "CANCELLED"],
+    DELIVERED: ["COMPLETED", "CANCELLED"],
     COMPLETED: [], // Final status
     CANCELLED: [], // Final status
   };
@@ -510,27 +510,27 @@ function validateStatusUpdate(currentStatus, newStatus, userRole) {
   // Define role permissions - removed ADMIN and EMPLOYEE, gave WAREHOUSE employee capabilities
   const rolePermissions = {
     WAREHOUSE: {
-      canUpdate: ['DRAFT', 'APPROVED'],
-      canUpdateTo: ['PENDING', 'DELIVERED'],
+      canUpdate: ["DRAFT", "APPROVED"],
+      canUpdateTo: ["PENDING", "DELIVERED"],
     },
     IT: {
-      canUpdate: ['DRAFT', 'PENDING', 'APPROVED', 'DELIVERED'],
+      canUpdate: ["DRAFT", "PENDING", "APPROVED", "DELIVERED"],
       canUpdateTo: [
-        'PENDING',
-        'APPROVED',
-        'DELIVERED',
-        'COMPLETED',
-        'CANCELLED',
+        "PENDING",
+        "APPROVED",
+        "DELIVERED",
+        "COMPLETED",
+        "CANCELLED",
       ],
     },
     DIRECTOR: {
-      canUpdate: ['DRAFT', 'PENDING', 'APPROVED', 'DELIVERED', 'COMPLETED'],
+      canUpdate: ["DRAFT", "PENDING", "APPROVED", "DELIVERED", "COMPLETED"],
       canUpdateTo: [
-        'PENDING',
-        'APPROVED',
-        'DELIVERED',
-        'COMPLETED',
-        'CANCELLED',
+        "PENDING",
+        "APPROVED",
+        "DELIVERED",
+        "COMPLETED",
+        "CANCELLED",
       ],
     },
   };
@@ -580,7 +580,7 @@ export const getAllowedStatusUpdates = async (request, response) => {
     const order = await PurchaseOrderModel.findById(orderId);
     if (!order) {
       return response.status(404).json({
-        message: 'Purchase order not found',
+        message: "Purchase order not found",
         error: true,
         success: false,
       });
@@ -588,11 +588,11 @@ export const getAllowedStatusUpdates = async (request, response) => {
 
     const allowedStatuses = getValidStatusTransitions(
       order.status,
-      user.subRole || user.role
+      user.subRole || user.role,
     );
 
     return response.json({
-      message: 'Allowed status updates retrieved successfully',
+      message: "Allowed status updates retrieved successfully",
       data: {
         currentStatus: order.status,
         allowedStatuses,
@@ -602,9 +602,9 @@ export const getAllowedStatusUpdates = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Get allowed status updates error:', error);
+    console.error("Get allowed status updates error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to get allowed status updates',
+      message: error.message || "Failed to get allowed status updates",
       error: true,
       success: false,
     });
@@ -614,37 +614,37 @@ export const getAllowedStatusUpdates = async (request, response) => {
 // Helper function to get valid status transitions for a role
 function getValidStatusTransitions(currentStatus, userRole) {
   const statusTransitions = {
-    DRAFT: ['PENDING', 'CANCELLED'],
-    PENDING: ['APPROVED', 'CANCELLED', 'DRAFT'],
-    APPROVED: ['DELIVERED', 'CANCELLED'],
-    DELIVERED: ['COMPLETED', 'CANCELLED'],
+    DRAFT: ["PENDING", "CANCELLED"],
+    PENDING: ["APPROVED", "CANCELLED", "DRAFT"],
+    APPROVED: ["DELIVERED", "CANCELLED"],
+    DELIVERED: ["COMPLETED", "CANCELLED"],
     COMPLETED: [],
     CANCELLED: [],
   };
 
   const rolePermissions = {
     WAREHOUSE: {
-      canUpdate: ['DRAFT', 'APPROVED'],
-      canUpdateTo: ['PENDING', 'DELIVERED'],
+      canUpdate: ["DRAFT", "APPROVED"],
+      canUpdateTo: ["PENDING", "DELIVERED"],
     },
     IT: {
-      canUpdate: ['DRAFT', 'PENDING', 'APPROVED', 'DELIVERED'],
+      canUpdate: ["DRAFT", "PENDING", "APPROVED", "DELIVERED"],
       canUpdateTo: [
-        'PENDING',
-        'APPROVED',
-        'DELIVERED',
-        'COMPLETED',
-        'CANCELLED',
+        "PENDING",
+        "APPROVED",
+        "DELIVERED",
+        "COMPLETED",
+        "CANCELLED",
       ],
     },
     DIRECTOR: {
-      canUpdate: ['DRAFT', 'PENDING', 'APPROVED', 'DELIVERED', 'COMPLETED'],
+      canUpdate: ["DRAFT", "PENDING", "APPROVED", "DELIVERED", "COMPLETED"],
       canUpdateTo: [
-        'PENDING',
-        'APPROVED',
-        'DELIVERED',
-        'COMPLETED',
-        'CANCELLED',
+        "PENDING",
+        "APPROVED",
+        "DELIVERED",
+        "COMPLETED",
+        "CANCELLED",
       ],
     },
   };
@@ -657,7 +657,7 @@ function getValidStatusTransitions(currentStatus, userRole) {
   }
 
   return possibleTransitions.filter((status) =>
-    userPermissions.canUpdateTo.includes(status)
+    userPermissions.canUpdateTo.includes(status),
   );
 }
 
@@ -667,19 +667,19 @@ export const getStatusHistory = async (request, response) => {
     const { orderId } = request.params;
 
     const order = await PurchaseOrderModel.findById(orderId)
-      .populate('statusHistory.changedBy', 'name email role')
-      .select('statusHistory orderNumber status');
+      .populate("statusHistory.changedBy", "name email role")
+      .select("statusHistory orderNumber status");
 
     if (!order) {
       return response.status(404).json({
-        message: 'Purchase order not found',
+        message: "Purchase order not found",
         error: true,
         success: false,
       });
     }
 
     return response.json({
-      message: 'Status history retrieved successfully',
+      message: "Status history retrieved successfully",
       data: {
         orderNumber: order.orderNumber,
         currentStatus: order.status,
@@ -689,9 +689,9 @@ export const getStatusHistory = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Get status history error:', error);
+    console.error("Get status history error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to get status history',
+      message: error.message || "Failed to get status history",
       error: true,
       success: false,
     });
@@ -706,16 +706,16 @@ export const deletePurchaseOrder = async (request, response) => {
     const order = await PurchaseOrderModel.findById(orderId);
     if (!order) {
       return response.status(404).json({
-        message: 'Purchase order not found',
+        message: "Purchase order not found",
         error: true,
         success: false,
       });
     }
 
     // Only allow deletion of draft orders
-    if (order.status !== 'DRAFT') {
+    if (order.status !== "DRAFT") {
       return response.status(400).json({
-        message: 'Only draft purchase orders can be deleted',
+        message: "Only draft purchase orders can be deleted",
         error: true,
         success: false,
       });
@@ -724,14 +724,14 @@ export const deletePurchaseOrder = async (request, response) => {
     await PurchaseOrderModel.findByIdAndDelete(orderId);
 
     return response.json({
-      message: 'Purchase order deleted successfully',
+      message: "Purchase order deleted successfully",
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Delete purchase order error:', error);
+    console.error("Delete purchase order error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to delete purchase order',
+      message: error.message || "Failed to delete purchase order",
       error: true,
       success: false,
     });
@@ -744,11 +744,11 @@ export const getPurchaseOrderStats = async (request, response) => {
     const stats = await PurchaseOrderModel.aggregate([
       {
         $group: {
-          _id: '$status',
+          _id: "$status",
           count: { $sum: 1 },
-          totalAmount: { $sum: '$totalAmount' },
-          grandTotal: { $sum: '$grandTotal' },
-          totalLogisticsCost: { $sum: '$logistics.totalLogisticsCost' },
+          totalAmount: { $sum: "$totalAmount" },
+          grandTotal: { $sum: "$grandTotal" },
+          totalLogisticsCost: { $sum: "$logistics.totalLogisticsCost" },
         },
       },
     ]);
@@ -764,29 +764,29 @@ export const getPurchaseOrderStats = async (request, response) => {
       {
         $group: {
           _id: {
-            year: { $year: '$orderDate' },
-            month: { $month: '$orderDate' },
+            year: { $year: "$orderDate" },
+            month: { $month: "$orderDate" },
           },
           count: { $sum: 1 },
-          totalAmount: { $sum: '$totalAmount' },
-          grandTotal: { $sum: '$grandTotal' },
-          totalLogisticsCost: { $sum: '$logistics.totalLogisticsCost' },
+          totalAmount: { $sum: "$totalAmount" },
+          grandTotal: { $sum: "$grandTotal" },
+          totalLogisticsCost: { $sum: "$logistics.totalLogisticsCost" },
         },
       },
       {
-        $sort: { '_id.year': 1, '_id.month': 1 },
+        $sort: { "_id.year": 1, "_id.month": 1 },
       },
     ]);
 
     const logisticsStats = await PurchaseOrderModel.aggregate([
       {
         $group: {
-          _id: '$logistics.transportMode',
+          _id: "$logistics.transportMode",
           count: { $sum: 1 },
-          averageLogisticsCost: { $avg: '$logistics.totalLogisticsCost' },
-          totalLogisticsCost: { $sum: '$logistics.totalLogisticsCost' },
-          averageFreightCost: { $avg: '$logistics.freightCost' },
-          averageClearanceCost: { $avg: '$logistics.clearanceCost' },
+          averageLogisticsCost: { $avg: "$logistics.totalLogisticsCost" },
+          totalLogisticsCost: { $sum: "$logistics.totalLogisticsCost" },
+          averageFreightCost: { $avg: "$logistics.freightCost" },
+          averageClearanceCost: { $avg: "$logistics.clearanceCost" },
         },
       },
       {
@@ -795,7 +795,7 @@ export const getPurchaseOrderStats = async (request, response) => {
     ]);
 
     return response.json({
-      message: 'Purchase order statistics retrieved successfully',
+      message: "Purchase order statistics retrieved successfully",
       data: {
         statusStats: stats,
         monthlyStats,
@@ -805,9 +805,9 @@ export const getPurchaseOrderStats = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Get purchase order stats error:', error);
+    console.error("Get purchase order stats error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to retrieve statistics',
+      message: error.message || "Failed to retrieve statistics",
       error: true,
       success: false,
     });
@@ -828,7 +828,7 @@ export const getLogisticsCostAnalysis = async (request, response) => {
     }
 
     if (transportMode) {
-      matchStage['logistics.transportMode'] = transportMode;
+      matchStage["logistics.transportMode"] = transportMode;
     }
 
     if (supplier) {
@@ -841,21 +841,21 @@ export const getLogisticsCostAnalysis = async (request, response) => {
         $group: {
           _id: null,
           totalOrders: { $sum: 1 },
-          totalProductCost: { $sum: '$subtotal' },
-          totalLogisticsCost: { $sum: '$logistics.totalLogisticsCost' },
-          totalFreightCost: { $sum: '$logistics.freightCost' },
-          totalClearanceCost: { $sum: '$logistics.clearanceCost' },
-          totalOtherLogisticsCost: { $sum: '$logistics.otherLogisticsCost' },
+          totalProductCost: { $sum: "$subtotal" },
+          totalLogisticsCost: { $sum: "$logistics.totalLogisticsCost" },
+          totalFreightCost: { $sum: "$logistics.freightCost" },
+          totalClearanceCost: { $sum: "$logistics.clearanceCost" },
+          totalOtherLogisticsCost: { $sum: "$logistics.otherLogisticsCost" },
           averageLogisticsCostPerOrder: {
-            $avg: '$logistics.totalLogisticsCost',
+            $avg: "$logistics.totalLogisticsCost",
           },
           averageLogisticsCostPercentage: {
             $avg: {
               $cond: {
-                if: { $gt: ['$subtotal', 0] },
+                if: { $gt: ["$subtotal", 0] },
                 then: {
                   $multiply: [
-                    { $divide: ['$logistics.totalLogisticsCost', '$subtotal'] },
+                    { $divide: ["$logistics.totalLogisticsCost", "$subtotal"] },
                     100,
                   ],
                 },
@@ -871,17 +871,17 @@ export const getLogisticsCostAnalysis = async (request, response) => {
       { $match: matchStage },
       {
         $group: {
-          _id: '$logistics.transportMode',
+          _id: "$logistics.transportMode",
           orderCount: { $sum: 1 },
-          totalLogisticsCost: { $sum: '$logistics.totalLogisticsCost' },
-          averageLogisticsCost: { $avg: '$logistics.totalLogisticsCost' },
+          totalLogisticsCost: { $sum: "$logistics.totalLogisticsCost" },
+          averageLogisticsCost: { $avg: "$logistics.totalLogisticsCost" },
           averageLogisticsCostPercentage: {
             $avg: {
               $cond: {
-                if: { $gt: ['$subtotal', 0] },
+                if: { $gt: ["$subtotal", 0] },
                 then: {
                   $multiply: [
-                    { $divide: ['$logistics.totalLogisticsCost', '$subtotal'] },
+                    { $divide: ["$logistics.totalLogisticsCost", "$subtotal"] },
                     100,
                   ],
                 },
@@ -897,7 +897,7 @@ export const getLogisticsCostAnalysis = async (request, response) => {
     ]);
 
     return response.json({
-      message: 'Logistics cost analysis retrieved successfully',
+      message: "Logistics cost analysis retrieved successfully",
       data: {
         overall: analysis[0] || {},
         byTransportMode: transportModeAnalysis,
@@ -906,9 +906,9 @@ export const getLogisticsCostAnalysis = async (request, response) => {
       success: true,
     });
   } catch (error) {
-    console.error('Get logistics cost analysis error:', error);
+    console.error("Get logistics cost analysis error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to retrieve logistics cost analysis',
+      message: error.message || "Failed to retrieve logistics cost analysis",
       error: true,
       success: false,
     });
@@ -919,7 +919,7 @@ export const getLogisticsCostAnalysis = async (request, response) => {
 async function generateOrderNumber() {
   const date = new Date();
   const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, "0");
 
   const lastOrder = await PurchaseOrderModel.findOne({
     orderNumber: { $regex: `^PO-${year}${month}` },
@@ -927,18 +927,18 @@ async function generateOrderNumber() {
 
   let sequence = 1;
   if (lastOrder) {
-    const lastSequence = parseInt(lastOrder.orderNumber.split('-')[2]);
+    const lastSequence = parseInt(lastOrder.orderNumber.split("-")[2]);
     sequence = lastSequence + 1;
   }
 
-  return `PO-${year}${month}-${String(sequence).padStart(4, '0')}`;
+  return `PO-${year}${month}-${String(sequence).padStart(4, "0")}`;
 }
 
 async function generateBatchNumber() {
   const date = new Date();
   const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
 
   const lastBatch = await PurchaseOrderModel.findOne({
     batchNumber: { $regex: `^BATCH-${year}${month}${day}` },
@@ -946,9 +946,9 @@ async function generateBatchNumber() {
 
   let sequence = 1;
   if (lastBatch) {
-    const lastSequence = parseInt(lastBatch.batchNumber.split('-')[2]);
+    const lastSequence = parseInt(lastBatch.batchNumber.split("-")[2]);
     sequence = lastSequence + 1;
   }
 
-  return `BATCH-${year}${month}${day}-${String(sequence).padStart(3, '0')}`;
+  return `BATCH-${year}${month}${day}-${String(sequence).padStart(3, "0")}`;
 }

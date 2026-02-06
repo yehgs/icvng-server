@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const supplierSchema = new mongoose.Schema(
   {
@@ -13,12 +13,10 @@ const supplierSchema = new mongoose.Schema(
     },
     email: {
       type: String,
-      required: true,
       unique: true,
     },
     phone: {
       type: String,
-      required: true,
     },
     address: {
       street: String,
@@ -44,27 +42,29 @@ const supplierSchema = new mongoose.Schema(
     },
     paymentTerms: {
       type: String,
-      enum: ['NET_30', 'NET_60', 'COD', 'ADVANCE', 'CUSTOM'],
-      default: 'NET_30',
+      enum: ["NET_30", "NET_60", "COD", "ADVANCE", "CUSTOM"],
+      default: "NET_30",
     },
     status: {
       type: String,
-      enum: ['ACTIVE', 'INACTIVE', 'BLACKLISTED'],
-      default: 'ACTIVE',
+      enum: ["ACTIVE", "INACTIVE", "BLACKLISTED"],
+      default: "ACTIVE",
     },
     notes: String,
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
     },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
-export const SupplierModel = mongoose.model('Supplier', supplierSchema);
+const SupplierModel = mongoose.model("Supplier", supplierSchema);
+
+export default SupplierModel;

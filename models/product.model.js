@@ -183,6 +183,11 @@ const productSchema = new mongoose.Schema(
         default: 0,
         min: 0,
       },
+      stockInHouse: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
       damagedQty: {
         type: Number,
         default: 0,
@@ -226,11 +231,15 @@ const productSchema = new mongoose.Schema(
         ref: "User",
       },
     },
-
     stockSource: {
       type: String,
       enum: ["WAREHOUSE_MANUAL", "STOCK_BATCHES", "PRODUCT_DEFAULT"],
       default: "PRODUCT_DEFAULT",
+    },
+    supplier: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Supplier",
+      default: null,
     },
     productAvailability: {
       type: Boolean,
