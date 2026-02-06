@@ -1504,6 +1504,7 @@ export const getWarehouseUsers = async (request, response) => {
 };
 
 // UPDATED: Enhanced CSV export with supplier
+
 export const exportStockCSV = async (request, response) => {
   try {
     const {
@@ -1528,18 +1529,18 @@ export const exportStockCSV = async (request, response) => {
 
     const selectedColumns = columns.split(",");
 
-    const headers = ["Product Name", "SKU"];
+    // BASE HEADERS - ALWAYS INCLUDED (cannot be excluded)
+    const headers = [
+      "Product Name",
+      "SKU",
+      "Supplier",
+      "Weight (kg)",
+      "Unit",
+      "Packaging",
+      "Stock In House",
+    ];
 
-    if (columns === "all" || selectedColumns.includes("supplier"))
-      headers.push("Supplier");
-    if (columns === "all" || selectedColumns.includes("weight"))
-      headers.push("Weight (kg)");
-    if (columns === "all" || selectedColumns.includes("unit"))
-      headers.push("Unit");
-    if (columns === "all" || selectedColumns.includes("packaging"))
-      headers.push("Packaging");
-    if (columns === "all" || selectedColumns.includes("stockInHouse"))
-      headers.push("Stock In House");
+    // OPTIONAL COLUMNS - Based on selection
     if (columns === "all" || selectedColumns.includes("damaged"))
       headers.push("Damaged Qty");
     if (columns === "all" || selectedColumns.includes("expired"))
@@ -1552,7 +1553,8 @@ export const exportStockCSV = async (request, response) => {
       headers.push("Online Stock");
     if (columns === "all" || selectedColumns.includes("offline"))
       headers.push("Offline Stock");
-    if (columns === "all") headers.push("Stock on Arrival", "Last Updated");
+    if (columns === "all")
+      headers.push("Stock on Arrival", "Last Updated", "Notes");
 
     const csvData = products.map((product) => {
       const stock = product.warehouseStock?.enabled
@@ -1566,20 +1568,21 @@ export const exportStockCSV = async (request, response) => {
             refurbishedQty: 0,
             onlineStock: 0,
             offlineStock: 0,
+            notes: "",
           };
 
-      const row = [product.name || "", product.sku || ""];
+      // BASE ROW - ALWAYS INCLUDED
+      const row = [
+        product.name || "",
+        product.sku || "",
+        product.supplier?.name || "",
+        product.weight || 0,
+        product.unit || "",
+        product.packaging || "",
+        stock.stockInHouse || 0,
+      ];
 
-      if (columns === "all" || selectedColumns.includes("supplier"))
-        row.push(product.supplier?.name || "");
-      if (columns === "all" || selectedColumns.includes("weight"))
-        row.push(product.weight || 0);
-      if (columns === "all" || selectedColumns.includes("unit"))
-        row.push(product.unit || "");
-      if (columns === "all" || selectedColumns.includes("packaging"))
-        row.push(product.packaging || "");
-      if (columns === "all" || selectedColumns.includes("stockInHouse"))
-        row.push(stock.stockInHouse || 0);
+      // OPTIONAL COLUMNS - Based on selection
       if (columns === "all" || selectedColumns.includes("damaged"))
         row.push(stock.damagedQty || 0);
       if (columns === "all" || selectedColumns.includes("expired"))
@@ -1598,6 +1601,7 @@ export const exportStockCSV = async (request, response) => {
           stock.lastUpdated
             ? new Date(stock.lastUpdated).toLocaleDateString()
             : "",
+          stock.notes || "",
         );
       }
 
