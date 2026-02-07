@@ -17,14 +17,32 @@ let systemSettings = {
   lowStockThreshold: 10,
   criticalStockThreshold: 5,
   notificationEmails: [
-    process.env.WAREHOUSE_ADMIN_EMAIL || "shipment2@i-coffee.com",
-    process.env.DIRECTOR_EMAIL || "md@i-coffee.com",
+    process.env.WAREHOUSE_ADMIN_EMAIL || "shipment2@yehgs.co.uk",
+    process.env.DIRECTOR_EMAIL || "md@yehgs.co.uk",
   ],
 };
 
 // UPDATED: Email notification with supplier information
 const sendImportNotificationEmail = async (emails, results, user) => {
   try {
+    // Validate email configuration
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_APP_PASSWORD) {
+      console.error(
+        "❌ EMAIL CONFIGURATION ERROR: EMAIL_USER or EMAIL_APP_PASSWORD not set in .env file",
+      );
+      throw new Error("Email configuration missing. Please check .env file.");
+    }
+
+    // Validate email recipients
+    if (!emails || emails.length === 0) {
+      console.error("❌ EMAIL ERROR: No recipients provided");
+      throw new Error("No email recipients provided");
+    }
+
+    console.log("📧 Preparing to send import notification email...");
+    console.log("📧 Recipients:", emails.join(", "));
+    console.log("📧 From:", process.env.EMAIL_USER);
+
     const emailBody = `
 <!DOCTYPE html>
 <html>
@@ -61,9 +79,7 @@ const sendImportNotificationEmail = async (emails, results, user) => {
       <p><strong>❌ Failed Updates:</strong> ${results.failed.length}</p>
       ${
         results.newSuppliersCreated.length > 0
-          ? `
-        <p><strong>🆕 New Suppliers Created:</strong> ${results.newSuppliersCreated.length}</p>
-      `
+          ? `<p><strong>🆕 New Suppliers Created:</strong> ${results.newSuppliersCreated.length}</p>`
           : ""
       }
     </div>
@@ -169,16 +185,33 @@ const sendImportNotificationEmail = async (emails, results, user) => {
 </html>
     `;
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+    console.log("📧 Sending email...");
+    const info = await transporter.sendMail({
+      from: `"I-Coffee Warehouse" <${process.env.EMAIL_USER}>`,
       to: emails.join(", "),
       subject: `Warehouse Stock Import Report - ${results.successful.length} Updates${results.newSuppliersCreated.length > 0 ? `, ${results.newSuppliersCreated.length} New Suppliers` : ""}`,
       html: emailBody,
     });
 
-    console.log("Import notification email sent successfully");
+    console.log("✅ Import notification email sent successfully");
+    console.log("📧 Message ID:", info.messageId);
+    console.log("📧 Accepted:", info.accepted);
+    console.log("📧 Rejected:", info.rejected);
+
+    return info;
   } catch (error) {
-    console.error("Error sending import notification email:", error);
+    console.error("❌ ERROR sending import notification email:", error);
+    console.error("❌ Error details:", {
+      message: error.message,
+      code: error.code,
+      command: error.command,
+    });
+
+    // Don't throw - we don't want email failures to break the import
+    // But log it prominently
+    console.error(
+      "⚠️  EMAIL SENDING FAILED - Import completed but notification not sent",
+    );
   }
 };
 
@@ -1503,7 +1536,7 @@ export const getWarehouseUsers = async (request, response) => {
   }
 };
 
-// UPDATED: Enhanced CSV export with supplier
+// UPDATED: Enhanced CSV export with supplie
 
 export const exportStockCSV = async (request, response) => {
   try {
@@ -2237,6 +2270,7 @@ export const updateStock = async (request, response) => {
 };
 
 // UPDATED: CSV Import with Supplier Support
+
 export const importStockCSV = async (request, response) => {
   try {
     const userRole = request.user.subRole || request.user.role;
@@ -2436,13 +2470,44 @@ export const importStockCSV = async (request, response) => {
       }
     }
 
-    // Send email notification if there are successful updates
-    if (results.successful.length > 0 && notificationEmails.length > 0) {
-      await sendImportNotificationEmail(
-        notificationEmails,
-        results,
-        request.user,
+    // MANDATORY EMAIL NOTIFICATION - Always send to default recipients
+    try {
+      console.log("📧 Preparing email notification...");
+
+      // MANDATORY DEFAULT RECIPIENTS (always included)
+      const mandatoryEmails = [
+        process.env.WAREHOUSE_ADMIN_EMAIL || "shipment2@yehgs.co.uk",
+        process.env.DIRECTOR_EMAIL || "md@yehgs.co.uk",
+        "webmaster@yehgs.co.uk", // IT Admin
+      ].filter(Boolean); // Remove any undefined/null values
+
+      // Parse additional emails from user input
+      const additionalEmails = notificationEmails.filter(
+        (email) => email && email.trim() !== "",
       );
+
+      // Combine and remove duplicates
+      const allEmails = [...new Set([...mandatoryEmails, ...additionalEmails])];
+
+      console.log("📧 Mandatory recipients:", mandatoryEmails.join(", "));
+      console.log(
+        "📧 Additional recipients:",
+        additionalEmails.join(", ") || "None",
+      );
+      console.log("📧 Total recipients:", allEmails.join(", "));
+
+      if (allEmails.length > 0) {
+        await sendImportNotificationEmail(allEmails, results, request.user);
+        console.log(
+          `✅ Import notification sent to ${allEmails.length} recipient(s)`,
+        );
+      } else {
+        console.error("❌ No email recipients configured!");
+      }
+    } catch (emailError) {
+      console.error("❌ Failed to send import notification email:", emailError);
+      // Don't fail the import if email fails, but log it prominently
+      console.warn("⚠️  IMPORT COMPLETED but email notification failed");
     }
 
     return response.json({
