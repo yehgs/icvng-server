@@ -1950,7 +1950,7 @@ export const exportStockPDF = async (request, response) => {
 // NEW: Get all suppliers for filter dropdown
 export const getSuppliers = async (request, response) => {
   try {
-    const suppliers = await SupplierModel.find({ status: "Active" })
+    const suppliers = await SupplierModel.find({ status: "ACTIVE" })
       .select("_id name slug")
       .sort({ name: 1 });
 
@@ -1997,7 +1997,7 @@ const findOrCreateSupplier = async (supplierName) => {
   const newSupplier = new SupplierModel({
     name: trimmedName,
     slug: generateSupplierSlug(trimmedName),
-    status: "Active",
+    status: "INACTIVE", // New suppliers start as inactive until reviewed
   });
 
   await newSupplier.save();
