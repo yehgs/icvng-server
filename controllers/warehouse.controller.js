@@ -22,10 +22,11 @@ let systemSettings = {
   ],
 };
 
-// UPDATED: Email notification with supplier information
+// ==========================================
+// EMAIL NOTIFICATION
+// ==========================================
 const sendImportNotificationEmail = async (emails, results, user) => {
   try {
-    // Validate email configuration
     if (!process.env.EMAIL_USER || !process.env.EMAIL_APP_PASSWORD) {
       console.error(
         "❌ EMAIL CONFIGURATION ERROR: EMAIL_USER or EMAIL_APP_PASSWORD not set in .env file",
@@ -33,7 +34,6 @@ const sendImportNotificationEmail = async (emails, results, user) => {
       throw new Error("Email configuration missing. Please check .env file.");
     }
 
-    // Validate email recipients
     if (!emails || emails.length === 0) {
       console.error("❌ EMAIL ERROR: No recipients provided");
       throw new Error("No email recipients provided");
@@ -52,8 +52,6 @@ const sendImportNotificationEmail = async (emails, results, user) => {
     .container { max-width: 900px; margin: 0 auto; padding: 20px; }
     .header { background-color: #4CAF50; color: white; padding: 20px; text-align: center; }
     .summary { background-color: #f5f5f5; padding: 15px; margin: 20px 0; border-radius: 5px; }
-    .success { background-color: #d4edda; padding: 10px; margin: 10px 0; border-left: 4px solid #28a745; }
-    .failed { background-color: #f8d7da; padding: 10px; margin: 10px 0; border-left: 4px solid #dc3545; }
     .new-suppliers { background-color: #d1ecf1; padding: 10px; margin: 10px 0; border-left: 4px solid #17a2b8; }
     table { width: 100%; border-collapse: collapse; margin: 20px 0; }
     th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
@@ -69,7 +67,6 @@ const sendImportNotificationEmail = async (emails, results, user) => {
     <div class="header">
       <h1>📦 Warehouse Stock Import Report</h1>
     </div>
-    
     <div class="summary">
       <h2>Import Summary</h2>
       <p><strong>Import Date:</strong> ${results.timestamp.toLocaleString()}</p>
@@ -77,11 +74,7 @@ const sendImportNotificationEmail = async (emails, results, user) => {
       <p><strong>Total Products Processed:</strong> ${results.totalProcessed}</p>
       <p><strong>✅ Successful Updates:</strong> ${results.successful.length}</p>
       <p><strong>❌ Failed Updates:</strong> ${results.failed.length}</p>
-      ${
-        results.newSuppliersCreated.length > 0
-          ? `<p><strong>🆕 New Suppliers Created:</strong> ${results.newSuppliersCreated.length}</p>`
-          : ""
-      }
+      ${results.newSuppliersCreated.length > 0 ? `<p><strong>🆕 New Suppliers Created:</strong> ${results.newSuppliersCreated.length}</p>` : ""}
     </div>
 
     ${
@@ -90,13 +83,7 @@ const sendImportNotificationEmail = async (emails, results, user) => {
     <div class="new-suppliers">
       <h3>🆕 New Suppliers Created</h3>
       <ul>
-        ${results.newSuppliersCreated
-          .map(
-            (supplier) => `
-          <li><strong>${supplier.name}</strong> (slug: ${supplier.slug})</li>
-        `,
-          )
-          .join("")}
+        ${results.newSuppliersCreated.map((supplier) => `<li><strong>${supplier.name}</strong> (slug: ${supplier.slug})</li>`).join("")}
       </ul>
     </div>
     `
@@ -109,12 +96,7 @@ const sendImportNotificationEmail = async (emails, results, user) => {
     <h3>✅ Successfully Updated Products</h3>
     <table>
       <thead>
-        <tr>
-          <th>SKU</th>
-          <th>Product Name</th>
-          <th>Supplier</th>
-          <th>Changes</th>
-        </tr>
+        <tr><th>SKU</th><th>Product Name</th><th>Supplier</th><th>Changes</th></tr>
       </thead>
       <tbody>
         ${results.successful
@@ -123,18 +105,13 @@ const sendImportNotificationEmail = async (emails, results, user) => {
           <tr>
             <td>${item.sku}</td>
             <td>${item.productName}</td>
-            <td>
-              ${item.supplier || "N/A"}
-              ${item.updates.supplier ? '<span class="badge badge-new">NEW</span>' : ""}
-            </td>
-            <td style="font-size: 11px;">
-              ${Object.keys(item.updates)
-                .map(
-                  (key) =>
-                    `<strong>${key}:</strong> ${item.updates[key].from} → ${item.updates[key].to}`,
-                )
-                .join("<br>")}
-            </td>
+            <td>${item.supplier || "N/A"}${item.updates.supplier ? '<span class="badge badge-new">NEW</span>' : ""}</td>
+            <td style="font-size: 11px;">${Object.keys(item.updates)
+              .map(
+                (key) =>
+                  `<strong>${key}:</strong> ${item.updates[key].from} → ${item.updates[key].to}`,
+              )
+              .join("<br>")}</td>
           </tr>
         `,
           )
@@ -151,11 +128,7 @@ const sendImportNotificationEmail = async (emails, results, user) => {
     <h3>❌ Failed Updates</h3>
     <table>
       <thead>
-        <tr>
-          <th>SKU</th>
-          <th>Product Name</th>
-          <th>Reason</th>
-        </tr>
+        <tr><th>SKU</th><th>Product Name</th><th>Reason</th></tr>
       </thead>
       <tbody>
         ${results.failed
@@ -195,20 +168,9 @@ const sendImportNotificationEmail = async (emails, results, user) => {
 
     console.log("✅ Import notification email sent successfully");
     console.log("📧 Message ID:", info.messageId);
-    console.log("📧 Accepted:", info.accepted);
-    console.log("📧 Rejected:", info.rejected);
-
     return info;
   } catch (error) {
     console.error("❌ ERROR sending import notification email:", error);
-    console.error("❌ Error details:", {
-      message: error.message,
-      code: error.code,
-      command: error.command,
-    });
-
-    // Don't throw - we don't want email failures to break the import
-    // But log it prominently
     console.error(
       "⚠️  EMAIL SENDING FAILED - Import completed but notification not sent",
     );
@@ -218,11 +180,12 @@ const sendImportNotificationEmail = async (emails, results, user) => {
 // ==========================================
 // VALIDATION FUNCTIONS
 // ==========================================
-const validateStockData = (data) => {
+
+// FIXED: Simplified validation - Stock on Arrival, Supplier, Packaging have NO effect on validation
+const validateStockUpdate = (data) => {
   const errors = [];
 
-  // Convert to numbers
-  const stockOnArrival = parseFloat(data.stockOnArrival) || 0;
+  // Parse all values to numbers to avoid string comparison issues
   const stockInHouse = parseFloat(data.stockInHouse) || 0;
   const damagedQty = parseFloat(data.damagedQty) || 0;
   const expiredQty = parseFloat(data.expiredQty) || 0;
@@ -231,68 +194,63 @@ const validateStockData = (data) => {
   const onlineStock = parseFloat(data.onlineStock) || 0;
   const offlineStock = parseFloat(data.offlineStock) || 0;
 
-  // Validation 1: All quantities must be non-negative
-  if (stockOnArrival < 0) errors.push("Stock on arrival cannot be negative");
-  if (stockInHouse < 0) errors.push("Stock in house cannot be negative");
-  if (damagedQty < 0) errors.push("Damaged quantity cannot be negative");
-  if (expiredQty < 0) errors.push("Expired quantity cannot be negative");
-  if (refurbishedQty < 0)
-    errors.push("Refurbished quantity cannot be negative");
-  if (finalStock < 0) errors.push("Final stock cannot be negative");
-  if (onlineStock < 0) errors.push("Online stock cannot be negative");
-  if (offlineStock < 0) errors.push("Offline stock cannot be negative");
+  // Rule 1: All quantities must be non-negative
+  const quantities = [
+    { name: "Stock In House", value: stockInHouse },
+    { name: "Damaged Qty", value: damagedQty },
+    { name: "Expired Qty", value: expiredQty },
+    { name: "Refurbished Qty", value: refurbishedQty },
+    { name: "Final Stock", value: finalStock },
+    { name: "Online Stock", value: onlineStock },
+    { name: "Offline Stock", value: offlineStock },
+  ];
 
-  // Validation 2: Final stock must be <= stock in house
+  quantities.forEach(({ name, value }) => {
+    if (value < 0) {
+      errors.push(`${name} cannot be negative`);
+    }
+  });
+
+  // Rule 2: Final Stock cannot exceed Stock In House
   if (finalStock > stockInHouse) {
     errors.push(
-      `Final stock (${finalStock}) cannot be greater than stock in house (${stockInHouse})`,
+      `Final Stock (${finalStock}) cannot exceed Stock In House (${stockInHouse})`,
     );
   }
 
-  // Validation 3: Online + Offline stock cannot exceed final stock
-  const totalDistribution = onlineStock + offlineStock;
-  if (totalDistribution > finalStock) {
+  // Rule 3: Online + Offline cannot exceed Final Stock
+  if (onlineStock + offlineStock > finalStock) {
     errors.push(
-      `Total distribution (Online: ${onlineStock} + Offline: ${offlineStock} = ${totalDistribution}) cannot exceed final stock (${finalStock})`,
+      `Online Stock (${onlineStock}) + Offline Stock (${offlineStock}) = ${onlineStock + offlineStock} exceeds Final Stock (${finalStock})`,
     );
   }
 
-  // Validation 4: Stock in house should account for quality issues
-  const qualityAffectedStock = damagedQty + expiredQty + refurbishedQty;
-  const expectedStockInHouse = stockOnArrival - qualityAffectedStock;
-
-  // This is a warning, not an error - allow some flexibility
-  if (Math.abs(stockInHouse - expectedStockInHouse) > 1) {
+  // Rule 4: Stock In House must equal Damaged + Expired + Refurbished + Final Stock
+  // Use Math.round to avoid floating point precision issues (e.g. 12.000000001 !== 12)
+  const calculatedStockInHouse =
+    damagedQty + expiredQty + refurbishedQty + finalStock;
+  if (
+    Math.round(stockInHouse * 100) !== Math.round(calculatedStockInHouse * 100)
+  ) {
     errors.push(
-      `Stock in house (${stockInHouse}) should approximately equal stock on arrival (${stockOnArrival}) minus quality issues (Damaged: ${damagedQty} + Expired: ${expiredQty} + Refurbished: ${refurbishedQty} = ${qualityAffectedStock}). Expected: ${expectedStockInHouse}`,
-    );
-  }
-
-  // Validation 5: Final stock calculation check
-  const calculatedFinalStock = stockInHouse - damagedQty - expiredQty;
-  if (Math.abs(finalStock - calculatedFinalStock) > 1) {
-    errors.push(
-      `Final stock (${finalStock}) should approximately equal stock in house (${stockInHouse}) minus damaged (${damagedQty}) and expired (${expiredQty}). Expected: ${calculatedFinalStock}`,
+      `Stock In House (${stockInHouse}) must equal Damaged (${damagedQty}) + Expired (${expiredQty}) + Refurbished (${refurbishedQty}) + Final Stock (${finalStock}) = ${calculatedStockInHouse}`,
     );
   }
 
   return {
     isValid: errors.length === 0,
     errors,
-    validated: {
-      stockOnArrival,
-      stockInHouse,
-      damagedQty,
-      expiredQty,
-      refurbishedQty,
-      finalStock,
-      onlineStock,
-      offlineStock,
-    },
   };
 };
 
-// Enhanced activity logging with database persistence
+// Legacy validation (used only for CSV import compatibility check)
+const validateStockData = (data) => {
+  return validateStockUpdate(data);
+};
+
+// ==========================================
+// ACTIVITY LOGGING
+// ==========================================
 const logActivity = async (
   user,
   action,
@@ -319,7 +277,6 @@ const logActivity = async (
         sessionId: metadata.sessionId || "",
       },
     });
-
     await activity.save();
     return activity;
   } catch (error) {
@@ -327,7 +284,9 @@ const logActivity = async (
   }
 };
 
-// Helper function to sync stock from Stock model
+// ==========================================
+// STOCK SYNC HELPERS
+// ==========================================
 const syncStockFromStockModel = async (productId) => {
   try {
     const stockBatches = await StockModel.find({
@@ -368,7 +327,7 @@ const syncStockFromStockModel = async (productId) => {
       damagedQty: totals.damagedQuantity,
       expiredQty: totals.expiredQuantity,
       refurbishedQty: totals.refurbishedQuantity,
-      finalStock: finalStock,
+      finalStock,
       onlineStock: totals.onlineStock,
       offlineStock: totals.offlineStock,
       source: "STOCK_BATCHES",
@@ -380,7 +339,6 @@ const syncStockFromStockModel = async (productId) => {
   }
 };
 
-// Helper function to get effective stock
 const getEffectiveStock = async (product) => {
   if (product.warehouseStock?.enabled) {
     return {
@@ -401,7 +359,6 @@ const getEffectiveStock = async (product) => {
     };
   } else {
     const stockTotals = await syncStockFromStockModel(product._id);
-
     if (stockTotals) {
       return {
         ...stockTotals,
@@ -429,77 +386,52 @@ const getEffectiveStock = async (product) => {
   }
 };
 
-// Helper function to generate slug from supplier name
+// ==========================================
+// SUPPLIER HELPERS
+// ==========================================
 const generateSupplierSlug = (name) => {
   return name
     .toLowerCase()
     .trim()
-    .replace(/[^\w\s-]/g, "") // Remove special characters
-    .replace(/\s+/g, "-") // Replace spaces with hyphens
-    .replace(/-+/g, "-"); // Replace multiple hyphens with single hyphen
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
 };
 
-// Enhanced validation function
-const validateStockUpdate = (data) => {
-  const errors = [];
-
-  const {
-    stockInHouse = 0,
-    damagedQty = 0,
-    expiredQty = 0,
-    refurbishedQty = 0,
-    finalStock = 0,
-    onlineStock = 0,
-    offlineStock = 0,
-  } = data;
-
-  // Validation 1: Online + Offline cannot exceed Final Stock
-  if (onlineStock + offlineStock > finalStock) {
-    errors.push(
-      `Distribution error: Online (${onlineStock}) + Offline (${offlineStock}) = ${onlineStock + offlineStock} exceeds Final Stock (${finalStock})`,
-    );
+const findOrCreateSupplier = async (supplierName) => {
+  if (!supplierName || supplierName.trim() === "") {
+    return null;
   }
 
-  // Validation 2: Final Stock cannot exceed Stock In House
-  if (finalStock > stockInHouse) {
-    errors.push(
-      `Final Stock (${finalStock}) cannot exceed Stock In House (${stockInHouse})`,
-    );
-  }
+  const trimmedName = supplierName.trim();
 
-  // Validation 3: Stock In House should equal Damaged + Expired + Refurbished + Final Stock
-  const calculatedStockInHouse =
-    damagedQty + expiredQty + refurbishedQty + finalStock;
-  if (Math.abs(stockInHouse - calculatedStockInHouse) > 0.01) {
-    errors.push(
-      `Stock In House (${stockInHouse}) must equal Damaged (${damagedQty}) + Expired (${expiredQty}) + Refurbished (${refurbishedQty}) + Final Stock (${finalStock}) = ${calculatedStockInHouse}`,
-    );
-  }
-
-  // Validation 4: All quantities must be non-negative
-  const quantities = [
-    { name: "Stock In House", value: stockInHouse },
-    { name: "Damaged", value: damagedQty },
-    { name: "Expired", value: expiredQty },
-    { name: "Refurbished", value: refurbishedQty },
-    { name: "Final Stock", value: finalStock },
-    { name: "Online Stock", value: onlineStock },
-    { name: "Offline Stock", value: offlineStock },
-  ];
-
-  quantities.forEach(({ name, value }) => {
-    if (value < 0) {
-      errors.push(`${name} cannot be negative`);
-    }
+  let supplier = await SupplierModel.findOne({
+    name: { $regex: new RegExp(`^${trimmedName}$`, "i") },
   });
 
-  return {
-    isValid: errors.length === 0,
-    errors,
-  };
+  if (supplier) {
+    const expectedSlug = generateSupplierSlug(trimmedName);
+    if (!supplier.slug || supplier.slug !== expectedSlug) {
+      supplier.slug = expectedSlug;
+      await supplier.save();
+    }
+    return supplier._id;
+  }
+
+  const newSupplier = new SupplierModel({
+    name: trimmedName,
+    slug: generateSupplierSlug(trimmedName),
+    status: "INACTIVE",
+  });
+
+  await newSupplier.save();
+  return newSupplier._id;
 };
 
-// Update product weight
+// ==========================================
+// EXPORTED CONTROLLERS
+// ==========================================
+
 export const updateWeight = async (request, response) => {
   try {
     const { productId, weight } = request.body;
@@ -540,24 +472,15 @@ export const updateWeight = async (request, response) => {
 
     const changes = {};
     if (currentProduct.weight !== weight) {
-      changes.weight = {
-        from: currentProduct.weight || 0,
-        to: weight,
-      };
+      changes.weight = { from: currentProduct.weight || 0, to: weight };
     }
-
-    const updateData = {
-      weight,
-      updatedBy: request.user._id,
-    };
 
     const updatedProduct = await ProductModel.findByIdAndUpdate(
       productId,
-      updateData,
+      { weight, updatedBy: request.user._id },
       { new: true, runValidators: true },
     ).populate("category brand compatibleSystem", "name");
 
-    // Log activity
     await logActivity(
       request.user,
       "WEIGHT_UPDATE",
@@ -569,10 +492,7 @@ export const updateWeight = async (request, response) => {
       },
       changes,
       "Product weight updated",
-      {
-        ip: request.ip,
-        userAgent: request.headers["user-agent"],
-      },
+      { ip: request.ip, userAgent: request.headers["user-agent"] },
     );
 
     return response.json({
@@ -591,7 +511,6 @@ export const updateWeight = async (request, response) => {
   }
 };
 
-// Get activity log with real database data
 export const getActivityLog = async (request, response) => {
   try {
     const {
@@ -605,22 +524,14 @@ export const getActivityLog = async (request, response) => {
 
     const query = {};
 
-    // Date range filter
     if (dateRange && dateRange !== "all") {
       const daysAgo = parseInt(dateRange);
       const cutoffDate = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
       query.createdAt = { $gte: cutoffDate };
     }
 
-    // Action filter
-    if (action) {
-      query.action = action;
-    }
-
-    // User filter
-    if (userId) {
-      query.user = userId;
-    }
+    if (action) query.action = action;
+    if (userId) query.user = userId;
 
     const skip = (page - 1) * limit;
     const sort = { createdAt: sortOrder === "asc" ? 1 : -1 };
@@ -635,7 +546,6 @@ export const getActivityLog = async (request, response) => {
       WarehouseActivityModel.countDocuments(query),
     ]);
 
-    // Format activities for response
     const formattedActivities = activities.map((activity) => ({
       id: activity._id,
       timestamp: activity.createdAt,
@@ -672,7 +582,6 @@ export const getActivityLog = async (request, response) => {
   }
 };
 
-// Enable system
 export const enableSystem = async (request, response) => {
   try {
     const userRole = request.user.subRole || request.user.role;
@@ -689,16 +598,10 @@ export const enableSystem = async (request, response) => {
     await logActivity(
       request.user,
       "SYSTEM_ENABLED",
-      {
-        type: "SYSTEM",
-        name: "Warehouse Stock Management",
-      },
+      { type: "SYSTEM", name: "Warehouse Stock Management" },
       null,
       "Enabled manual stock management for warehouse team",
-      {
-        ip: request.ip,
-        userAgent: request.headers["user-agent"],
-      },
+      { ip: request.ip, userAgent: request.headers["user-agent"] },
     );
 
     return response.json({
@@ -717,7 +620,6 @@ export const enableSystem = async (request, response) => {
   }
 };
 
-// Disable system
 export const disableSystem = async (request, response) => {
   try {
     const userRole = request.user.subRole || request.user.role;
@@ -734,16 +636,10 @@ export const disableSystem = async (request, response) => {
     await logActivity(
       request.user,
       "SYSTEM_DISABLED",
-      {
-        type: "SYSTEM",
-        name: "Warehouse Stock Management",
-      },
+      { type: "SYSTEM", name: "Warehouse Stock Management" },
       null,
       "Disabled manual stock management",
-      {
-        ip: request.ip,
-        userAgent: request.headers["user-agent"],
-      },
+      { ip: request.ip, userAgent: request.headers["user-agent"] },
     );
 
     return response.json({
@@ -762,7 +658,6 @@ export const disableSystem = async (request, response) => {
   }
 };
 
-// Continue with remaining controller functions...
 export const disableWarehouseOverride = async (request, response) => {
   try {
     const { productId } = request.params;
@@ -788,16 +683,14 @@ export const disableWarehouseOverride = async (request, response) => {
     const stockTotals = await syncStockFromStockModel(productId);
     const newStock = stockTotals ? stockTotals.finalStock : product.stock || 0;
 
-    const updateData = {
-      "warehouseStock.enabled": false,
-      stock: newStock,
-      stockSource: stockTotals ? "STOCK_BATCHES" : "PRODUCT_DEFAULT",
-      updatedBy: request.user._id,
-    };
-
     const updatedProduct = await ProductModel.findByIdAndUpdate(
       productId,
-      updateData,
+      {
+        "warehouseStock.enabled": false,
+        stock: newStock,
+        stockSource: stockTotals ? "STOCK_BATCHES" : "PRODUCT_DEFAULT",
+        updatedBy: request.user._id,
+      },
       { new: true, runValidators: true },
     );
 
@@ -812,10 +705,7 @@ export const disableWarehouseOverride = async (request, response) => {
       },
       null,
       "Warehouse manual override disabled, synced from stock batches",
-      {
-        ip: request.ip,
-        userAgent: request.headers["user-agent"],
-      },
+      { ip: request.ip, userAgent: request.headers["user-agent"] },
     );
 
     return response.json({
@@ -858,7 +748,6 @@ export const syncAllFromStockModel = async (request, response) => {
     for (const product of products) {
       try {
         const stockTotals = await syncStockFromStockModel(product._id);
-
         if (stockTotals) {
           await ProductModel.findByIdAndUpdate(product._id, {
             stock: stockTotals.finalStock,
@@ -876,25 +765,15 @@ export const syncAllFromStockModel = async (request, response) => {
     await logActivity(
       request.user,
       "BULK_STOCK_SYNC",
-      {
-        type: "SYSTEM",
-        name: "Stock Synchronization",
-      },
+      { type: "SYSTEM", name: "Stock Synchronization" },
       null,
       `Synced ${syncedCount} products, ${errorCount} errors`,
-      {
-        ip: request.ip,
-        userAgent: request.headers["user-agent"],
-      },
+      { ip: request.ip, userAgent: request.headers["user-agent"] },
     );
 
     return response.json({
       message: "Bulk stock sync completed",
-      data: {
-        totalProducts: products.length,
-        syncedCount,
-        errorCount,
-      },
+      data: { totalProducts: products.length, syncedCount, errorCount },
       error: false,
       success: true,
     });
@@ -971,10 +850,7 @@ export const getSystemStatus = async (request, response) => {
   try {
     return response.json({
       message: "System status retrieved successfully",
-      data: {
-        enabled: systemSettings.enabled,
-        settings: systemSettings,
-      },
+      data: { enabled: systemSettings.enabled, settings: systemSettings },
       error: false,
       success: true,
     });
@@ -1001,7 +877,6 @@ export const updateSystemSettings = async (request, response) => {
 
     const { autoSyncEnabled, lowStockThreshold, criticalStockThreshold } =
       request.body;
-
     const changes = {};
 
     if (
@@ -1059,16 +934,10 @@ export const updateSystemSettings = async (request, response) => {
       await logActivity(
         request.user,
         "SETTINGS_UPDATE",
-        {
-          type: "SYSTEM",
-          name: "System Settings",
-        },
+        { type: "SYSTEM", name: "System Settings" },
         changes,
         "System settings updated",
-        {
-          ip: request.ip,
-          userAgent: request.headers["user-agent"],
-        },
+        { ip: request.ip, userAgent: request.headers["user-agent"] },
       );
     }
 
@@ -1119,7 +988,6 @@ export const getLowStockAlerts = async (request, response) => {
     for (const product of products) {
       const effectiveStock = await getEffectiveStock(product);
       const stock = effectiveStock.finalStock;
-
       const productData = {
         ...product,
         effectiveStock: stock,
@@ -1199,32 +1067,28 @@ export const bulkUpdateStock = async (request, response) => {
           continue;
         }
 
-        const updateData = {
-          "warehouseStock.enabled": true,
-          "warehouseStock.stockOnArrival": update.stockOnArrival,
-          "warehouseStock.damagedQty": update.damagedQty,
-          "warehouseStock.expiredQty": update.expiredQty,
-          "warehouseStock.refurbishedQty": update.refurbishedQty,
-          "warehouseStock.finalStock": update.finalStock,
-          "warehouseStock.onlineStock": update.onlineStock,
-          "warehouseStock.offlineStock": update.offlineStock,
-          "warehouseStock.notes": update.notes,
-          "warehouseStock.lastUpdated": new Date(),
-          "warehouseStock.updatedBy": request.user._id,
-          stock: update.finalStock,
-          stockSource: "WAREHOUSE_MANUAL",
-          updatedBy: request.user._id,
-        };
+        await ProductModel.findByIdAndUpdate(
+          update.productId,
+          {
+            "warehouseStock.enabled": true,
+            "warehouseStock.stockOnArrival": update.stockOnArrival,
+            "warehouseStock.damagedQty": update.damagedQty,
+            "warehouseStock.expiredQty": update.expiredQty,
+            "warehouseStock.refurbishedQty": update.refurbishedQty,
+            "warehouseStock.finalStock": update.finalStock,
+            "warehouseStock.onlineStock": update.onlineStock,
+            "warehouseStock.offlineStock": update.offlineStock,
+            "warehouseStock.notes": update.notes,
+            "warehouseStock.lastUpdated": new Date(),
+            "warehouseStock.updatedBy": request.user._id,
+            stock: update.finalStock,
+            stockSource: "WAREHOUSE_MANUAL",
+            updatedBy: request.user._id,
+          },
+          { new: true, runValidators: true },
+        );
 
-        await ProductModel.findByIdAndUpdate(update.productId, updateData, {
-          new: true,
-          runValidators: true,
-        });
-
-        results.push({
-          productId: update.productId,
-          success: true,
-        });
+        results.push({ productId: update.productId, success: true });
 
         await logActivity(
           request.user,
@@ -1237,10 +1101,7 @@ export const bulkUpdateStock = async (request, response) => {
           },
           null,
           `Bulk update: ${update.notes || "No notes"}`,
-          {
-            ip: request.ip,
-            userAgent: request.headers["user-agent"],
-          },
+          { ip: request.ip, userAgent: request.headers["user-agent"] },
         );
       } catch (error) {
         errors.push(`Error updating ${update.productId}: ${error.message}`);
@@ -1298,7 +1159,7 @@ export const reconcileStock = async (request, response) => {
     const currentStock = effectiveStock.finalStock;
     const difference = actualCount - currentStock;
 
-    const updateData = {
+    await ProductModel.findByIdAndUpdate(productId, {
       "warehouseStock.enabled": true,
       "warehouseStock.finalStock": actualCount,
       "warehouseStock.lastUpdated": new Date(),
@@ -1306,30 +1167,15 @@ export const reconcileStock = async (request, response) => {
       stock: actualCount,
       stockSource: "WAREHOUSE_MANUAL",
       updatedBy: request.user._id,
-    };
-
-    await ProductModel.findByIdAndUpdate(productId, updateData);
+    });
 
     await logActivity(
       request.user,
       "STOCK_RECONCILIATION",
-      {
-        type: "PRODUCT",
-        id: productId,
-        name: product.name,
-        sku: product.sku,
-      },
-      {
-        finalStock: {
-          from: currentStock,
-          to: actualCount,
-        },
-      },
+      { type: "PRODUCT", id: productId, name: product.name, sku: product.sku },
+      { finalStock: { from: currentStock, to: actualCount } },
       `Stock reconciliation: ${difference > 0 ? "+" : ""}${difference} units`,
-      {
-        ip: request.ip,
-        userAgent: request.headers["user-agent"],
-      },
+      { ip: request.ip, userAgent: request.headers["user-agent"] },
     );
 
     return response.json({
@@ -1356,7 +1202,6 @@ export const reconcileStock = async (request, response) => {
 export const exportStockData = async (request, response) => {
   try {
     const { category, brand, productType, compatibleSystem } = request.query;
-
     const query = {};
 
     if (category) query.category = category;
@@ -1434,7 +1279,6 @@ export const exportStockData = async (request, response) => {
 export const exportActivityLog = async (request, response) => {
   try {
     const { dateRange, action, userId } = request.query;
-
     const query = {};
 
     if (dateRange && dateRange !== "all") {
@@ -1443,13 +1287,8 @@ export const exportActivityLog = async (request, response) => {
       query.createdAt = { $gte: cutoffDate };
     }
 
-    if (action) {
-      query.action = action;
-    }
-
-    if (userId) {
-      query.user = userId;
-    }
+    if (action) query.action = action;
+    if (userId) query.user = userId;
 
     const activities = await WarehouseActivityModel.find(query)
       .populate("user", "name email subRole role")
@@ -1504,7 +1343,6 @@ export const exportActivityLog = async (request, response) => {
   }
 };
 
-// Get list of users for activity log filter
 export const getWarehouseUsers = async (request, response) => {
   try {
     const users = await UserModel.find({
@@ -1536,8 +1374,6 @@ export const getWarehouseUsers = async (request, response) => {
   }
 };
 
-// UPDATED: Enhanced CSV export with supplie
-
 export const exportStockCSV = async (request, response) => {
   try {
     const {
@@ -1548,8 +1384,8 @@ export const exportStockCSV = async (request, response) => {
       supplier,
       columns = "all",
     } = request.query;
-
     const query = {};
+
     if (category) query.category = category;
     if (brand) query.brand = { $in: [brand] };
     if (productType) query.productType = productType;
@@ -1562,7 +1398,6 @@ export const exportStockCSV = async (request, response) => {
 
     const selectedColumns = columns.split(",");
 
-    // BASE HEADERS - ALWAYS INCLUDED (cannot be excluded)
     const headers = [
       "Product Name",
       "SKU",
@@ -1573,7 +1408,6 @@ export const exportStockCSV = async (request, response) => {
       "Stock In House",
     ];
 
-    // OPTIONAL COLUMNS - Based on selection
     if (columns === "all" || selectedColumns.includes("damaged"))
       headers.push("Damaged Qty");
     if (columns === "all" || selectedColumns.includes("expired"))
@@ -1604,7 +1438,6 @@ export const exportStockCSV = async (request, response) => {
             notes: "",
           };
 
-      // BASE ROW - ALWAYS INCLUDED
       const row = [
         product.name || "",
         product.sku || "",
@@ -1615,7 +1448,6 @@ export const exportStockCSV = async (request, response) => {
         stock.stockInHouse || 0,
       ];
 
-      // OPTIONAL COLUMNS - Based on selection
       if (columns === "all" || selectedColumns.includes("damaged"))
         row.push(stock.damagedQty || 0);
       if (columns === "all" || selectedColumns.includes("expired"))
@@ -1661,7 +1493,6 @@ export const exportStockCSV = async (request, response) => {
   }
 };
 
-// UPDATED: Enhanced PDF export with supplier
 export const exportStockPDF = async (request, response) => {
   let doc;
 
@@ -1674,8 +1505,8 @@ export const exportStockPDF = async (request, response) => {
       supplier,
       columns = "all",
     } = request.query;
-
     const query = {};
+
     if (category) query.category = category;
     if (brand) query.brand = { $in: [brand] };
     if (productType) query.productType = productType;
@@ -1706,15 +1537,9 @@ export const exportStockPDF = async (request, response) => {
       "Cache-Control": "no-cache",
     });
 
-    doc = new PDFDocument({
-      margin: 30,
-      size: "A4",
-      layout: "landscape",
-    });
-
+    doc = new PDFDocument({ margin: 30, size: "A4", layout: "landscape" });
     doc.pipe(response);
 
-    // Title
     doc
       .fontSize(18)
       .font("Helvetica-Bold")
@@ -1725,23 +1550,17 @@ export const exportStockPDF = async (request, response) => {
       .text(`Products: ${products.length}`, { align: "center" })
       .moveDown(2);
 
-    // Legend for color coding
-    doc.fontSize(8);
     const legendY = 120;
-    doc.fillColor("#dc3545").text("█ Out of Stock", 50, legendY);
+    doc.fontSize(8).fillColor("#dc3545").text("█ Out of Stock", 50, legendY);
     doc.fillColor("#fd7e14").text("█ Low Stock", 150, legendY);
     doc.fillColor("#28a745").text("█ In Stock", 250, legendY);
     doc.fillColor("#000000");
-    doc.moveDown();
 
-    // Table
     const startY = 140;
     let y = startY;
     const lineHeight = 18;
-
     const selectedColumns = columns.split(",");
 
-    // Headers
     doc.fontSize(7).font("Helvetica-Bold");
     let x = 30;
     const colWidths = {
@@ -1814,7 +1633,6 @@ export const exportStockPDF = async (request, response) => {
     doc.moveTo(30, y).lineTo(800, y).stroke();
     y += 5;
 
-    // Products with color coding
     doc.fontSize(6).font("Helvetica");
 
     products.forEach((product) => {
@@ -1836,20 +1654,15 @@ export const exportStockPDF = async (request, response) => {
             offlineStock: 0,
           };
 
-      // Determine row color based on stock status
       const finalStock = stock.finalStock || 0;
-      let rowColor = "#000000";
-      if (finalStock === 0) {
-        rowColor = "#dc3545";
-      } else if (finalStock <= systemSettings.lowStockThreshold) {
+      let rowColor = "#28a745";
+      if (finalStock === 0) rowColor = "#dc3545";
+      else if (finalStock <= systemSettings.lowStockThreshold)
         rowColor = "#fd7e14";
-      } else {
-        rowColor = "#28a745";
-      }
 
       doc.fillColor(rowColor);
-
       x = 30;
+
       doc.text(product.name?.substring(0, 15) || "", x, y, {
         width: colWidths.product,
       });
@@ -1947,7 +1760,6 @@ export const exportStockPDF = async (request, response) => {
   }
 };
 
-// NEW: Get all suppliers for filter dropdown
 export const getSuppliers = async (request, response) => {
   try {
     const suppliers = await SupplierModel.find({ status: "ACTIVE" })
@@ -1970,41 +1782,6 @@ export const getSuppliers = async (request, response) => {
   }
 };
 
-// Helper function to find or create supplier
-const findOrCreateSupplier = async (supplierName) => {
-  if (!supplierName || supplierName.trim() === "") {
-    return null;
-  }
-
-  const trimmedName = supplierName.trim();
-
-  // Try to find existing supplier by name (case-insensitive)
-  let supplier = await SupplierModel.findOne({
-    name: { $regex: new RegExp(`^${trimmedName}$`, "i") },
-  });
-
-  if (supplier) {
-    // Update slug if it doesn't exist or is outdated
-    const expectedSlug = generateSupplierSlug(trimmedName);
-    if (!supplier.slug || supplier.slug !== expectedSlug) {
-      supplier.slug = expectedSlug;
-      await supplier.save();
-    }
-    return supplier._id;
-  }
-
-  // Create new supplier if not found
-  const newSupplier = new SupplierModel({
-    name: trimmedName,
-    slug: generateSupplierSlug(trimmedName),
-    status: "INACTIVE", // New suppliers start as inactive until reviewed
-  });
-
-  await newSupplier.save();
-  return newSupplier._id;
-};
-
-// UPDATED: getProductsForStock with supplier
 export const getProductsForStock = async (request, response) => {
   try {
     const {
@@ -2015,7 +1792,7 @@ export const getProductsForStock = async (request, response) => {
       brand,
       productType,
       compatibleSystem,
-      supplier, // NEW
+      supplier,
     } = request.query;
 
     const query = {};
@@ -2032,7 +1809,7 @@ export const getProductsForStock = async (request, response) => {
     if (brand) query.brand = { $in: [brand] };
     if (productType) query.productType = productType;
     if (compatibleSystem) query.compatibleSystem = compatibleSystem;
-    if (supplier) query.supplier = supplier; // NEW
+    if (supplier) query.supplier = supplier;
 
     const skip = (page - 1) * limit;
 
@@ -2041,7 +1818,7 @@ export const getProductsForStock = async (request, response) => {
         .populate("category", "name")
         .populate("brand", "name")
         .populate("compatibleSystem", "name")
-        .populate("supplier", "name slug") // NEW
+        .populate("supplier", "name slug")
         .sort({ name: 1 })
         .skip(skip)
         .limit(parseInt(limit))
@@ -2052,10 +1829,7 @@ export const getProductsForStock = async (request, response) => {
     const productsWithStock = await Promise.all(
       products.map(async (product) => {
         const effectiveStock = await getEffectiveStock(product);
-        return {
-          ...product,
-          warehouseStock: effectiveStock,
-        };
+        return { ...product, warehouseStock: effectiveStock };
       }),
     );
 
@@ -2078,7 +1852,9 @@ export const getProductsForStock = async (request, response) => {
   }
 };
 
-// UPDATED: updateStock with supplier support
+// ==========================================
+// MAIN UPDATE STOCK - FIXED VALIDATION
+// ==========================================
 export const updateStock = async (request, response) => {
   try {
     const {
@@ -2094,7 +1870,7 @@ export const updateStock = async (request, response) => {
       notes,
       unit,
       packaging,
-      supplierName, // NEW: Accept supplier name instead of ID
+      supplierName,
     } = request.body;
 
     if (!systemSettings.enabled) {
@@ -2122,16 +1898,20 @@ export const updateStock = async (request, response) => {
       });
     }
 
-    // Validate stock data
-    const validation = validateStockUpdate({
-      stockInHouse,
-      damagedQty,
-      expiredQty,
-      refurbishedQty,
-      finalStock,
-      onlineStock,
-      offlineStock,
-    });
+    // Parse all values to numbers before validation
+    // NOTE: stockOnArrival, supplierName, unit, packaging are NOT validated
+    const parsedData = {
+      stockInHouse: parseFloat(stockInHouse) || 0,
+      damagedQty: parseFloat(damagedQty) || 0,
+      expiredQty: parseFloat(expiredQty) || 0,
+      refurbishedQty: parseFloat(refurbishedQty) || 0,
+      finalStock: parseFloat(finalStock) || 0,
+      onlineStock: parseFloat(onlineStock) || 0,
+      offlineStock: parseFloat(offlineStock) || 0,
+    };
+
+    // Validate stock data - only the 7 core fields
+    const validation = validateStockUpdate(parsedData);
 
     if (!validation.isValid) {
       return response.status(400).json({
@@ -2154,7 +1934,7 @@ export const updateStock = async (request, response) => {
       });
     }
 
-    // Handle supplier update
+    // Handle supplier - find or create if name provided
     let supplierId = currentProduct.supplier?._id;
     if (supplierName && supplierName.trim() !== "") {
       supplierId = await findOrCreateSupplier(supplierName);
@@ -2162,11 +1942,11 @@ export const updateStock = async (request, response) => {
 
     const currentEffectiveStock = await getEffectiveStock(currentProduct);
 
-    // Track changes
+    // Track changes for activity log
     const changes = {};
     const oldStock = {
       stockOnArrival: currentEffectiveStock.stockOnArrival,
-      stockInHouse: currentProduct.warehouseStock?.stockInHouse || 0,
+      stockInHouse: currentEffectiveStock.stockInHouse,
       damagedQty: currentEffectiveStock.damagedQty,
       expiredQty: currentEffectiveStock.expiredQty,
       refurbishedQty: currentEffectiveStock.refurbishedQty,
@@ -2179,52 +1959,48 @@ export const updateStock = async (request, response) => {
     };
 
     const newStock = {
-      stockOnArrival,
-      stockInHouse,
-      damagedQty,
-      expiredQty,
-      refurbishedQty,
-      finalStock,
-      onlineStock,
-      offlineStock,
-      unit,
-      packaging,
+      stockOnArrival: parseFloat(stockOnArrival) || 0,
+      stockInHouse: parsedData.stockInHouse,
+      damagedQty: parsedData.damagedQty,
+      expiredQty: parsedData.expiredQty,
+      refurbishedQty: parsedData.refurbishedQty,
+      finalStock: parsedData.finalStock,
+      onlineStock: parsedData.onlineStock,
+      offlineStock: parsedData.offlineStock,
+      unit: unit || currentProduct.unit,
+      packaging: packaging || currentProduct.packaging,
       supplier: supplierName || oldStock.supplier,
     };
 
     Object.keys(newStock).forEach((key) => {
       if (oldStock[key] !== newStock[key]) {
-        changes[key] = {
-          from: oldStock[key],
-          to: newStock[key],
-        };
+        changes[key] = { from: oldStock[key], to: newStock[key] };
       }
     });
 
-    // Update product
+    // Build update object using parsed (validated) values
     const updateData = {
       warehouseStock: {
         enabled: true,
-        stockOnArrival,
-        stockInHouse,
-        damagedQty,
-        expiredQty,
-        refurbishedQty,
-        finalStock,
-        onlineStock,
-        offlineStock,
-        notes,
+        stockOnArrival: parseFloat(stockOnArrival) || 0,
+        stockInHouse: parsedData.stockInHouse,
+        damagedQty: parsedData.damagedQty,
+        expiredQty: parsedData.expiredQty,
+        refurbishedQty: parsedData.refurbishedQty,
+        finalStock: parsedData.finalStock,
+        onlineStock: parsedData.onlineStock,
+        offlineStock: parsedData.offlineStock,
+        notes: notes || "",
         lastUpdated: new Date(),
         updatedBy: request.user._id,
       },
-      stock: finalStock,
+      stock: parsedData.finalStock,
       unit: unit || currentProduct.unit,
       packaging: packaging || currentProduct.packaging,
       stockSource: "WAREHOUSE_MANUAL",
       updatedBy: request.user._id,
     };
 
-    // Add supplier if provided
     if (supplierId) {
       updateData.supplier = supplierId;
     }
@@ -2235,7 +2011,6 @@ export const updateStock = async (request, response) => {
       { new: true, runValidators: true },
     ).populate("category brand compatibleSystem supplier", "name slug");
 
-    // Log activity
     await logActivity(
       request.user,
       "STOCK_UPDATE",
@@ -2246,11 +2021,8 @@ export const updateStock = async (request, response) => {
         sku: updatedProduct.sku,
       },
       changes,
-      notes,
-      {
-        ip: request.ip,
-        userAgent: request.headers["user-agent"],
-      },
+      notes || "",
+      { ip: request.ip, userAgent: request.headers["user-agent"] },
     );
 
     return response.json({
@@ -2269,8 +2041,9 @@ export const updateStock = async (request, response) => {
   }
 };
 
-// UPDATED: CSV Import with Supplier Support
-
+// ==========================================
+// CSV IMPORT
+// ==========================================
 export const importStockCSV = async (request, response) => {
   try {
     const userRole = request.user.subRole || request.user.role;
@@ -2300,7 +2073,6 @@ export const importStockCSV = async (request, response) => {
       });
     }
 
-    // Parse CSV
     const rows = [];
     const stream = Readable.from([csvData]);
 
@@ -2324,7 +2096,6 @@ export const importStockCSV = async (request, response) => {
       try {
         results.totalProcessed++;
 
-        // Find product by SKU
         const product = await ProductModel.findOne({
           sku: row["SKU"],
         }).populate("supplier", "name slug");
@@ -2338,7 +2109,6 @@ export const importStockCSV = async (request, response) => {
           continue;
         }
 
-        // Parse values with defaults
         const stockData = {
           stockInHouse: parseFloat(row["Stock In House"] || 0),
           damagedQty: parseFloat(row["Damaged Qty"] || 0),
@@ -2352,7 +2122,6 @@ export const importStockCSV = async (request, response) => {
           packaging: row["Packaging"] || product.packaging || "",
         };
 
-        // Handle supplier
         let supplierId = product.supplier?._id;
         let supplierName = product.supplier?.name || "";
 
@@ -2372,7 +2141,7 @@ export const importStockCSV = async (request, response) => {
           }
         }
 
-        // Validate
+        // Validate only the core stock fields
         const validation = validateStockUpdate(stockData);
 
         if (!validation.isValid) {
@@ -2384,7 +2153,6 @@ export const importStockCSV = async (request, response) => {
           continue;
         }
 
-        // Get old values for tracking
         const oldValues = {
           stockInHouse: product.warehouseStock?.stockInHouse || 0,
           finalStock: product.warehouseStock?.finalStock || product.stock || 0,
@@ -2398,7 +2166,6 @@ export const importStockCSV = async (request, response) => {
           supplier: product.supplier?.name || "None",
         };
 
-        // Update product
         const updateData = {
           warehouseStock: {
             enabled: true,
@@ -2414,27 +2181,20 @@ export const importStockCSV = async (request, response) => {
           updatedBy: request.user._id,
         };
 
-        if (supplierId) {
-          updateData.supplier = supplierId;
-        }
+        if (supplierId) updateData.supplier = supplierId;
 
         await ProductModel.findByIdAndUpdate(product._id, updateData, {
           new: true,
           runValidators: true,
         });
 
-        // Log activity
         const changes = {};
         Object.keys({ ...stockData, supplier: supplierName }).forEach((key) => {
           const oldVal =
             key === "supplier" ? oldValues.supplier : oldValues[key];
           const newVal = key === "supplier" ? supplierName : stockData[key];
-
           if (oldVal !== undefined && oldVal !== newVal) {
-            changes[key] = {
-              from: oldVal,
-              to: newVal,
-            };
+            changes[key] = { from: oldVal, to: newVal };
           }
         });
 
@@ -2448,11 +2208,8 @@ export const importStockCSV = async (request, response) => {
             sku: product.sku,
           },
           changes,
-          `CSV Import - Batch update`,
-          {
-            ip: request.ip,
-            userAgent: request.headers["user-agent"],
-          },
+          "CSV Import - Batch update",
+          { ip: request.ip, userAgent: request.headers["user-agent"] },
         );
 
         results.successful.push({
@@ -2470,44 +2227,24 @@ export const importStockCSV = async (request, response) => {
       }
     }
 
-    // MANDATORY EMAIL NOTIFICATION - Always send to default recipients
     try {
-      console.log("📧 Preparing email notification...");
-
-      // MANDATORY DEFAULT RECIPIENTS (always included)
       const mandatoryEmails = [
-        process.env.WAREHOUSE_ADMIN_EMAIL || "shipment2@yehgs.co.uk",
-        process.env.DIRECTOR_EMAIL || "md@yehgs.co.uk",
-        "webmaster@yehgs.co.uk", // IT Admin
-      ].filter(Boolean); // Remove any undefined/null values
-
-      // Parse additional emails from user input
+        "webmaster@yehgs.co.uk",
+        "shipment2@yehgs.co.uk",
+      ].filter(Boolean);
       const additionalEmails = notificationEmails.filter(
         (email) => email && email.trim() !== "",
       );
-
-      // Combine and remove duplicates
       const allEmails = [...new Set([...mandatoryEmails, ...additionalEmails])];
-
-      console.log("📧 Mandatory recipients:", mandatoryEmails.join(", "));
-      console.log(
-        "📧 Additional recipients:",
-        additionalEmails.join(", ") || "None",
-      );
-      console.log("📧 Total recipients:", allEmails.join(", "));
 
       if (allEmails.length > 0) {
         await sendImportNotificationEmail(allEmails, results, request.user);
         console.log(
           `✅ Import notification sent to ${allEmails.length} recipient(s)`,
         );
-      } else {
-        console.error("❌ No email recipients configured!");
       }
     } catch (emailError) {
       console.error("❌ Failed to send import notification email:", emailError);
-      // Don't fail the import if email fails, but log it prominently
-      console.warn("⚠️  IMPORT COMPLETED but email notification failed");
     }
 
     return response.json({
