@@ -16,6 +16,7 @@ import {
   importProductPricingCSV, // NEW
   exportProductPricingCSVPLM, // FIXED
   exportProductPricingPDFPLM, // FIXED
+  directImportProductPricingCSV,
 } from "../controllers/pricing.controller.js";
 
 const pricingRouter = Router();
@@ -59,5 +60,8 @@ pricingRouter.post(
 );
 
 pricingRouter.post("/bulk-recalculate", auth, bulkRecalculatePricesForCurrency);
+
+// Add after the existing import route:
+pricingRouter.post("/import/csv-direct", auth, directImportProductPricingCSV);
 
 export default pricingRouter;

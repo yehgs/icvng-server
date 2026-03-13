@@ -2230,3 +2230,135 @@ export const exportProductPricingPDFPLM = async (request, response) => {
     });
   }
 };
+
+// NEW: Direct price import - bypasses all calculations
+// CSV columns (all optional except SKU):
+//   SKU, Sale Price, BTB Price, BTC Price, Base Price, 3 Weeks Delivery, 5 Weeks Delivery
+export const directImportProductPricingCSV = async (request, response) => {
+  try {
+    if (!["ACCOUNTANT", "DIRECTOR", "IT"].includes(request.user.subRole)) {
+      return response.status(403).json({
+        message: "Only Accountant, Director, or IT can import pricing",
+        error: true,
+        success: false,
+      });
+    }
+
+    const { csvData } = request.body;
+
+    if (!csvData) {
+      return response.status(400).json({
+        message: "CSV data is required",
+        error: true,
+        success: false,
+      });
+    }
+
+    const PRICE_COLUMN_MAP = {
+      "Base Price": "price",
+      "Sale Price": "salePrice",
+      "BTB Price": "btbPrice",
+      "BTC Price": "btcPrice",
+      "3 Weeks Delivery": "price3weeksDelivery",
+      "5 Weeks Delivery": "price5weeksDelivery",
+    };
+
+    const rows = [];
+    const stream = Readable.from([csvData]);
+
+    await new Promise((resolve, reject) => {
+      stream
+        .pipe(csv())
+        .on("data", (row) => rows.push(row))
+        .on("end", resolve)
+        .on("error", reject);
+    });
+
+    const results = { successful: [], failed: [], totalProcessed: 0 };
+
+    for (const row of rows) {
+      try {
+        results.totalProcessed++;
+
+        const sku = (row["SKU"] || "").trim();
+        if (!sku) {
+          results.failed.push({ sku: "(empty)", reason: "Missing SKU" });
+          continue;
+        }
+
+        const product = await ProductModel.findOne({ sku });
+        if (!product) {
+          results.failed.push({ sku, reason: "Product not found" });
+          continue;
+        }
+
+        const updateFields = { updatedBy: request.user._id };
+        const updatedPriceFields = [];
+        let hasFailed = false;
+
+        for (const [csvCol, productField] of Object.entries(PRICE_COLUMN_MAP)) {
+          const rawValue = row[csvCol];
+          if (
+            rawValue === undefined ||
+            rawValue === null ||
+            String(rawValue).trim() === ""
+          ) {
+            continue; // skip empty cells
+          }
+
+          const parsed = parseFloat(String(rawValue).replace(/,/g, ""));
+          if (isNaN(parsed) || parsed < 0) {
+            results.failed.push({
+              sku,
+              reason: `Invalid value for "${csvCol}": ${rawValue}`,
+            });
+            hasFailed = true;
+            break;
+          }
+
+          updateFields[productField] = parsed;
+          updatedPriceFields.push(csvCol);
+        }
+
+        if (hasFailed) continue;
+
+        if (updatedPriceFields.length === 0) {
+          results.failed.push({
+            sku,
+            reason: "No price columns found in this row",
+          });
+          continue;
+        }
+
+        await ProductModel.findByIdAndUpdate(product._id, {
+          $set: updateFields,
+        });
+
+        results.successful.push({
+          sku,
+          name: product.name,
+          updatedFields: updatedPriceFields,
+        });
+      } catch (err) {
+        results.failed.push({
+          sku: row["SKU"] || "(unknown)",
+          reason: err.message,
+        });
+      }
+    }
+
+    return response.json({
+      message: `Direct import completed: ${results.successful.length} updated, ${results.failed.length} failed`,
+      data: results,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error("Direct import CSV error:", error);
+    return response.status(500).json({
+      message: error.message || "Failed to import CSV",
+      error: true,
+      success: false,
+    });
+  }
+};
