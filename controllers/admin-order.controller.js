@@ -101,7 +101,7 @@ export const createAdminOrderController = async (request, response) => {
         const isParent = index === 0;
 
         const product = await ProductModel.findById(item.productId).session(
-          session
+          session,
         );
         if (!product) {
           throw new Error(`Product with ID ${item.productId} not found`);
@@ -113,7 +113,7 @@ export const createAdminOrderController = async (request, response) => {
 
         if (availableStock < item.quantity) {
           throw new Error(
-            `Insufficient stock for ${product.name}. Available: ${availableStock}, Required: ${item.quantity}`
+            `Insufficient stock for ${product.name}. Available: ${availableStock}, Required: ${item.quantity}`,
           );
         }
 
@@ -152,7 +152,7 @@ export const createAdminOrderController = async (request, response) => {
               "warehouseStock.lastUpdated": new Date(),
               "warehouseStock.updatedBy": userId,
             },
-            { session }
+            { session },
           );
 
           stockUpdates.push({
@@ -167,7 +167,7 @@ export const createAdminOrderController = async (request, response) => {
           await ProductModel.findByIdAndUpdate(
             item.productId,
             { stock: newStock },
-            { session }
+            { session },
           );
 
           stockUpdates.push({
@@ -241,18 +241,18 @@ export const createAdminOrderController = async (request, response) => {
             totalOrders: orders.length,
             totalOrderValue: orders.reduce(
               (sum, order) => sum + order.totalAmt,
-              0
+              0,
             ),
           },
           lastOrderDate: new Date(),
         },
-        { session }
+        { session },
       );
 
       await session.commitTransaction();
 
       console.log(
-        `✅ Manual order: Created order group ${orderGroupId} with ${orders.length} orders`
+        `✅ Manual order: Created order group ${orderGroupId} with ${orders.length} orders`,
       );
 
       const populatedOrders = await OrderModel.find({
@@ -260,7 +260,7 @@ export const createAdminOrderController = async (request, response) => {
       })
         .populate(
           "customerId",
-          "name email customerType companyName mobile address"
+          "name email customerType companyName mobile address",
         )
         .populate("createdBy", "name email")
         .populate("productId", "name image sku");
@@ -321,7 +321,7 @@ export const createAdminOrderController = async (request, response) => {
           });
 
           console.log(
-            `✅ Invoice email sent to ${customer.email} from ${user.name}`
+            `✅ Invoice email sent to ${customer.email} from ${user.name}`,
           );
         } catch (emailError) {
           console.error("❌ Error sending invoice email:", emailError);
@@ -505,7 +505,7 @@ export const updateOrderStatusController = async (request, response) => {
     const updatedOrder = await OrderModel.findByIdAndUpdate(
       orderId,
       updateData,
-      { new: true }
+      { new: true },
     )
       .populate("userId", "name email")
       .populate("customerId", "name email companyName")
@@ -543,7 +543,7 @@ export const generateInvoiceController = async (request, response) => {
       .populate("userId", "name email")
       .populate(
         "customerId",
-        "name email companyName customerType mobile address taxNumber"
+        "name email companyName customerType mobile address taxNumber",
       )
       .populate("productId", "name image sku")
       .populate("createdBy", "name email")
@@ -641,7 +641,7 @@ export const generateInvoiceController = async (request, response) => {
           console.log(
             `✅ Invoice email sent to ${customer.email} from ${
               order.createdBy?.name || user.name
-            }`
+            }`,
           );
         } catch (emailError) {
           console.error("❌ Error sending invoice email:", emailError);
