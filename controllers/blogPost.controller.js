@@ -1,7 +1,7 @@
 // controllers/blogPost.controller.js
-import BlogPostModel from '../models/blog-post.model.js';
-import BlogCategoryModel from '../models/blog-category.model.js';
-import BlogTagModel from '../models/blog-tag.model.js';
+import BlogPostModel from "../models/blog-post.model.js";
+import BlogCategoryModel from "../models/blog-category.model.js";
+import BlogTagModel from "../models/blog-tag.model.js";
 
 // Create blog post
 export async function createBlogPostController(request, response) {
@@ -25,32 +25,29 @@ export async function createBlogPostController(request, response) {
       relatedProducts,
     } = request.body;
 
-    // Validation
     if (!title || !excerpt || !content || !featuredImage || !category) {
       return response.status(400).json({
         message:
-          'Title, excerpt, content, featured image, and category are required',
+          "Title, excerpt, content, featured image, and category are required",
         error: true,
         success: false,
       });
     }
 
-    // Verify category exists
     const categoryExists = await BlogCategoryModel.findById(category);
     if (!categoryExists) {
       return response.status(400).json({
-        message: 'Invalid category selected',
+        message: "Invalid category selected",
         error: true,
         success: false,
       });
     }
 
-    // Verify tags exist if provided
     if (tags && tags.length > 0) {
       const validTags = await BlogTagModel.find({ _id: { $in: tags } });
       if (validTags.length !== tags.length) {
         return response.status(400).json({
-          message: 'One or more invalid tags selected',
+          message: "One or more invalid tags selected",
           error: true,
           success: false,
         });
@@ -66,7 +63,7 @@ export async function createBlogPostController(request, response) {
       category,
       tags: tags || [],
       author: request.userId,
-      status: status || 'DRAFT',
+      status: status || "DRAFT",
       seoTitle: seoTitle?.trim() || title.trim(),
       seoDescription: seoDescription?.trim() || excerpt.trim(),
       seoKeywords: seoKeywords?.trim(),
@@ -79,23 +76,22 @@ export async function createBlogPostController(request, response) {
 
     const savedPost = await newPost.save();
 
-    // Populate references
     const populatedPost = await BlogPostModel.findById(savedPost._id)
-      .populate('category', 'name slug')
-      .populate('tags', 'name slug color')
-      .populate('author', 'name email')
-      .populate('relatedProducts', 'name slug price images');
+      .populate("category", "name slug")
+      .populate("tags", "name slug color")
+      .populate("author", "name email")
+      .populate("relatedProducts", "name slug price images");
 
     return response.status(201).json({
-      message: 'Blog post created successfully',
+      message: "Blog post created successfully",
       data: populatedPost,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Create blog post error:', error);
+    console.error("Create blog post error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to create blog post',
+      message: error.message || "Failed to create blog post",
       error: true,
       success: false,
     });
@@ -112,38 +108,29 @@ export async function getBlogPostsController(request, response) {
       status,
       category,
       author,
-      sortBy = 'createdAt',
-      sortOrder = 'desc',
+      sortBy = "createdAt",
+      sortOrder = "desc",
     } = request.query;
 
     const query = {};
 
     if (search) {
       query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { excerpt: { $regex: search, $options: 'i' } },
+        { title: { $regex: search, $options: "i" } },
+        { excerpt: { $regex: search, $options: "i" } },
       ];
     }
-
-    if (status) {
-      query.status = status;
-    }
-
-    if (category) {
-      query.category = category;
-    }
-
-    if (author) {
-      query.author = author;
-    }
+    if (status) query.status = status;
+    if (category) query.category = category;
+    if (author) query.author = author;
 
     const skip = (page - 1) * limit;
-    const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+    const sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
 
     const posts = await BlogPostModel.find(query)
-      .populate('category', 'name slug')
-      .populate('tags', 'name slug color')
-      .populate('author', 'name email')
+      .populate("category", "name slug")
+      .populate("tags", "name slug color")
+      .populate("author", "name email")
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));
@@ -151,7 +138,7 @@ export async function getBlogPostsController(request, response) {
     const total = await BlogPostModel.countDocuments(query);
 
     return response.json({
-      message: 'Blog posts retrieved successfully',
+      message: "Blog posts retrieved successfully",
       data: posts,
       pagination: {
         page: parseInt(page),
@@ -163,9 +150,9 @@ export async function getBlogPostsController(request, response) {
       success: true,
     });
   } catch (error) {
-    console.error('Get blog posts error:', error);
+    console.error("Get blog posts error:", error);
     return response.status(500).json({
-      message: 'Failed to retrieve blog posts',
+      message: "Failed to retrieve blog posts",
       error: true,
       success: false,
     });
@@ -178,29 +165,29 @@ export async function getBlogPostController(request, response) {
     const { id } = request.params;
 
     const post = await BlogPostModel.findById(id)
-      .populate('category', 'name slug description')
-      .populate('tags', 'name slug color')
-      .populate('author', 'name email avatar')
-      .populate('relatedProducts', 'name slug price images discount');
+      .populate("category", "name slug description")
+      .populate("tags", "name slug color")
+      .populate("author", "name email avatar")
+      .populate("relatedProducts", "name slug price images discount");
 
     if (!post) {
       return response.status(404).json({
-        message: 'Blog post not found',
+        message: "Blog post not found",
         error: true,
         success: false,
       });
     }
 
     return response.json({
-      message: 'Blog post retrieved successfully',
+      message: "Blog post retrieved successfully",
       data: post,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Get blog post error:', error);
+    console.error("Get blog post error:", error);
     return response.status(500).json({
-      message: 'Failed to retrieve blog post',
+      message: "Failed to retrieve blog post",
       error: true,
       success: false,
     });
@@ -220,7 +207,7 @@ export async function updateBlogPostController(request, response) {
       category,
       tags,
       status,
-      featured, // ✅ ADDED: Handle featured field
+      featured,
       seoTitle,
       seoDescription,
       seoKeywords,
@@ -232,36 +219,35 @@ export async function updateBlogPostController(request, response) {
     } = request.body;
 
     const post = await BlogPostModel.findById(id);
-
     if (!post) {
-      return response.status(404).json({
-        message: 'Blog post not found',
-        error: true,
-        success: false,
-      });
+      return response
+        .status(404)
+        .json({ message: "Blog post not found", error: true, success: false });
     }
 
-    // Verify category exists if provided
     if (category) {
       const categoryExists = await BlogCategoryModel.findById(category);
       if (!categoryExists) {
-        return response.status(400).json({
-          message: 'Invalid category selected',
-          error: true,
-          success: false,
-        });
+        return response
+          .status(400)
+          .json({
+            message: "Invalid category selected",
+            error: true,
+            success: false,
+          });
       }
     }
 
-    // Verify tags exist if provided
     if (tags && tags.length > 0) {
       const validTags = await BlogTagModel.find({ _id: { $in: tags } });
       if (validTags.length !== tags.length) {
-        return response.status(400).json({
-          message: 'One or more invalid tags selected',
-          error: true,
-          success: false,
-        });
+        return response
+          .status(400)
+          .json({
+            message: "One or more invalid tags selected",
+            error: true,
+            success: false,
+          });
       }
     }
 
@@ -274,7 +260,7 @@ export async function updateBlogPostController(request, response) {
     if (category) updateData.category = category;
     if (tags !== undefined) updateData.tags = tags;
     if (status) updateData.status = status;
-    if (featured !== undefined) updateData.featured = Boolean(featured); // ✅ ADDED
+    if (featured !== undefined) updateData.featured = Boolean(featured);
     if (seoTitle !== undefined) updateData.seoTitle = seoTitle?.trim();
     if (seoDescription !== undefined)
       updateData.seoDescription = seoDescription?.trim();
@@ -288,69 +274,70 @@ export async function updateBlogPostController(request, response) {
     if (relatedProducts !== undefined)
       updateData.relatedProducts = relatedProducts;
 
+    // Set publishedAt when status transitions to PUBLISHED
+    if (
+      status === "PUBLISHED" &&
+      post.status !== "PUBLISHED" &&
+      !post.publishedAt
+    ) {
+      updateData.publishedAt = new Date();
+    }
+
     const updatedPost = await BlogPostModel.findByIdAndUpdate(id, updateData, {
       new: true,
     })
-      .populate('category', 'name slug')
-      .populate('tags', 'name slug color')
-      .populate('author', 'name email')
-      .populate('relatedProducts', 'name slug price images');
+      .populate("category", "name slug")
+      .populate("tags", "name slug color")
+      .populate("author", "name email")
+      .populate("relatedProducts", "name slug price images");
 
     return response.json({
-      message: 'Blog post updated successfully',
+      message: "Blog post updated successfully",
       data: updatedPost,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Update blog post error:', error);
+    console.error("Update blog post error:", error);
     return response.status(500).json({
-      message: error.message || 'Failed to update blog post',
+      message: error.message || "Failed to update blog post",
       error: true,
       success: false,
     });
   }
 }
 
-//Toggle featured status endpoint
+// Toggle featured status
 export async function toggleFeaturedBlogPostController(request, response) {
   try {
     const { id } = request.params;
-
     const post = await BlogPostModel.findById(id);
-
     if (!post) {
-      return response.status(404).json({
-        message: 'Blog post not found',
-        error: true,
-        success: false,
-      });
+      return response
+        .status(404)
+        .json({ message: "Blog post not found", error: true, success: false });
     }
-
-    // Toggle the featured status
     post.featured = !post.featured;
     await post.save();
-
     const updatedPost = await BlogPostModel.findById(id)
-      .populate('category', 'name slug')
-      .populate('tags', 'name slug color')
-      .populate('author', 'name email');
-
+      .populate("category", "name slug")
+      .populate("tags", "name slug color")
+      .populate("author", "name email");
     return response.json({
-      message: `Blog post ${
-        post.featured ? 'featured' : 'unfeatured'
-      } successfully`,
+      message: `Blog post ${post.featured ? "featured" : "unfeatured"} successfully`,
       data: updatedPost,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Toggle featured blog post error:', error);
-    return response.status(500).json({
-      message: 'Failed to toggle featured status',
-      error: true,
-      success: false,
-    });
+    console.error("Toggle featured blog post error:", error);
+    return response
+      .status(500)
+      .json({
+        message: "Failed to toggle featured status",
+        error: true,
+        success: false,
+      });
   }
 }
 
@@ -358,94 +345,79 @@ export async function toggleFeaturedBlogPostController(request, response) {
 export async function deleteBlogPostController(request, response) {
   try {
     const { id } = request.params;
-
     const post = await BlogPostModel.findById(id);
-
     if (!post) {
-      return response.status(404).json({
-        message: 'Blog post not found',
-        error: true,
-        success: false,
-      });
+      return response
+        .status(404)
+        .json({ message: "Blog post not found", error: true, success: false });
     }
-
     await BlogPostModel.findByIdAndDelete(id);
-
     return response.json({
-      message: 'Blog post deleted successfully',
+      message: "Blog post deleted successfully",
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Delete blog post error:', error);
-    return response.status(500).json({
-      message: 'Failed to delete blog post',
-      error: true,
-      success: false,
-    });
+    console.error("Delete blog post error:", error);
+    return response
+      .status(500)
+      .json({
+        message: "Failed to delete blog post",
+        error: true,
+        success: false,
+      });
   }
 }
 
-// Get public blog posts (for frontend)
+// ─── PUBLIC: Get published posts ─────────────────────────────────────────────
+// FIX: sort by { publishedAt: -1 } so latest posts appear first
 export async function getPublicBlogPostsController(request, response) {
   try {
-    const {
-      page = 1,
-      limit = 12,
-      category,
-      tag,
-      search,
-      featured = false,
-    } = request.query;
+    const { page = 1, limit = 12, category, tag, search } = request.query;
 
-    const query = { status: 'PUBLISHED' };
+    const query = { status: "PUBLISHED" };
 
     if (search) {
       query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { excerpt: { $regex: search, $options: 'i' } },
+        { title: { $regex: search, $options: "i" } },
+        { excerpt: { $regex: search, $options: "i" } },
       ];
     }
 
     if (category) {
-      // Support both ID and slug
       if (category.match(/^[0-9a-fA-F]{24}$/)) {
         query.category = category;
       } else {
         const categoryDoc = await BlogCategoryModel.findOne({ slug: category });
-        if (categoryDoc) {
-          query.category = categoryDoc._id;
-        }
+        if (categoryDoc) query.category = categoryDoc._id;
       }
     }
 
     if (tag) {
-      // Support both ID and slug
       if (tag.match(/^[0-9a-fA-F]{24}$/)) {
         query.tags = tag;
       } else {
         const tagDoc = await BlogTagModel.findOne({ slug: tag });
-        if (tagDoc) {
-          query.tags = tagDoc._id;
-        }
+        if (tagDoc) query.tags = tagDoc._id;
       }
     }
 
     const skip = (page - 1) * limit;
 
     const posts = await BlogPostModel.find(query)
-      .populate('category', 'name slug')
-      .populate('tags', 'name slug color')
-      .populate('author', 'name')
-      .select('-content')
-      .sort({ publishedAt: 1 })
+      .populate("category", "name slug")
+      .populate("tags", "name slug color")
+      .populate("author", "name")
+      .select("-content")
+      // ✅ FIX: -1 = descending = latest first
+      .sort({ publishedAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
 
     const total = await BlogPostModel.countDocuments(query);
 
     return response.json({
-      message: 'Blog posts retrieved successfully',
+      message: "Blog posts retrieved successfully",
       data: posts,
       pagination: {
         page: parseInt(page),
@@ -457,12 +429,14 @@ export async function getPublicBlogPostsController(request, response) {
       success: true,
     });
   } catch (error) {
-    console.error('Get public blog posts error:', error);
-    return response.status(500).json({
-      message: 'Failed to retrieve blog posts',
-      error: true,
-      success: false,
-    });
+    console.error("Get public blog posts error:", error);
+    return response
+      .status(500)
+      .json({
+        message: "Failed to retrieve blog posts",
+        error: true,
+        success: false,
+      });
   }
 }
 
@@ -471,95 +445,90 @@ export async function getBlogPostBySlugController(request, response) {
   try {
     const { slug } = request.params;
 
-    const post = await BlogPostModel.findOne({
-      slug,
-      status: 'PUBLISHED',
-    })
-      .populate('category', 'name slug description')
-      .populate('tags', 'name slug color')
-      .populate('author', 'name avatar')
-      .populate('relatedProducts', 'name slug price images discount');
+    const post = await BlogPostModel.findOne({ slug, status: "PUBLISHED" })
+      .populate("category", "name slug description")
+      .populate("tags", "name slug color")
+      .populate("author", "name avatar")
+      .populate("relatedProducts", "name slug price images discount");
 
     if (!post) {
-      return response.status(404).json({
-        message: 'Blog post not found',
-        error: true,
-        success: false,
-      });
+      return response
+        .status(404)
+        .json({ message: "Blog post not found", error: true, success: false });
     }
 
-    // Increment view count
-    await BlogPostModel.findByIdAndUpdate(post._id, {
-      $inc: { views: 1 },
-    });
+    await BlogPostModel.findByIdAndUpdate(post._id, { $inc: { views: 1 } });
 
     return response.json({
-      message: 'Blog post retrieved successfully',
+      message: "Blog post retrieved successfully",
       data: post,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Get blog post by slug error:', error);
-    return response.status(500).json({
-      message: 'Failed to retrieve blog post',
-      error: true,
-      success: false,
-    });
+    console.error("Get blog post by slug error:", error);
+    return response
+      .status(500)
+      .json({
+        message: "Failed to retrieve blog post",
+        error: true,
+        success: false,
+      });
   }
 }
 
-// Get featured posts
+// ─── PUBLIC: Get featured posts ──────────────────────────────────────────────
+// FIX: sort by { publishedAt: -1 } so the NEWEST featured posts appear first
 export async function getFeaturedBlogPostsController(request, response) {
   try {
     const { limit = 6 } = request.query;
 
-    console.log('=== Featured Posts Request ===');
-    console.log('Limit:', limit);
-
-    // Check if any posts exist at all
-    const totalPosts = await BlogPostModel.countDocuments();
-    console.log('Total posts in database:', totalPosts);
-
-    const publishedPosts = await BlogPostModel.countDocuments({
-      status: 'PUBLISHED',
-    });
-    console.log('Published posts:', publishedPosts);
-
-    const featuredCount = await BlogPostModel.countDocuments({
-      status: 'PUBLISHED',
-      featured: true,
-    });
-    console.log('Featured published posts:', featuredCount);
-
     const posts = await BlogPostModel.find({
-      status: 'PUBLISHED',
+      status: "PUBLISHED",
       featured: true,
     })
-      .populate('category', 'name slug')
-      .populate('tags', 'name slug color')
-      .populate('author', 'name')
-      .select('-content')
-      .sort({ publishedAt: 1 })
+      .populate("category", "name slug")
+      .populate("tags", "name slug color")
+      .populate("author", "name")
+      .select("-content")
+      // ✅ FIX: -1 = newest featured posts first
+      .sort({ publishedAt: -1 })
       .limit(parseInt(limit));
 
-    console.log('Posts found:', posts.length);
-    console.log('First post:', posts[0]?.title || 'No posts');
-    console.log('=== End Featured Posts Request ===');
+    // If no posts are explicitly featured, fall back to the latest published posts
+    // so the homepage blog section is never empty
+    if (posts.length === 0) {
+      const fallback = await BlogPostModel.find({ status: "PUBLISHED" })
+        .populate("category", "name slug")
+        .populate("tags", "name slug color")
+        .populate("author", "name")
+        .select("-content")
+        .sort({ publishedAt: -1 })
+        .limit(parseInt(limit));
+
+      return response.json({
+        message: "Latest blog posts retrieved (no featured posts set)",
+        data: fallback,
+        error: false,
+        success: true,
+      });
+    }
 
     return response.json({
-      message: 'Featured blog posts retrieved successfully',
+      message: "Featured blog posts retrieved successfully",
       data: posts,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Get featured blog posts error:', error);
-    return response.status(500).json({
-      message: 'Failed to retrieve featured blog posts',
-      error: true,
-      success: false,
-    });
+    console.error("Get featured blog posts error:", error);
+    return response
+      .status(500)
+      .json({
+        message: "Failed to retrieve featured blog posts",
+        error: true,
+        success: false,
+      });
   }
 }
 
@@ -571,17 +540,15 @@ export async function getRelatedBlogPostsController(request, response) {
 
     const currentPost = await BlogPostModel.findById(id);
     if (!currentPost) {
-      return response.status(404).json({
-        message: 'Blog post not found',
-        error: true,
-        success: false,
-      });
+      return response
+        .status(404)
+        .json({ message: "Blog post not found", error: true, success: false });
     }
 
     const relatedPosts = await BlogPostModel.find({
       $and: [
         { _id: { $ne: id } },
-        { status: 'PUBLISHED' },
+        { status: "PUBLISHED" },
         {
           $or: [
             { category: currentPost.category },
@@ -590,25 +557,27 @@ export async function getRelatedBlogPostsController(request, response) {
         },
       ],
     })
-      .populate('category', 'name slug')
-      .populate('tags', 'name slug color')
-      .populate('author', 'name')
-      .select('-content')
+      .populate("category", "name slug")
+      .populate("tags", "name slug color")
+      .populate("author", "name")
+      .select("-content")
       .sort({ publishedAt: -1 })
       .limit(parseInt(limit));
 
     return response.json({
-      message: 'Related blog posts retrieved successfully',
+      message: "Related blog posts retrieved successfully",
       data: relatedPosts,
       error: false,
       success: true,
     });
   } catch (error) {
-    console.error('Get related blog posts error:', error);
-    return response.status(500).json({
-      message: 'Failed to retrieve related blog posts',
-      error: true,
-      success: false,
-    });
+    console.error("Get related blog posts error:", error);
+    return response
+      .status(500)
+      .json({
+        message: "Failed to retrieve related blog posts",
+        error: true,
+        success: false,
+      });
   }
 }
