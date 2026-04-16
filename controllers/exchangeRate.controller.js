@@ -200,10 +200,24 @@ export const fetchRatesFromAPI = async (request, response) => {
 
     const updatedRates = [];
 
-    // Update database with fetched rates
+    // Update database with fetched rates — but never overwrite MANUAL rates set by admin
     for (const [currency, rate] of Object.entries(rates)) {
       if (currency.toUpperCase() !== base) {
         try {
+          // Check if a manual rate exists — if so, skip this currency pair
+          const existingManual = await ExchangeRateModel.findOne({
+            baseCurrency: base,
+            targetCurrency: currency.toUpperCase(),
+            isActive: true,
+            source: 'MANUAL',
+          });
+
+          if (existingManual) {
+            // Preserve admin's manual rate — don't overwrite with API rate
+            updatedRates.push(existingManual);
+            continue;
+          }
+
           const updatedRate = await ExchangeRateModel.findOneAndUpdate(
             {
               baseCurrency: base,
@@ -215,6 +229,7 @@ export const fetchRatesFromAPI = async (request, response) => {
               lastUpdated: new Date(),
               apiProvider: usedProvider,
               isActive: true,
+              confidence: usedProvider === 'fallback' ? 0.3 : 0.6, // API rates always lower priority than MANUAL (1.0)
             },
             {
               upsert: true,
@@ -361,6 +376,7 @@ export const createOrUpdateRate = async (request, response) => {
         notes: notes || '',
         isActive: true,
         apiProvider: 'manual',
+        confidence: 1.0, // MANUAL rates are highest priority — overrides API rates
       },
       {
         upsert: true,
@@ -666,6 +682,7 @@ export const bulkUpdateRates = async (request, response) => {
             updatedBy: request.user._id,
             notes: notes,
             isActive: true,
+            confidence: source === 'MANUAL' ? 1.0 : 0.6,
           },
           {
             upsert: true,

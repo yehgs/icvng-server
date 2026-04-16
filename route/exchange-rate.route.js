@@ -16,8 +16,8 @@ import {
 
 const exchangeRateRouter = Router();
 
-// Get all exchange rates with pagination and search
-exchangeRateRouter.get('/get', auth, getExchangeRates);
+// Get all exchange rates with pagination and search (public - no auth required for client frontend)
+exchangeRateRouter.get('/get', getExchangeRates);
 
 // Get supported currencies list
 exchangeRateRouter.get('/currencies', auth, getSupportedCurrencies);

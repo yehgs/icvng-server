@@ -100,41 +100,68 @@ exchangeRateSchema.statics.getRate = async function (from, to) {
   const fromUpper = from.toUpperCase();
   const toUpper = to.toUpperCase();
 
-  // Direct rate lookup
+  // Direct rate lookup — prefer MANUAL rates set by admin, then fall back to API rates
   const rate = await this.findOne({
     baseCurrency: fromUpper,
     targetCurrency: toUpper,
     isActive: true,
-  }).sort({ confidence: -1, lastUpdated: -1 }); // Prefer higher confidence and newer rates
+  }).sort({ source: -1, lastUpdated: -1 }); // 'MANUAL' sorts before 'API' alphabetically in desc order
 
-  if (rate) {
-    return rate.rate;
+  // Explicitly prefer MANUAL over API if both exist
+  const manualRate = await this.findOne({
+    baseCurrency: fromUpper,
+    targetCurrency: toUpper,
+    isActive: true,
+    source: 'MANUAL',
+  }).sort({ lastUpdated: -1 });
+
+  const effectiveRate = manualRate || rate;
+
+  if (effectiveRate) {
+    return effectiveRate.rate;
   }
 
   // Try reverse rate
-  const reverseRate = await this.findOne({
+  const manualReverseRate = await this.findOne({
     baseCurrency: toUpper,
     targetCurrency: fromUpper,
     isActive: true,
-  }).sort({ confidence: -1, lastUpdated: -1 });
+    source: 'MANUAL',
+  }).sort({ lastUpdated: -1 });
+
+  const reverseRate = manualReverseRate || await this.findOne({
+    baseCurrency: toUpper,
+    targetCurrency: fromUpper,
+    isActive: true,
+  }).sort({ source: -1, lastUpdated: -1 });
 
   if (reverseRate) {
     return 1 / reverseRate.rate;
   }
 
-  // ✅ NEW: Try cross-rate calculation via USD
+  // Try cross-rate calculation via USD — prefer MANUAL rates
   if (fromUpper !== 'USD' && toUpper !== 'USD') {
     const fromUSDRate = await this.findOne({
       baseCurrency: 'USD',
       targetCurrency: fromUpper,
       isActive: true,
-    }).sort({ confidence: -1, lastUpdated: -1 });
+      source: 'MANUAL',
+    }).sort({ lastUpdated: -1 }) || await this.findOne({
+      baseCurrency: 'USD',
+      targetCurrency: fromUpper,
+      isActive: true,
+    }).sort({ source: -1, lastUpdated: -1 });
 
     const toUSDRate = await this.findOne({
       baseCurrency: 'USD',
       targetCurrency: toUpper,
       isActive: true,
-    }).sort({ confidence: -1, lastUpdated: -1 });
+      source: 'MANUAL',
+    }).sort({ lastUpdated: -1 }) || await this.findOne({
+      baseCurrency: 'USD',
+      targetCurrency: toUpper,
+      isActive: true,
+    }).sort({ source: -1, lastUpdated: -1 });
 
     if (fromUSDRate && toUSDRate) {
       // Calculate cross rate: (1/fromUSDRate) * toUSDRate
@@ -146,13 +173,23 @@ exchangeRateSchema.statics.getRate = async function (from, to) {
       baseCurrency: fromUpper,
       targetCurrency: 'USD',
       isActive: true,
-    }).sort({ confidence: -1, lastUpdated: -1 });
+      source: 'MANUAL',
+    }).sort({ lastUpdated: -1 }) || await this.findOne({
+      baseCurrency: fromUpper,
+      targetCurrency: 'USD',
+      isActive: true,
+    }).sort({ source: -1, lastUpdated: -1 });
 
     const usdToRate = await this.findOne({
       baseCurrency: toUpper,
       targetCurrency: 'USD',
       isActive: true,
-    }).sort({ confidence: -1, lastUpdated: -1 });
+      source: 'MANUAL',
+    }).sort({ lastUpdated: -1 }) || await this.findOne({
+      baseCurrency: toUpper,
+      targetCurrency: 'USD',
+      isActive: true,
+    }).sort({ source: -1, lastUpdated: -1 });
 
     if (usdFromRate && usdToRate) {
       // Calculate cross rate: usdFromRate * (1/usdToRate)
@@ -202,12 +239,12 @@ exchangeRateSchema.statics.getRateStats = async function () {
   };
 };
 
-// ✅ NEW: Pre-save middleware to set confidence levels
+// Pre-save middleware to set confidence levels — MANUAL rates take highest priority
 exchangeRateSchema.pre('save', function (next) {
-  if (this.source === 'API') {
-    this.confidence = this.apiProvider === 'fallback' ? 0.5 : 1.0;
-  } else if (this.source === 'MANUAL') {
-    this.confidence = 0.8;
+  if (this.source === 'MANUAL') {
+    this.confidence = 1.0; // Admin-set manual rates are the source of truth
+  } else if (this.source === 'API') {
+    this.confidence = this.apiProvider === 'fallback' ? 0.3 : 0.6;
   }
   next();
 });
