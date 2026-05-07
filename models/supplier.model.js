@@ -51,6 +51,13 @@ const supplierSchema = new mongoose.Schema(
       enum: ["ACTIVE", "INACTIVE", "BLACKLISTED"],
       default: "ACTIVE",
     },
+    // PARTNER = quick-created from product form, minimal info (name only required)
+    // FULL = complete supplier record with email, phone, bank details etc.
+    supplierType: {
+      type: String,
+      enum: ["FULL", "PARTNER"],
+      default: "FULL",
+    },
     notes: String,
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

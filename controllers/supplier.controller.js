@@ -15,11 +15,30 @@ export const createSupplierController = async (request, response) => {
       paymentTerms,
       status,
       notes,
+      supplierType, // 'PARTNER' (quick-create, minimal info) or 'FULL' (complete record)
     } = request.body;
 
-    if (!name || !email || !phone) {
+    // Only name is required — email and phone are optional for partner suppliers
+    if (!name || !name.trim()) {
       return response.status(400).json({
-        message: "Name, email, and phone are required",
+        message: "Supplier name is required",
+        error: true,
+        success: false,
+      });
+    }
+
+    // FULL suppliers require email and phone; PARTNER suppliers only require name
+    const isPartner = supplierType === 'PARTNER';
+    if (!isPartner && (!email || !email.trim())) {
+      return response.status(400).json({
+        message: "Email is required for full suppliers",
+        error: true,
+        success: false,
+      });
+    }
+    if (!isPartner && (!phone || !phone.trim())) {
+      return response.status(400).json({
+        message: "Phone is required for full suppliers",
         error: true,
         success: false,
       });
@@ -27,23 +46,29 @@ export const createSupplierController = async (request, response) => {
 
     const slug = generateSlug(name);
 
+    // Only check email uniqueness if email is provided
+    const duplicateQuery = [{ slug }];
+    if (email && email.trim()) {
+      duplicateQuery.push({ email: email.trim() });
+    }
+
     const existingSupplier = await SupplierModel.findOne({
-      $or: [{ email }, { slug }],
+      $or: duplicateQuery,
     });
 
     if (existingSupplier) {
       return response.status(400).json({
-        message: "Supplier with this email or name already exists",
+        message: "Supplier with this name already exists",
         error: true,
         success: false,
       });
     }
 
     const supplier = new SupplierModel({
-      name,
+      name: name.trim(),
       slug,
-      email,
-      phone,
+      email: email?.trim() || "",
+      phone: phone?.trim() || "",
       address: address || {},
       contactPerson: contactPerson || {},
       bankDetails: bankDetails || {},
@@ -51,6 +76,7 @@ export const createSupplierController = async (request, response) => {
       paymentTerms: paymentTerms || "NET_30",
       status: status || "ACTIVE",
       notes: notes || "",
+      supplierType: supplierType || "FULL",
       createdBy: request.user._id,
       updatedBy: request.user._id,
     });

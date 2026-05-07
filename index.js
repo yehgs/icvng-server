@@ -98,7 +98,7 @@ app.use(
         // Vercel deployment URLs
         "https://icvng-client.vercel.app",
         "https://icvng-admin.vercel.app",
-        "https://italiancoffeeng.vercel.app", // old client URL still in vercel.json
+        "https://italiancoffeeng.vercel.app",
         // Local development
         "http://localhost:5173",
         "http://localhost:5174",
