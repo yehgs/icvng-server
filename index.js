@@ -48,6 +48,23 @@ import invoiceRouter from "./route/invoice.route.js";
 dotenv.config();
 
 const app = express();
+
+// Handle preflight OPTIONS for ALL routes before anything else
+app.options("*", (req, res) => {
+  const origin = req.headers.origin;
+  if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,POST,PUT,DELETE,PATCH,OPTIONS",
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type,Authorization,X-Requested-With,x-auth-token,token,x-access-token,x-csrf-token",
+  );
+  res.sendStatus(204);
+});
+
 app.use(
   cors({
     credentials: true,
@@ -73,15 +90,20 @@ app.use(
         process.env.REQUEST_FRONTEND_URL,
         process.env.ADMIN_FRONTEND_URL1,
         process.env.ADMIN_FRONTEND_URL2,
-        // Hardcoded fallbacks — these work even if env vars are missing/misconfigured
+        // Client side — i-coffee.ng (the site the server also serves)
         "https://i-coffee.ng",
         "https://www.i-coffee.ng",
+        // Admin panel
         "https://app.i-coffee.ng",
+        // Vercel deployment URLs
         "https://icvng-client.vercel.app",
         "https://icvng-admin.vercel.app",
+        "https://italiancoffeeng.vercel.app", // old client URL still in vercel.json
+        // Local development
         "http://localhost:5173",
         "http://localhost:5174",
         "http://localhost:3000",
+        "http://localhost:3001",
       ];
 
       // Filter out undefined/null env vars
