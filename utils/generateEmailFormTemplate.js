@@ -242,7 +242,7 @@ export function generateEmailHTML(data) {
                 <p style="margin: 0 0 10px 0;"><strong>I-Coffee Nigeria</strong></p>
                 <p style="margin: 5px 0;">
                     3 Kaffi Street, Alausa, Ikeja, Lagos | 
-                    <a href="tel:+2348039827194">+234 803 982 7194</a>
+                    <a href="tel:+2348052423935">+234 805 242 3935</a>
                 </p>
                 <p style="margin: 5px 0;">
                     <a href="mailto:${
@@ -330,7 +330,7 @@ Reply to: ${email}
 ---
 I-Coffee Nigeria
 3 Kaffi Street, Alausa, Ikeja, Lagos
-+234 803 982 7194
++234 805 242 3935
 www.i-coffee.ng
 
 Form submitted: ${new Date().toLocaleString("en-NG", { timeZone: "Africa/Lagos" })}
