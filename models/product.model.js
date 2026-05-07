@@ -233,8 +233,39 @@ const productSchema = new mongoose.Schema(
     },
     stockSource: {
       type: String,
-      enum: ["WAREHOUSE_MANUAL", "STOCK_BATCHES", "PRODUCT_DEFAULT"],
+      enum: ["WAREHOUSE_MANUAL", "STOCK_BATCHES", "PRODUCT_DEFAULT", "PARTNER_MANAGED"],
       default: "PRODUCT_DEFAULT",
+    },
+    // Partner stock — products held by partners but listed as available online.
+    // ONLY editors can set this. Warehouse can VIEW but NOT manage it.
+    // Counts as onlineStock on the client. No offlineStock.
+    partnerStock: {
+      enabled: {
+        type: Boolean,
+        default: false,
+      },
+      quantity: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      supplier: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Supplier",
+        default: null,
+      },
+      notes: {
+        type: String,
+        default: "",
+      },
+      lastUpdated: {
+        type: Date,
+        default: Date.now,
+      },
+      updatedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
     },
     supplier: {
       type: mongoose.Schema.Types.ObjectId,
@@ -380,8 +411,29 @@ productSchema.virtual("isWarehouseManaged").get(function () {
   return this.warehouseStock?.enabled === true;
 });
 
-// Virtual to get effective stock (prioritizes warehouse override)
+// Virtual to check if this is a partner-managed product
+productSchema.virtual("isPartnerManaged").get(function () {
+  return this.partnerStock?.enabled === true;
+});
+
+// Virtual to get effective online stock
+// Priority: partnerStock (editor-managed) > warehouseStock.onlineStock > stock
+productSchema.virtual("effectiveOnlineStock").get(function () {
+  if (this.partnerStock?.enabled) {
+    return this.partnerStock.quantity || 0;
+  }
+  if (this.warehouseStock?.enabled) {
+    return this.warehouseStock.onlineStock || 0;
+  }
+  return this.stock || 0;
+});
+
+// Virtual to get effective stock (used by client for availability)
 productSchema.virtual("effectiveStock").get(function () {
+  if (this.partnerStock?.enabled) {
+    // Partner stock — online only, no offline
+    return this.partnerStock.quantity || 0;
+  }
   if (this.warehouseStock?.enabled) {
     return this.warehouseStock.finalStock || 0;
   }

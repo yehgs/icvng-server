@@ -781,10 +781,10 @@ export const getProductPricingList = async (request, response) => {
     const matchConditions = { isActive: true };
 
     if (search) {
-      matchConditions["productDetails.name"] = {
-        $regex: search,
-        $options: "i",
-      };
+      matchConditions["$or"] = [
+        { "productDetails.name": { $regex: search, $options: "i" } },
+        { "productDetails.sku": { $regex: search, $options: "i" } },
+      ];
     }
 
     if (category) {
@@ -889,10 +889,10 @@ export const exportProductPricingCSV = async (request, response) => {
     const matchConditions = { isActive: true };
 
     if (search) {
-      matchConditions["productDetails.name"] = {
-        $regex: search,
-        $options: "i",
-      };
+      matchConditions["$or"] = [
+        { "productDetails.name": { $regex: search, $options: "i" } },
+        { "productDetails.sku": { $regex: search, $options: "i" } },
+      ];
     }
 
     if (category) {
@@ -1056,10 +1056,10 @@ export const exportProductPricingPDF = async (request, response) => {
     const matchConditions = { isActive: true };
 
     if (search) {
-      matchConditions["productDetails.name"] = {
-        $regex: search,
-        $options: "i",
-      };
+      matchConditions["$or"] = [
+        { "productDetails.name": { $regex: search, $options: "i" } },
+        { "productDetails.sku": { $regex: search, $options: "i" } },
+      ];
     }
 
     if (category) {

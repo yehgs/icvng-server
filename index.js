@@ -73,9 +73,21 @@ app.use(
         process.env.REQUEST_FRONTEND_URL,
         process.env.ADMIN_FRONTEND_URL1,
         process.env.ADMIN_FRONTEND_URL2,
+        // Hardcoded fallbacks — these work even if env vars are missing/misconfigured
+        "https://i-coffee.ng",
+        "https://www.i-coffee.ng",
+        "https://app.i-coffee.ng",
+        "https://icvng-client.vercel.app",
+        "https://icvng-admin.vercel.app",
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:3000",
       ];
 
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Filter out undefined/null env vars
+      const validOrigins = allowedOrigins.filter(Boolean);
+
+      if (!origin || validOrigins.includes(origin)) {
         callback(null, true);
       } else {
         console.log("Blocked by CORS:", origin);

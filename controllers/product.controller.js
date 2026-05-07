@@ -131,24 +131,24 @@ export const createProductController = async (request, response) => {
       name,
       image,
       weight,
-      brand,
-      compatibleSystem,
-      producer,
+      brand: Array.isArray(brand) ? brand.filter(v => v && v !== "") : brand,
+      compatibleSystem: compatibleSystem || null,
+      producer: producer || null,
       productType,
-      roastLevel,
-      roastOrigin,
-      alcoholLevel,
-      blend,
+      roastLevel: roastLevel || undefined,
+      roastOrigin: roastOrigin || undefined,
+      alcoholLevel: alcoholLevel || undefined,
+      blend: blend || undefined,
       featured: featured || false,
-      aromaticProfile,
-      coffeeOrigin,
-      intensity,
-      coffeeRoastAreas,
-      packaging,
+      aromaticProfile: aromaticProfile || undefined,
+      coffeeOrigin: coffeeOrigin || undefined,
+      intensity: intensity || undefined,
+      coffeeRoastAreas: coffeeRoastAreas || null,
+      packaging: packaging || undefined,
       category,
-      subCategory,
-      tags,
-      attributes,
+      subCategory: subCategory || null,
+      tags: Array.isArray(tags) ? tags.filter(v => v && v !== "") : tags,
+      attributes: Array.isArray(attributes) ? attributes.filter(v => v && v !== "") : attributes,
       unit,
       stock: stock || 0,
       productAvailability:
@@ -351,37 +351,70 @@ export const getCategoryStructureController = async (request, response) => {
 
 export const getProductControllerAdmin = async (request, response) => {
   try {
-    let { page, limit, search, category, brand, publish, productType } = request.body;
+    let { page, limit, search, category, brand, publish, productType, lowStock, priceFilter } = request.body;
 
     page = parseInt(page) || 1;
     limit = parseInt(limit) || 10;
 
-    // Build query — supports search (regex), category, brand, publish, productType
+    // Build query — supports search (regex), category, brand, publish, productType, lowStock, priceFilter
     const query = {};
+    const andConditions = [];
 
     if (search && search.trim()) {
       const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      query.$or = [
+      andConditions.push({ $or: [
         { name: { $regex: escaped, $options: "i" } },
         { sku: { $regex: escaped, $options: "i" } },
         { description: { $regex: escaped, $options: "i" } },
-      ];
+      ]});
     }
 
     if (category) {
-      try { query.category = new mongoose.Types.ObjectId(category); } catch {}
+      try { andConditions.push({ category: new mongoose.Types.ObjectId(category) }); } catch {}
     }
 
     if (brand) {
-      try { query.brand = { $in: [new mongoose.Types.ObjectId(brand)] }; } catch {}
+      try { andConditions.push({ brand: { $in: [new mongoose.Types.ObjectId(brand)] } }); } catch {}
     }
 
     if (publish) {
-      query.publish = publish;
+      andConditions.push({ publish });
     }
 
     if (productType) {
-      query.productType = productType;
+      andConditions.push({ productType });
+    }
+
+    // Low stock filter — online stock only
+    if (lowStock === 'true') {
+      andConditions.push({ $or: [
+        { "warehouseStock.onlineStock": { $gt: 0, $lte: 5 } },
+        { "partnerStock.enabled": true, "partnerStock.quantity": { $gt: 0, $lte: 5 } },
+      ]});
+    } else if (lowStock === 'critical') {
+      andConditions.push({ $or: [
+        { "warehouseStock.onlineStock": 0 },
+        { "partnerStock.enabled": true, "partnerStock.quantity": 0 },
+      ]});
+    }
+
+    // Price volume filter
+    if (priceFilter === 'hasbtc') {
+      andConditions.push({ btcPrice: { $gt: 0 } });
+    } else if (priceFilter === 'has3week') {
+      andConditions.push({ price3weeksDelivery: { $gt: 0 } });
+    } else if (priceFilter === 'has5week') {
+      andConditions.push({ price5weeksDelivery: { $gt: 0 } });
+    } else if (priceFilter === 'noPrice') {
+      andConditions.push(
+        { $or: [{ btcPrice: { $lte: 0 } }, { btcPrice: null }] },
+        { $or: [{ price3weeksDelivery: { $lte: 0 } }, { price3weeksDelivery: null }] },
+        { $or: [{ price5weeksDelivery: { $lte: 0 } }, { price5weeksDelivery: null }] },
+      );
+    }
+
+    if (andConditions.length > 0) {
+      query.$and = andConditions;
     }
 
     const skip = (page - 1) * limit;
@@ -391,9 +424,8 @@ export const getProductControllerAdmin = async (request, response) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .populate(
-          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy",
-        ),
+        .populate("category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy")
+        .populate("partnerStock.supplier", "name contactPerson.phone"),
       ProductModel.countDocuments(query),
     ]);
 
@@ -575,6 +607,60 @@ export const updateProductDetails = async (request, response) => {
 
     const userId = request.user._id;
     let updateData = { ...request.body, updatedBy: userId };
+
+    // Sanitize ObjectId reference fields — Mongoose throws BSONError if they are ""
+    // Convert empty strings to null for all ref fields so Mongoose clears them cleanly
+    const objectIdFields = [
+      "compatibleSystem", "producer", "supplier",
+      "category", "subCategory",
+    ];
+    objectIdFields.forEach((field) => {
+      if (updateData[field] === "" || updateData[field] === null) {
+        updateData[field] = null;
+      }
+    });
+
+    // Array ObjectId fields — filter out empty strings
+    const arrayObjectIdFields = ["brand", "tags", "attributes", "colors", "relatedProducts"];
+    arrayObjectIdFields.forEach((field) => {
+      if (Array.isArray(updateData[field])) {
+        updateData[field] = updateData[field].filter((v) => v && v !== "");
+      }
+    });
+
+    // Sanitize partnerStock.supplier — empty string → null
+    if (updateData.partnerStock) {
+      if (updateData.partnerStock.supplier === "" || updateData.partnerStock.supplier === undefined) {
+        updateData.partnerStock.supplier = null;
+      }
+    }
+
+    // Sanitize enum fields — Mongoose rejects "" for fields with enum constraints
+    // Convert "" → undefined so Mongoose uses the existing value or skips the field
+    const enumFields = ["roastLevel", "blend", "intensity", "packaging", "productType", "publish", "stockSource"];
+    enumFields.forEach((field) => {
+      if (updateData[field] === "" || updateData[field] === null) {
+        delete updateData[field]; // remove from updateData so existing value is preserved
+      }
+    });
+
+    // Also clear plain string fields that are empty — convert to undefined
+    const optionalStringFields = ["roastOrigin", "aromaticProfile", "alcoholLevel", "coffeeOrigin", "unit", "blend"];
+    optionalStringFields.forEach((field) => {
+      if (updateData[field] === "") {
+        updateData[field] = undefined;
+      }
+    });
+
+    // Sanitize numeric price fields — empty string → 0
+    const numericFields = ["btbPrice", "btcPrice", "price3weeksDelivery", "price5weeksDelivery", "price", "discount", "stock"];
+    numericFields.forEach((field) => {
+      if (updateData[field] === "" || updateData[field] === undefined) {
+        updateData[field] = 0;
+      } else if (updateData[field] !== undefined) {
+        updateData[field] = parseFloat(updateData[field]) || 0;
+      }
+    });
 
     // Handle slug generation if name is updated but slug is not provided
     if (name && !slug) {
