@@ -47,12 +47,13 @@ const orderSchema = new mongoose.Schema(
     },
 
     // ===== CUSTOMER REFERENCES (UNIFIED) =====
-    // For website orders - references User model
+    // For website orders — references User model (null for guest orders)
     userId: {
       type: mongoose.Schema.ObjectId,
       ref: "User",
       required: function () {
-        return this.isWebsiteOrder === true;
+        // Required for logged-in website orders, NOT for guest orders
+        return this.isWebsiteOrder === true && !this.isGuest;
       },
     },
 
@@ -61,8 +62,32 @@ const orderSchema = new mongoose.Schema(
       type: mongoose.Schema.ObjectId,
       ref: "Customer",
       required: function () {
-        return this.isWebsiteOrder === false;
+        return this.isWebsiteOrder === false && !this.isGuest;
       },
+    },
+
+    // ===== GUEST ORDER FIELDS =====
+    isGuest: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    guestInfo: {
+      firstName: { type: String, trim: true },
+      lastName: { type: String, trim: true },
+      email: { type: String, trim: true, lowercase: true },
+      phone: { type: String, trim: true },
+    },
+    // Embedded shipping address for guest orders (no address doc dependency)
+    shippingAddress: {
+      address_line: String,
+      address_line_2: String,
+      city: String,
+      lga: String,
+      state: String,
+      postal_code: String,
+      mobile: String,
+      recipientName: String,
     },
 
     // ===== ORDER CLASSIFICATION =====

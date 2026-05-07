@@ -7,6 +7,7 @@ import newUserWelcomeTemplate from '../utils/newUserWelcomeTemplate.js';
 import passwordResetTemplate from '../utils/passwordResetTemplate.js';
 import passwordRecoveryTemplate from '../utils/passwordRecoveryTemplate.js';
 import generatedOtp from '../utils/generatedOtp.js';
+import { logActivity } from '../utils/activityLogger.js';
 
 export async function getAllUsersController(request, response) {
   try {
@@ -174,6 +175,16 @@ export async function createUserController(request, response) {
     delete userResponse.password;
     delete userResponse.refresh_token;
 
+    logActivity({
+      userId: request.user?._id,
+      action: 'USER_CREATE',
+      description: `Created new user: ${savedUser.name} (${savedUser.email}) — role: ${savedUser.subRole || savedUser.role}`,
+      resourceType: 'User',
+      resourceId: savedUser._id,
+      resourceName: savedUser.name,
+      req: request,
+    });
+
     return response.json({
       message: 'User created successfully',
       error: false,
@@ -248,6 +259,16 @@ export async function updateUserController(request, response) {
     const updatedUser = await UserModel.findByIdAndUpdate(userId, updateData, {
       new: true,
       select: '-password -refresh_token -forgot_password_otp',
+    });
+
+    logActivity({
+      userId: request.user?._id,
+      action: 'USER_UPDATE',
+      description: `Updated user: ${updatedUser?.name} (${updatedUser?.email})`,
+      resourceType: 'User',
+      resourceId: userId,
+      resourceName: updatedUser?.name || String(userId),
+      req: request,
     });
 
     return response.json({

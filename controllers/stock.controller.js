@@ -3,6 +3,7 @@ import StockModel from '../models/stock.model.js';
 import PurchaseOrderModel from '../models/purchase-order.model.js';
 import ProductModel from '../models/product.model.js';
 import { syncProductStockFromBatches } from '../middleware/stockSync.js';
+import { logActivity } from '../utils/activityLogger.js';
 
 // Add this function to your existing stock controller
 export const syncProductStock = async (productId) => {
@@ -93,6 +94,16 @@ export const createStockBatch = async (request, response) => {
       data: populatedBatch,
       error: false,
       success: true,
+    });
+
+    await logActivity({
+      userId: request.user?._id,
+      action: 'BATCH_CREATE',
+      description: `Created stock batch #${savedBatch.batchNumber || savedBatch._id}`,
+      resourceType: 'Batch',
+      resourceId: savedBatch._id,
+      resourceName: savedBatch.batchNumber || String(savedBatch._id),
+      req: request,
     });
   } catch (error) {
     console.error('Create stock batch error:', error);

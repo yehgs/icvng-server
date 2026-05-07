@@ -5,6 +5,7 @@ import CategoryModel from "../models/category.model.js";
 import BrandModel from "../models/brand.model.js";
 import generateSlug from "../utils/generateSlug.js";
 import generateSKU from "../utils/generateSKU.js";
+import { logActivity } from "../utils/activityLogger.js";
 
 // Helper function to determine if a product should be displayed
 const shouldDisplayProduct = (product) => {
@@ -176,6 +177,17 @@ export const createProductController = async (request, response) => {
 
     const saveProduct = await product.save();
 
+    // Log activity (non-blocking)
+    logActivity({
+      userId: request.user?._id,
+      action: 'PRODUCT_CREATE',
+      description: `Created product: ${saveProduct.name}`,
+      resourceType: 'Product',
+      resourceId: saveProduct._id,
+      resourceName: saveProduct.name,
+      req: request,
+    });
+
     return response.json({
       message: "Product Created Successfully",
       data: saveProduct,
@@ -339,23 +351,38 @@ export const getCategoryStructureController = async (request, response) => {
 
 export const getProductControllerAdmin = async (request, response) => {
   try {
-    let { page, limit, search } = request.body;
+    let { page, limit, search, category, brand, publish, productType } = request.body;
 
-    if (!page) {
-      page = 1;
+    page = parseInt(page) || 1;
+    limit = parseInt(limit) || 10;
+
+    // Build query — supports search (regex), category, brand, publish, productType
+    const query = {};
+
+    if (search && search.trim()) {
+      const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      query.$or = [
+        { name: { $regex: escaped, $options: "i" } },
+        { sku: { $regex: escaped, $options: "i" } },
+        { description: { $regex: escaped, $options: "i" } },
+      ];
     }
 
-    if (!limit) {
-      limit = 10;
+    if (category) {
+      try { query.category = new mongoose.Types.ObjectId(category); } catch {}
     }
 
-    const query = search
-      ? {
-          $text: {
-            $search: search,
-          },
-        }
-      : {};
+    if (brand) {
+      try { query.brand = { $in: [new mongoose.Types.ObjectId(brand)] }; } catch {}
+    }
+
+    if (publish) {
+      query.publish = publish;
+    }
+
+    if (productType) {
+      query.productType = productType;
+    }
 
     const skip = (page - 1) * limit;
 
@@ -390,15 +417,10 @@ export const getProductControllerAdmin = async (request, response) => {
 // Controller 1: getProductController
 export const getProductController = async (request, response) => {
   try {
-    let { page, limit, search } = request.body;
+    let { page, limit, search, category, brand, productType, compatibleSystem } = request.body;
 
-    if (!page) {
-      page = 1;
-    }
-
-    if (!limit) {
-      limit = 10;
-    }
+    page = parseInt(page) || 1;
+    limit = parseInt(limit) || 10;
 
     // Build query with mandatory price AND weight filter
     const query = {};
@@ -417,21 +439,36 @@ export const getProductController = async (request, response) => {
       weight: { $exists: true, $gt: 0 },
     };
 
-    // If there's a search term, combine with price and weight filter
-    if (search) {
-      query.$and = [
-        priceFilter,
-        weightFilter,
-        {
-          $text: {
-            $search: search,
-          },
-        },
-      ];
-    } else {
-      // No search, apply both price and weight filters
-      query.$and = [priceFilter, weightFilter];
+    const andConditions = [priceFilter, weightFilter];
+
+    // Search by name/sku using regex (works for partial matches)
+    if (search && search.trim()) {
+      const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      andConditions.push({
+        $or: [
+          { name: { $regex: escaped, $options: "i" } },
+          { sku: { $regex: escaped, $options: "i" } },
+        ],
+      });
     }
+
+    if (category) {
+      try { andConditions.push({ category: new mongoose.Types.ObjectId(category) }); } catch {}
+    }
+
+    if (brand) {
+      try { andConditions.push({ brand: { $in: [new mongoose.Types.ObjectId(brand)] } }); } catch {}
+    }
+
+    if (productType) {
+      andConditions.push({ productType });
+    }
+
+    if (compatibleSystem) {
+      try { andConditions.push({ compatibleSystem: new mongoose.Types.ObjectId(compatibleSystem) }); } catch {}
+    }
+
+    query.$and = andConditions;
 
     const skip = (page - 1) * limit;
 
@@ -600,6 +637,16 @@ export const updateProductDetails = async (request, response) => {
       "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
     );
 
+    logActivity({
+      userId: request.user?._id,
+      action: 'PRODUCT_UPDATE',
+      description: `Updated product: ${updateProduct?.name || _id}`,
+      resourceType: 'Product',
+      resourceId: _id,
+      resourceName: updateProduct?.name || String(_id),
+      req: request,
+    });
+
     return response.json({
       message: "updated successfully",
       data: updateProduct,
@@ -636,6 +683,15 @@ export const deleteProductDetails = async (request, response) => {
         success: false,
       });
     }
+
+    logActivity({
+      userId: request.user?._id,
+      action: 'PRODUCT_DELETE',
+      description: `Deleted product ID: ${_id}`,
+      resourceType: 'Product',
+      resourceId: _id,
+      req: request,
+    });
 
     return response.json({
       message: "Delete successfully",
@@ -1250,18 +1306,25 @@ export const searchProduct = async (request, response) => {
 
     const query = [];
 
-    // ✅ CRITICAL: $match with $text MUST be the first stage
+    // Search strategy:
+    // - $text (MongoDB full-text) only matches WHOLE words — "caf" won't match "decaffeinato"
+    // - $regex matches anywhere inside a string — works for partial/prefix queries
+    // We use $regex so "caf" finds "decaffeinato", "caffitaly", etc. (same as the dropdown)
     if (search) {
+      const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       query.push({
         $match: {
-          $text: {
-            $search: search,
-          },
           publish: "PUBLISHED",
+          $or: [
+            { name: { $regex: escapedSearch, $options: "i" } },
+            { shortDescription: { $regex: escapedSearch, $options: "i" } },
+            { description: { $regex: escapedSearch, $options: "i" } },
+            { sku: { $regex: escapedSearch, $options: "i" } },
+          ],
         },
       });
     } else {
-      // If no search, just filter by publish status first
+      // No search term — return all published products
       query.push({
         $match: {
           publish: "PUBLISHED",

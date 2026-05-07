@@ -1,10 +1,10 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const cartProductSchema = new mongoose.Schema(
   {
     productId: {
       type: mongoose.Schema.ObjectId,
-      ref: 'Product',
+      ref: "Product",
       required: true,
     },
     quantity: {
@@ -15,13 +15,13 @@ const cartProductSchema = new mongoose.Schema(
     },
     userId: {
       type: mongoose.Schema.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     priceOption: {
       type: String,
-      enum: ['regular', '3weeks', '5weeks'],
-      default: 'regular',
+      enum: ["regular", "3weeks", "5weeks"],
+      default: "regular",
     },
     // Store selected price at the time of adding to cart
     selectedPrice: {
@@ -46,66 +46,66 @@ const cartProductSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // FIXED: Create compound index for user, product AND priceOption
 // This allows the same product with different price options
 cartProductSchema.index(
   { userId: 1, productId: 1, priceOption: 1 },
-  { unique: true }
+  { unique: true },
 );
 
 // Create index for faster user cart queries
 cartProductSchema.index({ userId: 1, createdAt: -1 });
 
 // Pre-save middleware to update lastUpdated timestamp
-cartProductSchema.pre('save', function (next) {
+cartProductSchema.pre("save", function (next) {
   this.lastUpdated = new Date();
   next();
 });
 
 // Virtual to calculate item total based on selected price and quantity
-cartProductSchema.virtual('itemTotal').get(function () {
+cartProductSchema.virtual("itemTotal").get(function () {
   return (this.selectedPrice || 0) * this.quantity;
 });
 
 // Virtual to get delivery time description
-cartProductSchema.virtual('deliveryTimeDescription').get(function () {
+cartProductSchema.virtual("deliveryTimeDescription").get(function () {
   const descriptions = {
-    regular: 'Standard delivery (3-5 days)',
-    '3weeks': 'Express delivery (3 weeks)',
-    '5weeks': 'Economy delivery (5 weeks)',
+    regular: "Standard delivery (1-3 days)",
+    "3weeks": "Express delivery (3 weeks)",
+    "5weeks": "Economy delivery (5 weeks)",
   };
-  return descriptions[this.priceOption] || 'Standard delivery';
+  return descriptions[this.priceOption] || "Standard delivery";
 });
 
 // Instance method to update price based on current product pricing
 cartProductSchema.methods.updatePriceFromProduct = async function () {
-  await this.populate('productId');
+  await this.populate("productId");
 
   if (!this.productId) {
-    throw new Error('Product not found');
+    throw new Error("Product not found");
   }
 
-  const priceOption = this.priceOption || 'regular';
+  const priceOption = this.priceOption || "regular";
   let price;
 
   // Get base price based on price option
   switch (priceOption) {
-    case '3weeks':
+    case "3weeks":
       price =
         this.productId.price3weeksDelivery ||
         this.productId.btcPrice ||
         this.productId.price;
       break;
-    case '5weeks':
+    case "5weeks":
       price =
         this.productId.price5weeksDelivery ||
         this.productId.btcPrice ||
         this.productId.price;
       break;
-    case 'regular':
+    case "regular":
     default:
       // For regular, use btcPrice first, then price
       price =
@@ -127,7 +127,7 @@ cartProductSchema.methods.updatePriceFromProduct = async function () {
 
 // Static method to get cart summary for a user
 cartProductSchema.statics.getCartSummary = async function (userId) {
-  const cartItems = await this.find({ userId }).populate('productId');
+  const cartItems = await this.find({ userId }).populate("productId");
 
   if (!cartItems.length) {
     return {
@@ -151,15 +151,15 @@ cartProductSchema.statics.getCartSummary = async function (userId) {
       // Get current price based on price option
       let currentPrice;
       switch (item.priceOption) {
-        case '3weeks':
+        case "3weeks":
           currentPrice =
             item.productId.price3weeksDelivery || item.productId.price;
           break;
-        case '5weeks':
+        case "5weeks":
           currentPrice =
             item.productId.price5weeksDelivery || item.productId.price;
           break;
-        case 'regular':
+        case "regular":
         default:
           currentPrice = item.productId.price;
           break;
@@ -212,7 +212,7 @@ cartProductSchema.statics.cleanupStaleItems = async function (daysOld = 30) {
 
 // Static method to validate cart items stock
 cartProductSchema.statics.validateCartStock = async function (userId) {
-  const cartItems = await this.find({ userId }).populate('productId');
+  const cartItems = await this.find({ userId }).populate("productId");
   const validationResults = [];
 
   for (const item of cartItems) {
@@ -220,14 +220,14 @@ cartProductSchema.statics.validateCartStock = async function (userId) {
       validationResults.push({
         cartItemId: item._id,
         productId: item.productId?._id,
-        status: 'unavailable',
-        message: 'Product no longer available',
+        status: "unavailable",
+        message: "Product no longer available",
       });
       continue;
     }
 
     // Check stock only for regular delivery
-    if (item.priceOption === 'regular') {
+    if (item.priceOption === "regular") {
       const effectiveStock = item.productId.warehouseStock?.enabled
         ? item.productId.warehouseStock.onlineStock
         : item.productId.stock;
@@ -236,7 +236,7 @@ cartProductSchema.statics.validateCartStock = async function (userId) {
         validationResults.push({
           cartItemId: item._id,
           productId: item.productId._id,
-          status: 'insufficient_stock',
+          status: "insufficient_stock",
           availableStock: effectiveStock,
           requestedQuantity: item.quantity,
           message: `Only ${effectiveStock} items available`,
@@ -248,13 +248,13 @@ cartProductSchema.statics.validateCartStock = async function (userId) {
     validationResults.push({
       cartItemId: item._id,
       productId: item.productId._id,
-      status: 'valid',
+      status: "valid",
     });
   }
 
   return validationResults;
 };
 
-const CartProductModel = mongoose.model('cartProduct', cartProductSchema);
+const CartProductModel = mongoose.model("cartProduct", cartProductSchema);
 
 export default CartProductModel;

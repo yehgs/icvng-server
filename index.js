@@ -7,6 +7,7 @@ import morgan from "morgan";
 import helmet from "helmet";
 import connectDB from "./config/connectDB.js";
 import userRouter from "./route/user.route.js";
+import activityLogRouter from "./route/activity-log.route.js";
 import categoryRouter from "./route/category.route.js";
 import attributeRouter from "./route/attribute.route.js";
 import tagRouter from "./route/tag.route.js";
@@ -179,6 +180,7 @@ app.use("/api/order-requests", orderRequestRouter);
 app.use("/api/coupons", couponRouter);
 app.use("/api/btb-auth", orderRequestAuthRouter);
 app.use("/api/invoices", invoiceRouter);
+app.use("/api/activity-logs", activityLogRouter);
 
 // ============================================
 // Error handling middleware

@@ -9,6 +9,7 @@ import csv from "csv-parser";
 import { Readable } from "stream";
 import { transporter } from "../utils/nodemailer.js";
 import SupplierModel from "../models/supplier.model.js";
+import { logActivity as logGlobalActivity } from "../utils/activityLogger.js";
 
 // System settings with persistence
 let systemSettings = {
@@ -494,6 +495,17 @@ export const updateWeight = async (request, response) => {
       "Product weight updated",
       { ip: request.ip, userAgent: request.headers["user-agent"] },
     );
+
+    // Also write to global activity log
+    logGlobalActivity({
+      userId: request.user?._id,
+      action: 'STOCK_UPDATE',
+      description: `Updated weight for: ${updatedProduct?.name || productId}`,
+      resourceType: 'Product',
+      resourceId: productId,
+      resourceName: updatedProduct?.name || String(productId),
+      req: request,
+    });
 
     return response.json({
       message: "Product weight updated successfully",

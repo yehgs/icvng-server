@@ -1,20 +1,20 @@
 // controllers/order.controller.js - WITH ORDER GROUPING SYSTEM
-import OrderModel from '../models/order.model.js';
-import CartProductModel from '../models/cartproduct.model.js';
-import UserModel from '../models/user.model.js';
-import ShippingZoneModel from '../models/shipping-zone.model.js';
-import ShippingMethodModel from '../models/shipping-method.model.js';
-import mongoose from 'mongoose';
-import Stripe from '../config/stripe.js';
-import { STRIPE_WEBHOOK_SECRET } from '../config/stripe.js';
-import crypto from 'crypto';
+import OrderModel from "../models/order.model.js";
+import CartProductModel from "../models/cartproduct.model.js";
+import UserModel from "../models/user.model.js";
+import ShippingZoneModel from "../models/shipping-zone.model.js";
+import ShippingMethodModel from "../models/shipping-method.model.js";
+import mongoose from "mongoose";
+import Stripe from "../config/stripe.js";
+import { STRIPE_WEBHOOK_SECRET } from "../config/stripe.js";
+import crypto from "crypto";
 
 // Helper functions
-const getProductPrice = (product, priceOption = 'regular') => {
+const getProductPrice = (product, priceOption = "regular") => {
   switch (priceOption) {
-    case '3weeks':
+    case "3weeks":
       return product.price3weeksDelivery || product.btcPrice || product.price;
-    case '5weeks':
+    case "5weeks":
       return product.price5weeksDelivery || product.btcPrice || product.price;
     default:
       return product.btcPrice || product.price;
@@ -30,39 +30,48 @@ const pricewithDiscount = (price, dis = 0) => {
 export async function paystackWebhookController(request, response) {
   try {
     const hash = crypto
-      .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+      .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY)
       .update(JSON.stringify(request.body))
-      .digest('hex');
+      .digest("hex");
 
-    if (hash !== request.headers['x-paystack-signature']) {
+    if (hash !== request.headers["x-paystack-signature"]) {
       return response.status(401).json({
-        message: 'Unauthorized webhook',
+        message: "Unauthorized webhook",
         error: true,
       });
     }
 
     const { event, data } = request.body;
 
-    if (event === 'charge.success') {
+    if (event === "charge.success") {
       const { reference, amount, currency, metadata, customer } = data;
+
+      // ── Guest order path ──
+      if (metadata?.isGuest === true) {
+        const { processGuestPaystackWebhook } =
+          await import("./guestOrder.controller.js");
+        await processGuestPaystackWebhook(metadata, reference);
+        return response.json({ received: true });
+      }
+
       const userId = metadata.userId;
 
       const user = await UserModel.findById(userId);
       if (!user) {
         return response.status(404).json({
-          message: 'User not found',
+          message: "User not found",
           error: true,
         });
       }
 
       const cartItems = await CartProductModel.find({ userId }).populate({
-        path: 'productId',
-        populate: { path: 'category' },
+        path: "productId",
+        populate: { path: "category" },
       });
 
       if (cartItems.length === 0) {
         return response.status(400).json({
-          message: 'No cart items found',
+          message: "No cart items found",
           error: true,
         });
       }
@@ -83,31 +92,31 @@ export async function paystackWebhookController(request, response) {
 
       if (metadata.addressId) {
         const address = await mongoose
-          .model('address')
+          .model("address")
           .findById(metadata.addressId);
         if (address) {
           shippingZone = await ShippingZoneModel.findZoneByCity(
             address.city,
-            address.state
+            address.state,
           );
         }
       }
 
       if (metadata.shippingMethodId) {
         shippingMethod = await ShippingMethodModel.findById(
-          metadata.shippingMethodId
+          metadata.shippingMethodId,
         );
       }
 
       // ✅ CREATE ORDER GROUP ID - Unique for this checkout session
       const orderGroupId = `GRP-${Date.now()}-${userId}`;
       const shippingCostPerItem =
-        parseFloat(metadata.shippingCost || '0') / cartItems.length;
+        parseFloat(metadata.shippingCost || "0") / cartItems.length;
 
       // Calculate group totals
       const groupTotals = {
         subTotal: 0,
-        totalShipping: parseFloat(metadata.shippingCost || '0'),
+        totalShipping: parseFloat(metadata.shippingCost || "0"),
         totalDiscount: 0,
         totalTax: 0,
         grandTotal: 0,
@@ -117,19 +126,19 @@ export async function paystackWebhookController(request, response) {
       // Exchange rate info
       const exchangeRateInfo = {
         rate: 1,
-        fromCurrency: 'NGN',
-        toCurrency: 'NGN',
-        rateSource: 'manual',
+        fromCurrency: "NGN",
+        toCurrency: "NGN",
+        rateSource: "manual",
         appliedAt: new Date(),
       };
 
       // ✅ Create orders - ONE ORDER PER PRODUCT, but GROUPED
       const orderItems = cartItems.map((item, index) => {
-        const priceOption = item.priceOption || 'regular';
+        const priceOption = item.priceOption || "regular";
         const productPrice = getProductPrice(item.productId, priceOption);
         const finalPrice = pricewithDiscount(
           productPrice,
-          item.productId.discount
+          item.productId.discount,
         );
         const itemSubtotal = finalPrice * item.quantity;
         const itemTotal = itemSubtotal + shippingCostPerItem;
@@ -162,8 +171,8 @@ export async function paystackWebhookController(request, response) {
           // Website order defaults
           userId,
           customerId: null,
-          orderType: 'BTC',
-          orderMode: 'ONLINE',
+          orderType: "BTC",
+          orderMode: "ONLINE",
           isWebsiteOrder: true,
           createdBy: null,
 
@@ -182,7 +191,7 @@ export async function paystackWebhookController(request, response) {
           subTotalAmt: itemSubtotal,
           totalAmt: itemTotal,
           shipping_cost: shippingCostPerItem,
-          currency: 'NGN',
+          currency: "NGN",
           exchangeRateUsed: exchangeRateInfo,
           amountsInNGN: {
             subtotal: itemSubtotal,
@@ -195,8 +204,8 @@ export async function paystackWebhookController(request, response) {
 
           // Payment (SHARED across all orders in group)
           paymentId: reference,
-          payment_status: 'PAID',
-          payment_method: 'PAYSTACK',
+          payment_status: "PAID",
+          payment_method: "PAYSTACK",
 
           // Delivery (SHARED)
           delivery_address: metadata.addressId,
@@ -206,7 +215,7 @@ export async function paystackWebhookController(request, response) {
             ? {
                 method_name: shippingMethod.name,
                 method_type: shippingMethod.type,
-                carrier: { name: 'I-Coffee Logistics', code: 'ICF' },
+                carrier: { name: "I-Coffee Logistics", code: "ICF" },
                 estimated_delivery_days: {
                   min: shippingMethod.estimatedDelivery?.minDays || 1,
                   max: shippingMethod.estimatedDelivery?.maxDays || 7,
@@ -226,13 +235,13 @@ export async function paystackWebhookController(request, response) {
       await UserModel.updateOne({ _id: userId }, { shopping_cart: [] });
 
       console.log(
-        `✅ Paystack: Created order group ${orderGroupId} with ${orders.length} orders`
+        `✅ Paystack: Created order group ${orderGroupId} with ${orders.length} orders`,
       );
     }
 
     return response.json({ received: true });
   } catch (error) {
-    console.error('Paystack webhook error:', error);
+    console.error("Paystack webhook error:", error);
     return response.status(500).json({
       message: error.message,
       error: true,
@@ -249,24 +258,24 @@ export async function paystackPaymentController(request, response) {
       addressId,
       shippingCost = 0,
       shippingMethodId,
-      currency = 'NGN',
+      currency = "NGN",
     } = request.body;
 
-    if (currency !== 'NGN') {
+    if (currency !== "NGN") {
       return response.status(400).json({
-        message: 'Paystack is only available for NGN currency',
+        message: "Paystack is only available for NGN currency",
         error: true,
       });
     }
 
     const user = await UserModel.findById(userId);
     const cartItems = await CartProductModel.find({ userId }).populate(
-      'productId'
+      "productId",
     );
 
     if (cartItems.length === 0) {
       return response.status(400).json({
-        message: 'No items in cart',
+        message: "No items in cart",
         error: true,
       });
     }
@@ -278,27 +287,27 @@ export async function paystackPaymentController(request, response) {
       email: user.email,
       amount: amountInKobo,
       reference: txRef,
-      currency: 'NGN',
+      currency: "NGN",
       callback_url: `${process.env.FRONTEND_URL}/payment/paystack/callback`,
       metadata: {
         userId: userId.toString(),
         addressId,
-        shippingMethodId: shippingMethodId || '',
+        shippingMethodId: shippingMethodId || "",
         shippingCost,
         itemCount: cartItems.length,
       },
     };
 
     const paystackResponse = await fetch(
-      'https://api.paystack.co/transaction/initialize',
+      "https://api.paystack.co/transaction/initialize",
       {
-        method: 'POST',
+        method: "POST",
         headers: {
           Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(paymentData),
-      }
+      },
     );
 
     const paystackData = await paystackResponse.json();
@@ -310,10 +319,10 @@ export async function paystackPaymentController(request, response) {
         reference: paystackData.data.reference,
       });
     } else {
-      throw new Error(paystackData.message || 'Failed to create payment link');
+      throw new Error(paystackData.message || "Failed to create payment link");
     }
   } catch (error) {
-    console.error('Paystack payment error:', error);
+    console.error("Paystack payment error:", error);
     return response.status(500).json({
       message: error.message,
       error: true,
@@ -323,7 +332,7 @@ export async function paystackPaymentController(request, response) {
 
 // ===== STRIPE WEBHOOK =====
 export async function webhookStripe(request, response) {
-  const sig = request.headers['stripe-signature'];
+  const sig = request.headers["stripe-signature"];
 
   let event;
 
@@ -332,21 +341,30 @@ export async function webhookStripe(request, response) {
     event = Stripe.webhooks.constructEvent(
       request.body,
       sig,
-      STRIPE_WEBHOOK_SECRET
+      STRIPE_WEBHOOK_SECRET,
     );
   } catch (err) {
-    console.error('⚠️ Webhook signature verification failed:', err.message);
+    console.error("⚠️ Webhook signature verification failed:", err.message);
     return response.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   // Process the event
   switch (event.type) {
-    case 'checkout.session.completed':
+    case "checkout.session.completed":
       const session = event.data.object;
 
       try {
+        // ── Guest Stripe order path ──
+        if (session.metadata?.isGuest === "true") {
+          const { processGuestStripeWebhook } =
+            await import("./guestOrder.controller.js");
+          await processGuestStripeWebhook(session);
+          break;
+        }
+
+        // ── Logged-in user Stripe order path ──
         const lineItems = await Stripe.checkout.sessions.listLineItems(
-          session.id
+          session.id,
         );
         const userId = session.metadata.userId;
 
@@ -355,9 +373,9 @@ export async function webhookStripe(request, response) {
           userId,
           addressId: session.metadata.addressId,
           paymentId: session.payment_intent,
-          payment_status: 'PAID',
+          payment_status: "PAID",
           shippingMethodId: session.metadata.shippingMethodId,
-          shippingCost: parseFloat(session.metadata.originalShippingNGN || '0'),
+          shippingCost: parseFloat(session.metadata.originalShippingNGN || "0"),
           session,
         });
 
@@ -369,10 +387,10 @@ export async function webhookStripe(request, response) {
         }
 
         console.log(
-          `✅ Stripe: Created order group with ${orders.length} orders`
+          `✅ Stripe: Created order group with ${orders.length} orders`,
         );
       } catch (error) {
-        console.error('Error processing checkout.session.completed:', error);
+        console.error("Error processing checkout.session.completed:", error);
         // Still return 200 to Stripe to acknowledge receipt
       }
       break;
@@ -398,13 +416,13 @@ export async function stripePaymentController(request, response) {
       originalAmounts,
       exchangeRateInfo,
       shippingMethodId,
-      currency = 'USD',
-      paymentMethod = 'stripe',
+      currency = "USD",
+      paymentMethod = "stripe",
     } = request.body;
 
-    if (currency === 'NGN') {
+    if (currency === "NGN") {
       return response.status(400).json({
-        message: 'Please use Paystack for NGN payments',
+        message: "Please use Paystack for NGN payments",
         error: true,
         success: false,
       });
@@ -412,12 +430,12 @@ export async function stripePaymentController(request, response) {
 
     const user = await UserModel.findById(userId);
     const cartItems = await CartProductModel.find({ userId }).populate(
-      'productId'
+      "productId",
     );
 
     if (cartItems.length === 0) {
       return response.status(400).json({
-        message: 'No items in cart',
+        message: "No items in cart",
         error: true,
         success: false,
       });
@@ -442,11 +460,11 @@ export async function stripePaymentController(request, response) {
     const line_items = [];
 
     for (const item of cartItems) {
-      const priceOption = item.priceOption || 'regular';
+      const priceOption = item.priceOption || "regular";
       const productPrice = getProductPrice(item.productId, priceOption);
       const finalPriceNGN = pricewithDiscount(
         productPrice,
-        item.productId.discount
+        item.productId.discount,
       );
 
       const itemProportion =
@@ -479,9 +497,9 @@ export async function stripePaymentController(request, response) {
         price_data: {
           currency: currency.toLowerCase(),
           product_data: {
-            name: `Shipping - ${shippingMethod?.name || 'Standard'}`,
+            name: `Shipping - ${shippingMethod?.name || "Standard"}`,
             metadata: {
-              type: 'shipping',
+              type: "shipping",
               shippingMethodId: shippingMethodId,
             },
           },
@@ -492,14 +510,14 @@ export async function stripePaymentController(request, response) {
     }
 
     const params = {
-      submit_type: 'pay',
-      mode: 'payment',
-      payment_method_types: ['card'],
+      submit_type: "pay",
+      mode: "payment",
+      payment_method_types: ["card"],
       customer_email: user.email,
       metadata: {
         userId: userId.toString(),
         addressId: addressId,
-        shippingMethodId: shippingMethodId || '',
+        shippingMethodId: shippingMethodId || "",
         exchangeRate: exchangeRateInfo.rate.toString(),
         fromCurrency: exchangeRateInfo.fromCurrency,
         toCurrency: exchangeRateInfo.toCurrency,
@@ -522,7 +540,7 @@ export async function stripePaymentController(request, response) {
       success: true,
     });
   } catch (error) {
-    console.error('Stripe payment error:', error);
+    console.error("Stripe payment error:", error);
     return response.status(500).json({
       message: error.message || error,
       error: true,
@@ -548,11 +566,11 @@ async function getOrderProductItemsFromStripe({
   let shippingMethod = null;
 
   if (addressId) {
-    const address = await mongoose.model('address').findById(addressId);
+    const address = await mongoose.model("address").findById(addressId);
     if (address) {
       shippingZone = await ShippingZoneModel.findZoneByCity(
         address.city,
-        address.state
+        address.state,
       );
     }
   }
@@ -566,9 +584,9 @@ async function getOrderProductItemsFromStripe({
 
   const exchangeRateInfo = {
     rate: parseFloat(session.metadata.exchangeRate) || 1,
-    fromCurrency: session.metadata.fromCurrency || 'NGN',
+    fromCurrency: session.metadata.fromCurrency || "NGN",
     toCurrency: session.currency.toUpperCase(),
-    rateSource: session.metadata.rateSource || 'manual',
+    rateSource: session.metadata.rateSource || "manual",
     appliedAt: new Date(),
   };
 
@@ -579,7 +597,7 @@ async function getOrderProductItemsFromStripe({
   };
 
   const productItems = lineItems.data.filter(
-    (item) => item.price?.product?.metadata?.type !== 'shipping'
+    (item) => item.price?.product?.metadata?.type !== "shipping",
   );
 
   const shippingCostPerItem = shippingCost / productItems.length;
@@ -599,15 +617,15 @@ async function getOrderProductItemsFromStripe({
 
   for (const item of lineItems.data) {
     const product = await Stripe.products.retrieve(item.price.product);
-    if (product.metadata.type === 'shipping') continue;
+    if (product.metadata.type === "shipping") continue;
 
-    const priceOption = product.metadata.priceOption || 'regular';
+    const priceOption = product.metadata.priceOption || "regular";
     const productId = product.metadata.productId;
 
     const fullProduct = await mongoose
-      .model('Product')
+      .model("Product")
       .findById(productId)
-      .populate('category');
+      .populate("category");
 
     const amountInTargetCurrency = item.amount_total / 100;
     const isParent = orderIndex === 0;
@@ -632,8 +650,8 @@ async function getOrderProductItemsFromStripe({
       // Website order defaults
       userId,
       customerId: null,
-      orderType: 'BTC',
-      orderMode: 'ONLINE',
+      orderType: "BTC",
+      orderMode: "ONLINE",
       isWebsiteOrder: true,
       createdBy: null,
 
@@ -666,7 +684,7 @@ async function getOrderProductItemsFromStripe({
       // Payment (SHARED)
       paymentId,
       payment_status,
-      payment_method: 'STRIPE',
+      payment_method: "STRIPE",
 
       // Delivery (SHARED)
       delivery_address: addressId,
@@ -676,7 +694,7 @@ async function getOrderProductItemsFromStripe({
         ? {
             method_name: shippingMethod.name,
             method_type: shippingMethod.type,
-            carrier: { name: 'I-Coffee Logistics', code: 'ICF' },
+            carrier: { name: "I-Coffee Logistics", code: "ICF" },
             estimated_delivery_days: {
               min: shippingMethod.estimatedDelivery?.minDays || 1,
               max: shippingMethod.estimatedDelivery?.maxDays || 7,
@@ -705,24 +723,24 @@ export async function DirectBankTransferOrderController(request, response) {
       addressId,
       shippingCost = 0,
       shippingMethodId,
-      currency = 'NGN',
+      currency = "NGN",
       bankDetails,
     } = request.body;
 
-    if (currency !== 'NGN') {
+    if (currency !== "NGN") {
       return response.status(400).json({
-        message: 'Direct Bank Transfer is only available for NGN',
+        message: "Direct Bank Transfer is only available for NGN",
         error: true,
       });
     }
 
     const cartItems = await CartProductModel.find({ userId }).populate(
-      'productId'
+      "productId",
     );
 
     if (cartItems.length === 0) {
       return response.status(400).json({
-        message: 'No items in cart',
+        message: "No items in cart",
         error: true,
       });
     }
@@ -745,11 +763,11 @@ export async function DirectBankTransferOrderController(request, response) {
     let shippingZone = null;
     let address = null;
     if (addressId) {
-      address = await mongoose.model('address').findById(addressId);
+      address = await mongoose.model("address").findById(addressId);
       if (address) {
         shippingZone = await ShippingZoneModel.findZoneByCity(
           address.city,
-          address.state
+          address.state,
         );
       }
     }
@@ -773,11 +791,11 @@ export async function DirectBankTransferOrderController(request, response) {
       .substr(2, 9)}`;
 
     const orderItems = cartItems.map((item, index) => {
-      const priceOption = item.priceOption || 'regular';
+      const priceOption = item.priceOption || "regular";
       const productPrice = getProductPrice(item.productId, priceOption);
       const finalPrice = pricewithDiscount(
         productPrice,
-        item.productId.discount
+        item.productId.discount,
       );
       const itemSubtotal = finalPrice * item.quantity;
       const itemTotal = itemSubtotal + shippingCostPerItem;
@@ -804,8 +822,8 @@ export async function DirectBankTransferOrderController(request, response) {
         // Website order defaults
         userId,
         customerId: null,
-        orderType: 'BTC',
-        orderMode: 'ONLINE',
+        orderType: "BTC",
+        orderMode: "ONLINE",
         isWebsiteOrder: true,
         createdBy: null,
 
@@ -824,15 +842,15 @@ export async function DirectBankTransferOrderController(request, response) {
         subTotalAmt: itemSubtotal,
         totalAmt: itemTotal,
         shipping_cost: shippingCostPerItem,
-        currency: 'NGN',
+        currency: "NGN",
 
         // Group totals
         groupTotals: isParent ? groupTotals : {},
 
         // Payment (SHARED)
         paymentId: `BANK-${Date.now()}`,
-        payment_status: 'PENDING_BANK_TRANSFER',
-        payment_method: 'BANK_TRANSFER',
+        payment_status: "PENDING_BANK_TRANSFER",
+        payment_method: "BANK_TRANSFER",
         bank_transfer_details: bankDetails,
 
         // Delivery (SHARED)
@@ -843,7 +861,7 @@ export async function DirectBankTransferOrderController(request, response) {
           ? {
               method_name: shippingMethod.name,
               method_type: shippingMethod.type,
-              carrier: { name: 'I-Coffee Logistics', code: 'ICF' },
+              carrier: { name: "I-Coffee Logistics", code: "ICF" },
             }
           : {},
 
@@ -861,16 +879,16 @@ export async function DirectBankTransferOrderController(request, response) {
     await UserModel.updateOne({ _id: userId }, { shopping_cart: [] });
 
     console.log(
-      `✅ Bank transfer: Created order group ${orderGroupId} with ${orders.length} orders`
+      `✅ Bank transfer: Created order group ${orderGroupId} with ${orders.length} orders`,
     );
 
     return response.json({
-      message: 'Bank transfer order placed successfully',
+      message: "Bank transfer order placed successfully",
       data: orders,
       success: true,
     });
   } catch (error) {
-    console.error('Bank transfer error:', error);
+    console.error("Bank transfer error:", error);
     return response.status(500).json({
       message: error.message,
       error: true,
@@ -891,11 +909,11 @@ export async function getOrderDetailsController(request, response) {
     });
 
     console.log(
-      `📦 Found ${result.totalGroups} order groups for user ${userId}`
+      `📦 Found ${result.totalGroups} order groups for user ${userId}`,
     );
 
     return response.json({
-      message: 'Orders retrieved successfully',
+      message: "Orders retrieved successfully",
       data: result.groups,
       pagination: {
         totalGroups: result.totalGroups,
@@ -906,7 +924,7 @@ export async function getOrderDetailsController(request, response) {
       success: true,
     });
   } catch (error) {
-    console.error('Get order details error:', error);
+    console.error("Get order details error:", error);
     return response.status(500).json({
       message: error.message,
       error: true,
@@ -925,7 +943,7 @@ export async function getOrderGroupController(request, response) {
 
     if (orders.length === 0) {
       return response.status(404).json({
-        message: 'Order group not found',
+        message: "Order group not found",
         error: true,
       });
     }
@@ -937,7 +955,7 @@ export async function getOrderGroupController(request, response) {
       firstOrder.customerId?.toString() !== userId
     ) {
       return response.status(403).json({
-        message: 'Access denied',
+        message: "Access denied",
         error: true,
       });
     }
@@ -946,7 +964,7 @@ export async function getOrderGroupController(request, response) {
     const childOrders = orders.filter((o) => !o.isParentOrder);
 
     return response.json({
-      message: 'Order group retrieved successfully',
+      message: "Order group retrieved successfully",
       data: {
         orderGroupId,
         parentOrder,
@@ -962,7 +980,7 @@ export async function getOrderGroupController(request, response) {
       success: true,
     });
   } catch (error) {
-    console.error('Get order group error:', error);
+    console.error("Get order group error:", error);
     return response.status(500).json({
       message: error.message,
       error: true,

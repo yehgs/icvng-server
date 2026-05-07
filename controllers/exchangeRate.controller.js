@@ -1,5 +1,6 @@
 // controllers/exchangeRate.controller.js
 import ExchangeRateModel from '../models/exchange-rate.model.js';
+import { logActivity } from '../utils/activityLogger.js';
 import axios from 'axios';
 
 // Free API providers configuration
@@ -389,6 +390,17 @@ export const createOrUpdateRate = async (request, response) => {
       data: exchangeRate,
       error: false,
       success: true,
+    });
+
+    // Log the activity
+    await logActivity({
+      userId: request.user._id,
+      action: 'EXCHANGE_RATE_UPDATE',
+      description: `Set manual exchange rate: ${baseCurrency} → ${targetCurrency} = ${rate}`,
+      resourceType: 'ExchangeRate',
+      resourceId: exchangeRate._id,
+      resourceName: `${baseCurrency}/${targetCurrency}`,
+      req: request,
     });
   } catch (error) {
     return response.status(500).json({

@@ -6,6 +6,7 @@ import UserModel from "../models/user.model.js";
 import mongoose from "mongoose";
 import { generateInvoiceTemplate } from "../utils/invoiceTemplate.js";
 import sendEmail from "../config/sendEmail.js";
+import { logActivity } from "../utils/activityLogger.js";
 
 // Helper functions
 const getProductPrice = (product, priceOption = "regular") => {
@@ -510,6 +511,16 @@ export const updateOrderStatusController = async (request, response) => {
       .populate("userId", "name email")
       .populate("customerId", "name email companyName")
       .populate("createdBy", "name email");
+
+    logActivity({
+      userId: request.user?._id,
+      action: 'ORDER_STATUS_CHANGE',
+      description: `Updated order ${updatedOrder?.orderNumber || orderId} — status: ${updateData.status || 'updated'}`,
+      resourceType: 'Order',
+      resourceId: orderId,
+      resourceName: updatedOrder?.orderNumber || String(orderId),
+      req: request,
+    });
 
     return response.json({
       message: "Order updated successfully",
