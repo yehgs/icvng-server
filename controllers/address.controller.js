@@ -172,10 +172,10 @@ export const addAddressController = async (request, response) => {
     } = request.body;
 
     // Validate required fields
-    if (!address_line || !city || !state || !lga || !postal_code || !mobile) {
+    if (!address_line || !city || !state || !lga || !mobile) {
       return response.status(400).json({
         message:
-          'Address line, city, state, LGA, postal code, and mobile number are required',
+          'Address line, city, state, LGA, and mobile number are required',
         error: true,
         success: false,
       });
@@ -197,7 +197,7 @@ export const addAddressController = async (request, response) => {
       state_code: stateCode,
       lga: lga.trim(),
       area: area?.trim() || '',
-      postal_code: postal_code.trim(),
+      ...(postal_code && { postal_code: postal_code.trim() }),
       country: 'Nigeria',
       mobile: mobile.trim(),
       landline: landline?.trim() || '',
