@@ -229,13 +229,13 @@ export async function loginController(request, response) {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax',
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     };
 
     response.cookie('accessToken', accessToken, cookiesOption);
     response.cookie('refreshToken', refreshToken, {
       ...cookiesOption,
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days for refresh token
+      maxAge: 60 * 24 * 60 * 60 * 1000, // 60 days for refresh token
     });
 
     // Return success response
@@ -683,7 +683,7 @@ export async function refreshToken(request, response) {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax',
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     };
 
     response.cookie('accessToken', newAccessToken, cookiesOption);
