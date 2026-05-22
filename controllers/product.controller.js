@@ -7,35 +7,47 @@ import generateSlug from "../utils/generateSlug.js";
 import generateSKU from "../utils/generateSKU.js";
 import { logActivity } from "../utils/activityLogger.js";
 
-// Helper function to determine if a product should be displayed
+// ─── Client Visibility Rule ────────────────────────────────────────────────
+// A product is shown to customers if it is PUBLISHED and at least one of:
+//   (a) warehouseStock.onlineStock > 0  (in-house stock, regular price works)
+//   (b) partnerStock.enabled === true   (partner/supplier manages stock)
+//   (c) price3weeksDelivery > 0         (special order option available)
+//   (d) price5weeksDelivery > 0         (special order option available)
+//
+// Products with ONLY btcPrice and 0 online stock and no partner stock are hidden
+// because the customer would see "Pricing Unavailable" with no way to order.
+// ──────────────────────────────────────────────────────────────────────────
+const CLIENT_VISIBILITY_FILTER = {
+  publish: "PUBLISHED",
+  $or: [
+    { "warehouseStock.onlineStock": { $gt: 0 } },
+    { "partnerStock.enabled": true },
+    { price3weeksDelivery: { $gt: 0 } },
+    { price5weeksDelivery: { $gt: 0 } },
+  ],
+};
+
+// JS-level helper (used for admin visibility badge)
 const shouldDisplayProduct = (product) => {
   const onlineStock = product.warehouseStock?.onlineStock || 0;
-  const hasRegularPrice =
-    (product.btcPrice && product.btcPrice > 0) ||
-    (product.price && product.price > 0);
-  const has3WeeksPrice =
-    product.price3weeksDelivery && product.price3weeksDelivery > 0;
-  const has5WeeksPrice =
-    product.price5weeksDelivery && product.price5weeksDelivery > 0;
+  const isPartner = product.partnerStock?.enabled === true;
+  const has3WeeksPrice = product.price3weeksDelivery > 0;
+  const has5WeeksPrice = product.price5weeksDelivery > 0;
   const hasImage = product.image && product.image.length > 0;
 
-  // Rule 1: Must have at least one image
-  if (!hasImage) {
-    return false;
-  }
+  if (!hasImage) return false;
 
-  // Rule 2: Must have at least one valid price
-  if (!hasRegularPrice && !has3WeeksPrice && !has5WeeksPrice) {
-    return false;
-  }
+  // Has delivery option regardless of stock
+  if (has3WeeksPrice || has5WeeksPrice) return true;
 
-  // Rule 3: If online stock is 0, must have either 3-week or 5-week delivery price
-  if (onlineStock === 0) {
-    return has3WeeksPrice || has5WeeksPrice;
-  }
+  // Partner product — supplier manages availability
+  if (isPartner) return true;
 
-  // If online stock > 0, product can be displayed with any valid price
-  return true;
+  // Regular stock available
+  if (onlineStock > 0) return true;
+
+  // No stock, no partner, no delivery option → hidden from clients
+  return false;
 };
 
 export const createProductController = async (request, response) => {
@@ -216,13 +228,29 @@ export const searchProductController = async (request, response) => {
       });
     }
 
-    // Create the search query
+    // Search query — combined with client visibility rules using $and so both
+    // $or conditions (visibility + text search) coexist without key collision
     const searchQuery = {
-      $or: [
-        { name: { $regex: q, $options: "i" } },
-        { description: { $regex: q, $options: "i" } },
-        { shortDescription: { $regex: q, $options: "i" } },
-        { sku: { $regex: q, $options: "i" } },
+      publish: "PUBLISHED",
+      $and: [
+        // Visibility: must have stock, partner, or delivery price
+        {
+          $or: [
+            { "warehouseStock.onlineStock": { $gt: 0 } },
+            { "partnerStock.enabled": true },
+            { price3weeksDelivery: { $gt: 0 } },
+            { price5weeksDelivery: { $gt: 0 } },
+          ],
+        },
+        // Text match
+        {
+          $or: [
+            { name: { $regex: q, $options: "i" } },
+            { description: { $regex: q, $options: "i" } },
+            { shortDescription: { $regex: q, $options: "i" } },
+            { sku: { $regex: q, $options: "i" } },
+          ],
+        },
       ],
     };
 
@@ -351,7 +379,7 @@ export const getCategoryStructureController = async (request, response) => {
 
 export const getProductControllerAdmin = async (request, response) => {
   try {
-    let { page, limit, search, category, brand, publish, productType, lowStock, priceFilter } = request.body;
+    let { page, limit, search, category, brand, publish, productType, lowStock, priceFilter, hiddenFromShop } = request.body;
 
     page = parseInt(page) || 1;
     limit = parseInt(limit) || 10;
@@ -413,6 +441,26 @@ export const getProductControllerAdmin = async (request, response) => {
       );
     }
 
+    // Hidden from shop filter — products that are PUBLISHED but invisible to clients
+    // Hidden = onlineStock=0 AND not partner AND no 3/5-week delivery price
+    if (hiddenFromShop === 'true') {
+      andConditions.push({ publish: 'PUBLISHED' });
+      andConditions.push({ 'warehouseStock.onlineStock': { $lte: 0 } });
+      andConditions.push({ 'partnerStock.enabled': { $ne: true } });
+      andConditions.push({ price3weeksDelivery: { $lte: 0 } });
+      andConditions.push({ price5weeksDelivery: { $lte: 0 } });
+    } else if (hiddenFromShop === 'false') {
+      // Visible = matches the CLIENT_VISIBILITY_FILTER
+      andConditions.push({
+        $or: [
+          { 'warehouseStock.onlineStock': { $gt: 0 } },
+          { 'partnerStock.enabled': true },
+          { price3weeksDelivery: { $gt: 0 } },
+          { price5weeksDelivery: { $gt: 0 } },
+        ],
+      });
+    }
+
     if (andConditions.length > 0) {
       query.$and = andConditions;
     }
@@ -457,21 +505,8 @@ export const getProductController = async (request, response) => {
     // Build query with mandatory price AND weight filter
     const query = {};
 
-    // CRITICAL: Only show products with at least one of the three prices set AND has weight
-    const priceFilter = {
-      $or: [
-        { btcPrice: { $gt: 0 } },
-        { price3weeksDelivery: { $gt: 0 } },
-        { price5weeksDelivery: { $gt: 0 } },
-      ],
-    };
-
-    // Weight filter - weight must exist and be greater than 0
-    const weightFilter = {
-      weight: { $exists: true, $gt: 0 },
-    };
-
-    const andConditions = [priceFilter, weightFilter];
+    // CRITICAL: Only show products that are visible to clients
+    const andConditions = [CLIENT_VISIBILITY_FILTER];
 
     // Search by name/sku using regex (works for partial matches)
     if (search && search.trim()) {
@@ -556,13 +591,18 @@ export const getProductDetails = async (request, response) => {
       });
     }
 
-    const product = await ProductModel.findOne({ _id: productId }).populate(
+    // Include CLIENT_VISIBILITY_FILTER so hidden products (no stock, no partner,
+    // no delivery price) return 404 instead of the "Pricing Unavailable" page
+    const product = await ProductModel.findOne({
+      _id: productId,
+      ...CLIENT_VISIBILITY_FILTER,
+    }).populate(
       "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
     );
 
     if (!product) {
       return response.status(404).json({
-        message: "Product not found",
+        message: "Product not found or not available",
         error: true,
         success: false,
       });
@@ -980,14 +1020,14 @@ export const getProductByCategory = async (request, response) => {
     const skip = (pageNumber - 1) * pageSize;
 
     const [data, dataCount] = await Promise.all([
-      ProductModel.find({ category: categoryId })
+      ProductModel.find({ category: categoryId, ...CLIENT_VISIBILITY_FILTER })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(pageSize)
         .populate(
           "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
         ),
-      ProductModel.countDocuments({ category: categoryId }),
+      ProductModel.countDocuments({ category: categoryId, ...CLIENT_VISIBILITY_FILTER }),
     ]);
 
     return response.json({
@@ -1026,21 +1066,17 @@ export const getProductByCategoryAndSubCategory = async (request, response) => {
     const pageSize = limit || 12;
     const skip = (pageNumber - 1) * pageSize;
 
+    const visibilityQuery = { category: categoryId, subCategory: subCategoryId, ...CLIENT_VISIBILITY_FILTER };
+
     const [data, dataCount] = await Promise.all([
-      ProductModel.find({
-        category: categoryId,
-        subCategory: subCategoryId,
-      })
+      ProductModel.find(visibilityQuery)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(pageSize)
         .populate(
           "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
         ),
-      ProductModel.countDocuments({
-        category: categoryId,
-        subCategory: subCategoryId,
-      }),
+      ProductModel.countDocuments(visibilityQuery),
     ]);
 
     return response.json({
@@ -1380,6 +1416,7 @@ export const searchProduct = async (request, response) => {
       minPrice,
       maxPrice,
       sort,
+      compatibleSystem,
     } = request.body;
 
     if (!page) {
@@ -1401,20 +1438,32 @@ export const searchProduct = async (request, response) => {
       query.push({
         $match: {
           publish: "PUBLISHED",
-          $or: [
-            { name: { $regex: escapedSearch, $options: "i" } },
-            { shortDescription: { $regex: escapedSearch, $options: "i" } },
-            { description: { $regex: escapedSearch, $options: "i" } },
-            { sku: { $regex: escapedSearch, $options: "i" } },
+          $and: [
+            // Visibility rule (contains its own $or)
+            {
+              $or: [
+                { "warehouseStock.onlineStock": { $gt: 0 } },
+                { "partnerStock.enabled": true },
+                { price3weeksDelivery: { $gt: 0 } },
+                { price5weeksDelivery: { $gt: 0 } },
+              ],
+            },
+            // Text search (its own $or)
+            {
+              $or: [
+                { name: { $regex: escapedSearch, $options: "i" } },
+                { shortDescription: { $regex: escapedSearch, $options: "i" } },
+                { description: { $regex: escapedSearch, $options: "i" } },
+                { sku: { $regex: escapedSearch, $options: "i" } },
+              ],
+            },
           ],
         },
       });
     } else {
-      // No search term — return all published products
+      // No search term — return all client-visible products
       query.push({
-        $match: {
-          publish: "PUBLISHED",
-        },
+        $match: CLIENT_VISIBILITY_FILTER,
       });
     }
 
@@ -1465,6 +1514,17 @@ export const searchProduct = async (request, response) => {
           },
         },
       });
+    }
+
+    // Filter by compatible system
+    if (compatibleSystem) {
+      try {
+        query.push({
+          $match: {
+            compatibleSystem: new mongoose.Types.ObjectId(compatibleSystem),
+          },
+        });
+      } catch (_) {}
     }
 
     // Filter by product type
@@ -1535,35 +1595,6 @@ export const searchProduct = async (request, response) => {
       });
     }
 
-    // ✅ CRITICAL: Filter products based on visibility rules
-    query.push({
-      $match: {
-        $and: [
-          // Must have at least one image
-          { image: { $exists: true, $ne: [] } },
-
-          // Must have at least one valid price OR valid delivery options
-          {
-            $or: [
-              // Has regular/btc price AND online stock > 0
-              {
-                $and: [
-                  {
-                    $or: [{ btcPrice: { $gt: 0 } }, { price: { $gt: 0 } }],
-                  },
-                  { "warehouseStock.onlineStock": { $gt: 0 } },
-                ],
-              },
-              // OR has 3-week delivery price (stock doesn't matter)
-              { price3weeksDelivery: { $gt: 0 } },
-              // OR has 5-week delivery price (stock doesn't matter)
-              { price5weeksDelivery: { $gt: 0 } },
-            ],
-          },
-        ],
-      },
-    });
-
     // Populate references
     query.push(
       {
@@ -1598,6 +1629,14 @@ export const searchProduct = async (request, response) => {
           as: "producer",
         },
       },
+      {
+        $lookup: {
+          from: "brands",
+          localField: "compatibleSystem",
+          foreignField: "_id",
+          as: "compatibleSystem",
+        },
+      },
     );
 
     // Unwind arrays
@@ -1617,6 +1656,12 @@ export const searchProduct = async (request, response) => {
       {
         $unwind: {
           path: "$producer",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $unwind: {
+          path: "$compatibleSystem",
           preserveNullAndEmptyArrays: true,
         },
       },
@@ -1693,25 +1738,12 @@ export const getFeaturedProducts = async (request, response) => {
       },
     ];
 
-    // ✅ Filter products based on visibility rules
+    // ✅ Apply shared client visibility rules (partnerStock + delivery prices + warehouse stock)
     query.push({
       $match: {
         $and: [
           { image: { $exists: true, $ne: [] } },
-          {
-            $or: [
-              {
-                $and: [
-                  {
-                    $or: [{ btcPrice: { $gt: 0 } }, { price: { $gt: 0 } }],
-                  },
-                  { "warehouseStock.onlineStock": { $gt: 0 } },
-                ],
-              },
-              { price3weeksDelivery: { $gt: 0 } },
-              { price5weeksDelivery: { $gt: 0 } },
-            ],
-          },
+          CLIENT_VISIBILITY_FILTER,
         ],
       },
     });
@@ -1823,25 +1855,12 @@ export const getPopularProducts = async (request, response) => {
       },
     ];
 
-    // ✅ Filter products based on visibility rules
+    // ✅ Apply shared client visibility rules (partnerStock + delivery prices + warehouse stock)
     query.push({
       $match: {
         $and: [
           { image: { $exists: true, $ne: [] } },
-          {
-            $or: [
-              {
-                $and: [
-                  {
-                    $or: [{ btcPrice: { $gt: 0 } }, { price: { $gt: 0 } }],
-                  },
-                  { "warehouseStock.onlineStock": { $gt: 0 } },
-                ],
-              },
-              { price3weeksDelivery: { $gt: 0 } },
-              { price5weeksDelivery: { $gt: 0 } },
-            ],
-          },
+          CLIENT_VISIBILITY_FILTER,
         ],
       },
     });
