@@ -65,6 +65,7 @@ export const createProductController = async (request, response) => {
       alcoholLevel,
       blend,
       featured,
+      limitedEdition,
       aromaticProfile,
       coffeeOrigin,
       intensity,
@@ -152,6 +153,15 @@ export const createProductController = async (request, response) => {
       alcoholLevel: alcoholLevel || undefined,
       blend: blend || undefined,
       featured: featured || false,
+      limitedEdition: limitedEdition && typeof limitedEdition === "object"
+        ? {
+            isLimitedEdition: !!limitedEdition.isLimitedEdition,
+            bannerText: limitedEdition.bannerText || "Limited Edition",
+            bannerColor: limitedEdition.bannerColor || "#c8102e",
+            totalUnits: parseInt(limitedEdition.totalUnits) || 0,
+            carouselOrder: parseInt(limitedEdition.carouselOrder) || 0,
+          }
+        : undefined,
       aromaticProfile: aromaticProfile || undefined,
       coffeeOrigin: coffeeOrigin || undefined,
       intensity: intensity || undefined,
@@ -608,6 +618,47 @@ export const getProductDetails = async (request, response) => {
       });
     }
 
+    // ── MERGE DIRECT PRICING ─────────────────────────────────────────────────
+    // If an active DirectPricing record exists, its prices are the authoritative
+    // values for btcPrice / price3weeksDelivery / price5weeksDelivery.
+    // We merge them into the product object so the client always shows what the
+    // accountant configured — even if ProductModel fell out of sync.
+    try {
+      const { default: DirectPricingModel } = await import('../models/direct-pricing.model.js');
+      const activeDP = await DirectPricingModel.findOne({
+        product: product._id,
+        isActive: true,
+      }).lean();
+
+      if (activeDP) {
+        const dp = activeDP.directPrices;
+        const merged = product.toObject();
+        if (dp.btcPrice > 0) merged.btcPrice = dp.btcPrice;
+        if (dp.price3weeksDelivery > 0) merged.price3weeksDelivery = dp.price3weeksDelivery;
+        if (dp.price5weeksDelivery > 0) merged.price5weeksDelivery = dp.price5weeksDelivery;
+        // Also ensure ProductModel is in sync for future calls
+        const needsSync = (dp.btcPrice > 0 && product.btcPrice !== dp.btcPrice)
+          || (dp.price3weeksDelivery > 0 && product.price3weeksDelivery !== dp.price3weeksDelivery)
+          || (dp.price5weeksDelivery > 0 && product.price5weeksDelivery !== dp.price5weeksDelivery);
+        if (needsSync) {
+          ProductModel.findByIdAndUpdate(product._id, {
+            ...(dp.btcPrice > 0 ? { btcPrice: dp.btcPrice } : {}),
+            ...(dp.price3weeksDelivery > 0 ? { price3weeksDelivery: dp.price3weeksDelivery } : {}),
+            ...(dp.price5weeksDelivery > 0 ? { price5weeksDelivery: dp.price5weeksDelivery } : {}),
+          }).exec().catch(() => {}); // fire-and-forget sync, non-blocking
+        }
+        return response.json({
+          message: "product details",
+          data: merged,
+          error: false,
+          success: true,
+        });
+      }
+    } catch (_err) {
+      console.error('DirectPricing merge failed:', _err.message);
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     return response.json({
       message: "product details",
       data: product,
@@ -701,6 +752,43 @@ export const updateProductDetails = async (request, response) => {
         updateData[field] = parseFloat(updateData[field]) || 0;
       }
     });
+
+    // Sanitize limitedEdition nested object
+    if (updateData.limitedEdition && typeof updateData.limitedEdition === "object") {
+      updateData.limitedEdition.isLimitedEdition = !!updateData.limitedEdition.isLimitedEdition;
+      updateData.limitedEdition.bannerText = updateData.limitedEdition.bannerText || "Limited Edition";
+      updateData.limitedEdition.bannerColor = updateData.limitedEdition.bannerColor || "#c8102e";
+      updateData.limitedEdition.totalUnits = parseInt(updateData.limitedEdition.totalUnits) || 0;
+      updateData.limitedEdition.carouselOrder = parseInt(updateData.limitedEdition.carouselOrder) || 0;
+    }
+
+    // ── DIRECT PRICING PROTECTION ────────────────────────────────────────────
+    // If an active DirectPricing record exists for this product, do NOT allow
+    // the ProductForm (general product editor) to overwrite the prices that
+    // DirectPricing manages.  Only the DirectPricing endpoints (which require
+    // ACCOUNTANT / DIRECTOR / IT) may change those three fields.
+    // This prevents an EDITOR saving the product form (where btcPrice renders as
+    // 0 / empty because the form loaded before DirectPricing was applied) from
+    // silently zeroing out the accountant-set prices.
+    try {
+      const { default: DirectPricingModel } = await import('../models/direct-pricing.model.js');
+      const activeDirectPricing = await DirectPricingModel.findOne({
+        product: _id,
+        isActive: true,
+      }).lean();
+
+      if (activeDirectPricing) {
+        const dp = activeDirectPricing.directPrices;
+        // Restore Direct-Pricing-managed prices so they are not overwritten
+        if (dp.btcPrice > 0) updateData.btcPrice = dp.btcPrice;
+        if (dp.price3weeksDelivery > 0) updateData.price3weeksDelivery = dp.price3weeksDelivery;
+        if (dp.price5weeksDelivery > 0) updateData.price5weeksDelivery = dp.price5weeksDelivery;
+      }
+    } catch (_err) {
+      // Non-fatal — if DirectPricingModel can't be loaded, continue without protection
+      console.error('DirectPricing protection check failed:', _err.message);
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     // Handle slug generation if name is updated but slug is not provided
     if (name && !slug) {
@@ -1818,6 +1906,119 @@ export const getFeaturedProducts = async (request, response) => {
 
     return response.json({
       message: "Featured products",
+      error: false,
+      success: true,
+      data: products,
+      totalCount: totalCount,
+      totalPage: Math.ceil(totalCount / limit),
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// Get limited edition products (for homepage banner + carousel)
+export const getLimitedEditionProducts = async (request, response) => {
+  try {
+    let { page, limit } = request.body;
+
+    if (!page) page = 1;
+    if (!limit) limit = 10;
+
+    const query = [
+      {
+        $match: {
+          "limitedEdition.isLimitedEdition": true,
+          publish: "PUBLISHED",
+        },
+      },
+    ];
+
+    // ✅ Apply shared client visibility rules (partnerStock + delivery prices + warehouse stock)
+    query.push({
+      $match: {
+        $and: [
+          { image: { $exists: true, $ne: [] } },
+          CLIENT_VISIBILITY_FILTER,
+        ],
+      },
+    });
+
+    query.push(
+      {
+        $lookup: {
+          from: "categories",
+          localField: "category",
+          foreignField: "_id",
+          as: "category",
+        },
+      },
+      {
+        $lookup: {
+          from: "subcategories",
+          localField: "subCategory",
+          foreignField: "_id",
+          as: "subCategory",
+        },
+      },
+      {
+        $lookup: {
+          from: "brands",
+          localField: "brand",
+          foreignField: "_id",
+          as: "brand",
+        },
+      },
+      {
+        $lookup: {
+          from: "brands",
+          localField: "producer",
+          foreignField: "_id",
+          as: "producer",
+        },
+      },
+    );
+
+    query.push(
+      {
+        $unwind: {
+          path: "$category",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $unwind: {
+          path: "$subCategory",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $unwind: {
+          path: "$producer",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+    );
+
+    // Sort by admin-defined carousel order, then most recently added
+    query.push({ $sort: { "limitedEdition.carouselOrder": 1, createdAt: -1 } });
+
+    const countQuery = [...query];
+    countQuery.push({ $count: "total" });
+    const countResult = await ProductModel.aggregate(countQuery);
+    const totalCount = countResult[0]?.total || 0;
+
+    const skip = (page - 1) * limit;
+    query.push({ $skip: skip }, { $limit: parseInt(limit) });
+
+    const products = await ProductModel.aggregate(query);
+
+    return response.json({
+      message: "Limited edition products",
       error: false,
       success: true,
       data: products,

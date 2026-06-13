@@ -88,6 +88,30 @@ const productSchema = new mongoose.Schema(
       default: false,
       required: false,
     },
+    // ── Limited Edition ────────────────────────────────────────────────────
+    limitedEdition: {
+      isLimitedEdition: {
+        type: Boolean,
+        default: false,
+      },
+      bannerText: {
+        type: String,
+        default: "Limited Edition",
+      },
+      bannerColor: {
+        type: String,
+        default: "#c8102e",
+      },
+      totalUnits: {
+        type: Number,
+        default: 0,
+      },
+      carouselOrder: {
+        type: Number,
+        default: 0,
+      },
+    },
+    // ───────────────────────────────────────────────────────────────────────
     btbProduct: {
       type: Boolean,
       default: false,

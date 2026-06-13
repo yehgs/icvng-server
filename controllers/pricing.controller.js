@@ -952,7 +952,7 @@ export const exportProductPricingCSV = async (request, response) => {
       headers.push("BTC Price (With Tax)");
     }
     if (columns === "all" || selectedColumns.includes("price3weeks")) {
-      headers.push("3 Weeks Delivery (With Tax)");
+      headers.push("2 Weeks Delivery (With Tax)");
     }
     if (columns === "all" || selectedColumns.includes("price5weeks")) {
       headers.push("5 Weeks Delivery (With Tax)");
@@ -1175,7 +1175,7 @@ export const exportProductPricingPDF = async (request, response) => {
       drawHeader("BTC Price", columnWidths.btcPrice);
     }
     if (columns === "all" || selectedColumns.includes("price3weeks")) {
-      drawHeader("3 Weeks", columnWidths.price3weeks);
+      drawHeader("2 Weeks", columnWidths.price3weeks);
     }
     if (columns === "all" || selectedColumns.includes("price5weeks")) {
       drawHeader("5 Weeks", columnWidths.price5weeks);
@@ -1476,7 +1476,7 @@ export const importProductPricingCSV = async (request, response) => {
           const salePrice = parseFloat(row["Sale Price (With Tax)"]);
           const btbPrice = parseFloat(row["BTB Price (With Tax)"]);
           const btcPrice = parseFloat(row["BTC Price (With Tax)"]);
-          const price3weeks = parseFloat(row["3 Weeks Delivery (With Tax)"]);
+          const price3weeks = parseFloat(row["2 Weeks Delivery (With Tax)"]);
           const price5weeks = parseFloat(row["5 Weeks Delivery (With Tax)"]);
 
           // Validate all prices
@@ -1953,7 +1953,7 @@ export const exportProductPricingCSVPLM = async (request, response) => {
       headers.push("BTC Price (With Tax)");
     }
     if (columns === "all" || selectedColumns.includes("price3weeks")) {
-      headers.push("3 Weeks Delivery (With Tax)");
+      headers.push("2 Weeks Delivery (With Tax)");
     }
     if (columns === "all" || selectedColumns.includes("price5weeks")) {
       headers.push("5 Weeks Delivery (With Tax)");
@@ -2143,7 +2143,7 @@ export const exportProductPricingPDFPLM = async (request, response) => {
       drawHeader("BTC Price", columnWidths.btcPrice);
     }
     if (columns === "all" || selectedColumns.includes("price3weeks")) {
-      drawHeader("3 Weeks", columnWidths.price3weeks);
+      drawHeader("2 Weeks", columnWidths.price3weeks);
     }
     if (columns === "all" || selectedColumns.includes("price5weeks")) {
       drawHeader("5 Weeks", columnWidths.price5weeks);
@@ -2259,7 +2259,7 @@ export const directImportProductPricingCSV = async (request, response) => {
       "Sale Price": "salePrice",
       "BTB Price": "btbPrice",
       "BTC Price": "btcPrice",
-      "3 Weeks Delivery": "price3weeksDelivery",
+      "2 Weeks Delivery": "price3weeksDelivery",
       "5 Weeks Delivery": "price5weeksDelivery",
     };
 

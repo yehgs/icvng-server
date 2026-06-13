@@ -14,6 +14,7 @@ import {
   searchProductAdmin,
   updateProductDetails,
   getFeaturedProducts,
+  getLimitedEditionProducts,
   getProductsByAvailability,
   getProductBySKU,
   getProductControllerAdmin,
@@ -62,6 +63,7 @@ productRouter.post("/get-product-by-brand", getProductByBrand);
 
 // Get featured products
 productRouter.post("/get-featured-products", getFeaturedProducts);
+productRouter.post("/get-limited-edition-products", getLimitedEditionProducts);
 
 // Get products by availability status
 productRouter.post("/get-products-by-availability", getProductsByAvailability);
