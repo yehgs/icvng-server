@@ -15,8 +15,11 @@ const connectDB = async () => {
   const options = {
     serverSelectionTimeoutMS: 20000,
     maxPoolSize: 10,
+    minPoolSize: 2,           // keep a few warm connections so the pool recovers faster
     socketTimeoutMS: 45000,
     family: 4, // Force IPv4 — avoids SSL handshake issues on dual-stack hosts
+    retryWrites: true,        // auto-retry writes dropped by a transient pool error
+    retryReads: true,         // auto-retry reads dropped by a transient pool error
   };
 
   const uri = process.env.MONGODB_URI;
