@@ -46,6 +46,9 @@ import orderRequestRouter from "./route/order-request.route.js";
 import couponRouter from "./route/coupon.route.js";
 import orderRequestAuthRouter from "./route/order-request-auth.route.js";
 import invoiceRouter from "./route/invoice.route.js";
+import notificationRouter from "./route/notification.route.js";
+import supportTicketRouter from "./route/support-ticket.route.js";
+import passwordVaultRouter from "./route/password-vault.route.js";
 
 dotenv.config();
 
@@ -219,6 +222,9 @@ app.use("/api/coupons", couponRouter);
 app.use("/api/btb-auth", orderRequestAuthRouter);
 app.use("/api/invoices", invoiceRouter);
 app.use("/api/activity-logs", activityLogRouter);
+app.use("/api/admin/notifications", notificationRouter);
+app.use("/api/admin/support-tickets", supportTicketRouter);
+app.use("/api/admin/password-vault", passwordVaultRouter);
 
 // ============================================
 // Error handling middleware

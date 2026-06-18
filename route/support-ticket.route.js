@@ -1,0 +1,26 @@
+//server
+// route/support-ticket.route.js
+import { Router } from 'express';
+import auth from '../middleware/auth.js';
+import adminAuth from '../middleware/adminAuth.js';
+import {
+  getTicketsController,
+  getTicketByIdController,
+  createTicketController,
+  updateTicketStatusController,
+  addTicketMessageController,
+  getCategoriesController,
+} from '../controllers/support-ticket.controller.js';
+
+const supportTicketRouter = Router();
+supportTicketRouter.use(auth);
+supportTicketRouter.use(adminAuth);
+
+supportTicketRouter.get('/categories', getCategoriesController);
+supportTicketRouter.get('/', getTicketsController);
+supportTicketRouter.get('/:id', getTicketByIdController);
+supportTicketRouter.post('/', createTicketController);
+supportTicketRouter.put('/:id/status', updateTicketStatusController);
+supportTicketRouter.post('/:id/message', addTicketMessageController);
+
+export default supportTicketRouter;
