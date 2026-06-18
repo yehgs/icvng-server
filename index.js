@@ -49,6 +49,7 @@ import invoiceRouter from "./route/invoice.route.js";
 import notificationRouter from "./route/notification.route.js";
 import supportTicketRouter from "./route/support-ticket.route.js";
 import passwordVaultRouter from "./route/password-vault.route.js";
+import financeRouter from "./route/finance.route.js";
 
 dotenv.config();
 
@@ -225,7 +226,7 @@ app.use("/api/activity-logs", activityLogRouter);
 app.use("/api/admin/notifications", notificationRouter);
 app.use("/api/admin/support-tickets", supportTicketRouter);
 app.use("/api/admin/password-vault", passwordVaultRouter);
-
+app.use("/api/admin/finance", financeRouter);
 // ============================================
 // Error handling middleware
 // ============================================
