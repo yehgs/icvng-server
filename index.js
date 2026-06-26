@@ -50,6 +50,9 @@ import notificationRouter from "./route/notification.route.js";
 import supportTicketRouter from "./route/support-ticket.route.js";
 import passwordVaultRouter from "./route/password-vault.route.js";
 import financeRouter from "./route/finance.route.js";
+import crmRouter from "./route/crm.route.js";
+import scraperRouter from "./route/scraper.route.js";
+import profileRouter from "./route/profile.route.js";
 
 dotenv.config();
 
@@ -227,6 +230,10 @@ app.use("/api/admin/notifications", notificationRouter);
 app.use("/api/admin/support-tickets", supportTicketRouter);
 app.use("/api/admin/password-vault", passwordVaultRouter);
 app.use("/api/admin/finance", financeRouter);
+app.use("/api/admin/crm", crmRouter);
+app.use("/api/admin/scraper", scraperRouter);
+app.use("/api/admin/profile", profileRouter);
+
 // ============================================
 // Error handling middleware
 // ============================================
