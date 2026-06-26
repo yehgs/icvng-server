@@ -1,30 +1,37 @@
 //server
-// models/scrape-job.model.js
-import mongoose from 'mongoose';
+// models/scrape-job.model.js  (updated — quotaUsed, leadType, B2C)
+import mongoose from "mongoose";
 
 export const SCRAPE_PLATFORMS = [
-  'Google Search',
-  'Google Maps',
-  'Facebook',
-  'LinkedIn',
-  'Instagram',
-  'Twitter / X',
-  'Yellow Pages NG',
-  'VConnect NG',
-  'Jobberman',
-  'Custom URL',
+  "Google Search",
+  "Google Maps",
+  "Facebook",
+  "LinkedIn",
+  "Instagram",
+  "Twitter / X",
+  "Yellow Pages NG",
+  "VConnect NG",
+  "Jobberman",
+  "Custom URL",
 ];
+
+// B2C (individual people) vs B2B (companies/shops)
+export const LEAD_TYPES = ["B2B", "B2C"];
 
 const scrapeJobSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true },     // e.g. "Coffee shops Lagos"
-    platform: { type: String, enum: SCRAPE_PLATFORMS, default: 'Google Search' },
-    targetUrl: { type: String, default: '' },    // full URL or search query
-    searchQuery: { type: String, default: '' },  // e.g. "coffee shops Lagos Nigeria"
+    name: { type: String, required: true },
+    platform: {
+      type: String,
+      enum: SCRAPE_PLATFORMS,
+      default: "Google Search",
+    },
+    leadType: { type: String, enum: LEAD_TYPES, default: "B2B" },
+    targetUrl: { type: String, default: "" },
+    searchQuery: { type: String, default: "" },
     maxPages: { type: Number, default: 3 },
     maxResults: { type: Number, default: 50 },
 
-    // Fields to extract
     extractFields: {
       emails: { type: Boolean, default: true },
       phones: { type: Boolean, default: true },
@@ -32,27 +39,38 @@ const scrapeJobSchema = new mongoose.Schema(
       website: { type: Boolean, default: true },
       address: { type: Boolean, default: true },
       socialLinks: { type: Boolean, default: true },
+      // B2C-specific
+      fullName: { type: Boolean, default: false },
+      jobTitle: { type: Boolean, default: false },
     },
 
     status: {
       type: String,
-      enum: ['pending', 'running', 'completed', 'failed', 'cancelled'],
-      default: 'pending',
+      enum: ["pending", "running", "completed", "failed", "cancelled"],
+      default: "pending",
     },
-    progress: { type: Number, default: 0 },     // 0-100
+    progress: { type: Number, default: 0 },
     totalFound: { type: Number, default: 0 },
     totalImported: { type: Number, default: 0 },
-    errorMessage: { type: String, default: '' },
+    errorMessage: { type: String, default: "" },
 
-    // Scrape results stored here before review
+    // API calls consumed by this job (for quota tracking)
+    apiCallsUsed: { type: Number, default: 0 },
+
     rawResults: [{ type: mongoose.Schema.Types.Mixed }],
 
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
     createdByName: String,
     completedAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
-const ScrapeJobModel = mongoose.model('ScrapeJob', scrapeJobSchema);
+scrapeJobSchema.index({ createdBy: 1, createdAt: -1 });
+
+const ScrapeJobModel = mongoose.model("ScrapeJob", scrapeJobSchema);
 export default ScrapeJobModel;

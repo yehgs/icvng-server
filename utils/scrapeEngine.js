@@ -1,33 +1,31 @@
 //server
-// utils/scrapeEngine.js
-//
-// Uses:
-//  - axios + cheerio  for direct HTML parsing  (npm install cheerio)
-//  - SerpAPI          for Google/Maps results   (npm install serpapi)  — optional, uses SERP_API_KEY env
-//  - Custom regex     for email/phone extraction from raw HTML
+// utils/scrapeEngine.js  (updated — B2C people-search support)
+// B2C mode automatically builds people-targeting queries and returns
+// { fullName, jobTitle, email, phone, ... } instead of company-centric results.
 //
 // Install: npm install cheerio serpapi
 
-import axios from 'axios';
+import axios from "axios";
 
-// ── Regex patterns ──────────────────────────────────────────────────────────
 const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
 const PHONE_REGEX = /(?:\+?234|0)(?:[\s\-.]?\d){9,10}/g;
-const PHONE_INTL_REGEX = /\+?[\d\s\-().]{10,18}/g;
 
-// ── Nigerian / African listing domains we know the structure of ───────────────
 const KNOWN_DOMAINS = {
-  'vconnect.com': scrapeVConnect,
-  'yellowpages.com.ng': scrapeYellowPagesNG,
+  "vconnect.com": scrapeVConnect,
+  "yellowpages.com.ng": scrapeYellowPagesNG,
 };
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-function uniqueArr(arr) { return [...new Set(arr.filter(Boolean))]; }
+function uniqueArr(arr) {
+  return [...new Set(arr.filter(Boolean))];
+}
 
 function extractFromHtml(html) {
-  const emails = uniqueArr((html.match(EMAIL_REGEX) || [])
-    .filter((e) => !e.includes('example.com') && !e.includes('yourdomain')));
-  const phones = uniqueArr((html.match(PHONE_REGEX) || []));
+  const emails = uniqueArr(
+    (html.match(EMAIL_REGEX) || []).filter(
+      (e) => !e.includes("example.com") && !e.includes("yourdomain"),
+    ),
+  );
+  const phones = uniqueArr(html.match(PHONE_REGEX) || []);
   return { emails, phones };
 }
 
@@ -35,87 +33,110 @@ async function fetchHtml(url, timeoutMs = 15000) {
   const { data } = await axios.get(url, {
     timeout: timeoutMs,
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      Accept: "text/html,application/xhtml+xml",
+      "Accept-Language": "en-US,en;q=0.5",
     },
   });
   return data;
+}
+
+// ── B2C: build people-targeted query ────────────────────────────────────────
+// For individual (B2C) searches we append context that surfaces personal profiles
+// and directories rather than business listings.
+function buildB2CQuery(baseQuery) {
+  const lower = baseQuery.toLowerCase();
+  // If query already looks person-focused, keep it
+  if (
+    lower.includes("profile") ||
+    lower.includes("contact") ||
+    lower.includes("linkedin.com/in")
+  ) {
+    return baseQuery;
+  }
+  // Append people-search context
+  return `${baseQuery} contact email phone Nigeria`;
+}
+
+// ── B2C: parse a result as an individual person ──────────────────────────────
+function parseB2CResult(r) {
+  // Try to detect a personal name from title (heuristic: ≤4 words, no Inc/Ltd/Co)
+  const title = r.title || r.companyName || "";
+  const isPersonName =
+    title.split(" ").length <= 4 &&
+    !/\b(Ltd|Inc|Co\.|Corp|Limited|Nigeria|Group|Services|Global)\b/i.test(
+      title,
+    );
+
+  return {
+    fullName: isPersonName ? title : "",
+    companyName: isPersonName ? "" : title,
+    jobTitle:
+      r.jobTitle || r.rich_snippet?.top?.detected_extensions?.category || "",
+    email: r.email || "",
+    emails: r.emails || [],
+    phone: r.phone || "",
+    phones: r.phones || [],
+    website: r.link || r.website || "",
+    linkedinUrl: r.link?.includes("linkedin.com")
+      ? r.link
+      : r.linkedinUrl || "",
+    description: r.snippet || r.description || "",
+    source: r.scrapeSource || r.link || "",
+    scrapeSource: r.scrapeSource || r.link || "",
+    leadType: "B2C",
+  };
 }
 
 // ── Google Search via SerpAPI ─────────────────────────────────────────────────
 async function scrapeGoogleSearch(job) {
   const results = [];
   const apiKey = process.env.SERP_API_KEY;
+  const isB2C = job.leadType === "B2C";
 
   if (!apiKey) {
-    // Fallback: use Google Custom Search JSON API if available
     const cseKey = process.env.GOOGLE_CSE_KEY;
     const cseId = process.env.GOOGLE_CSE_ID;
-    if (cseKey && cseId) {
-      return scrapeGoogleCSE(job, cseKey, cseId);
-    }
-    throw new Error('SERP_API_KEY or GOOGLE_CSE_KEY not configured. Please add to .env');
+    if (cseKey && cseId) return scrapeGoogleCSE(job, cseKey, cseId);
+    throw new Error("SERP_API_KEY or GOOGLE_CSE_KEY not configured");
   }
 
-  try {
-    const { getJson } = await import('serpapi');
-    for (let page = 0; page < job.maxPages; page++) {
-      const data = await getJson({
-        engine: 'google',
-        q: job.searchQuery,
-        api_key: apiKey,
-        num: 10,
-        start: page * 10,
-        gl: 'ng',
-        hl: 'en',
-      });
+  const { getJson } = await import("serpapi");
+  const query = isB2C ? buildB2CQuery(job.searchQuery) : job.searchQuery;
 
-      const organicResults = data.organic_results || [];
-      for (const r of organicResults) {
-        const entry = {
-          companyName: r.title || '',
-          website: r.link || '',
-          description: r.snippet || '',
-          scrapeSource: r.link,
-        };
-        // Try to fetch the website to get email/phone
-        if (r.link && job.extractFields.emails) {
-          try {
-            const html = await fetchHtml(r.link, 8000);
-            const extracted = extractFromHtml(html);
-            entry.emails = extracted.emails;
-            entry.phones = extracted.phones;
-          } catch { /* skip if fetch fails */ }
-        }
-        results.push(entry);
-        if (results.length >= job.maxResults) break;
-      }
-      if (results.length >= job.maxResults) break;
-    }
-  } catch (err) {
-    throw new Error(`Google Search scrape failed: ${err.message}`);
-  }
-  return results;
-}
-
-// ── Google Custom Search Engine (CSE) ────────────────────────────────────────
-async function scrapeGoogleCSE(job, apiKey, cseId) {
-  const results = [];
   for (let page = 0; page < job.maxPages; page++) {
-    const start = page * 10 + 1;
-    const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cseId}&q=${encodeURIComponent(job.searchQuery)}&start=${start}&num=10`;
-    const { data } = await axios.get(url);
-    const items = data.items || [];
-    for (const item of items) {
-      const entry = { companyName: item.title, website: item.link, description: item.snippet, scrapeSource: item.link };
-      if (item.link && job.extractFields.emails) {
+    const data = await getJson({
+      engine: "google",
+      q: query,
+      api_key: apiKey,
+      num: 10,
+      start: page * 10,
+      gl: "ng",
+      hl: "en",
+    });
+
+    for (const r of data.organic_results || []) {
+      const entry = isB2C
+        ? parseB2CResult({ ...r, scrapeSource: r.link })
+        : {
+            companyName: r.title || "",
+            website: r.link || "",
+            description: r.snippet || "",
+            scrapeSource: r.link,
+          };
+
+      // Augment with email/phone from the actual page
+      if (r.link && job.extractFields?.emails) {
         try {
-          const html = await fetchHtml(item.link, 8000);
+          const html = await fetchHtml(r.link, 8000);
           const ex = extractFromHtml(html);
           entry.emails = ex.emails;
           entry.phones = ex.phones;
-        } catch { /* skip */ }
+          if (isB2C && ex.emails[0]) entry.email = ex.emails[0];
+        } catch {
+          /* skip */
+        }
       }
       results.push(entry);
       if (results.length >= job.maxResults) break;
@@ -125,118 +146,222 @@ async function scrapeGoogleCSE(job, apiKey, cseId) {
   return results;
 }
 
-// ── Google Maps (via SerpAPI) ─────────────────────────────────────────────────
-async function scrapeGoogleMaps(job) {
+// ── B2C: LinkedIn People search ───────────────────────────────────────────────
+async function scrapeLinkedInPeople(job) {
   const apiKey = process.env.SERP_API_KEY;
-  if (!apiKey) throw new Error('SERP_API_KEY required for Google Maps scraping');
-
-  const { getJson } = await import('serpapi');
+  if (!apiKey) throw new Error("SERP_API_KEY required");
+  const { getJson } = await import("serpapi");
   const results = [];
+
+  // site:linkedin.com/in finds individual profiles, not companies
+  const query = `site:linkedin.com/in ${job.searchQuery}`;
   const data = await getJson({
-    engine: 'google_maps',
-    q: job.searchQuery,
+    engine: "google",
+    q: query,
     api_key: apiKey,
-    ll: '@6.5244,3.3792,12z', // Default: Lagos
-    type: 'search',
+    num: Math.min(10, job.maxResults),
+    gl: "ng",
   });
 
-  const places = data.local_results || [];
-  for (const place of places) {
+  for (const r of data.organic_results || []) {
+    const namePart = r.title
+      ?.replace(" | LinkedIn", "")
+      .replace(" - LinkedIn", "")
+      .split(" - ")[0]
+      .trim();
+    const jobTitlePart = r.title?.split(" - ")[1]?.trim() || "";
     results.push({
-      companyName: place.title || '',
-      address: place.address || '',
-      phone: place.phone || '',
-      website: place.website || '',
-      rating: place.rating,
-      category: place.type || '',
-      city: place.address?.split(',').pop()?.trim() || '',
-      scrapeSource: place.place_id_search || '',
+      fullName: namePart || "",
+      companyName: "",
+      jobTitle: jobTitlePart,
+      linkedinUrl: r.link || "",
+      description: r.snippet || "",
+      scrapeSource: r.link,
+      leadType: "B2C",
     });
     if (results.length >= job.maxResults) break;
   }
   return results;
 }
 
-// ── LinkedIn (via SerpAPI Google + LinkedIn domain filter) ───────────────────
-async function scrapeLinkedIn(job) {
-  const apiKey = process.env.SERP_API_KEY;
-  if (!apiKey) throw new Error('SERP_API_KEY required for LinkedIn scraping');
+// ── Google Custom Search Engine (CSE) ────────────────────────────────────────
+async function scrapeGoogleCSE(job, apiKey, cseId) {
+  const results = [];
+  const isB2C = job.leadType === "B2C";
+  const query = isB2C ? buildB2CQuery(job.searchQuery) : job.searchQuery;
 
-  const { getJson } = await import('serpapi');
+  for (let page = 0; page < job.maxPages; page++) {
+    const start = page * 10 + 1;
+    const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cseId}&q=${encodeURIComponent(query)}&start=${start}&num=10`;
+    const { data } = await axios.get(url);
+    for (const item of data.items || []) {
+      const entry = isB2C
+        ? parseB2CResult({
+            title: item.title,
+            link: item.link,
+            snippet: item.snippet,
+            scrapeSource: item.link,
+          })
+        : {
+            companyName: item.title,
+            website: item.link,
+            description: item.snippet,
+            scrapeSource: item.link,
+          };
+
+      if (item.link && job.extractFields?.emails) {
+        try {
+          const html = await fetchHtml(item.link, 8000);
+          const ex = extractFromHtml(html);
+          entry.emails = ex.emails;
+          entry.phones = ex.phones;
+        } catch {
+          /* skip */
+        }
+      }
+      results.push(entry);
+      if (results.length >= job.maxResults) break;
+    }
+    if (results.length >= job.maxResults) break;
+  }
+  return results;
+}
+
+// ── Google Maps ───────────────────────────────────────────────────────────────
+async function scrapeGoogleMaps(job) {
+  const apiKey = process.env.SERP_API_KEY;
+  if (!apiKey) throw new Error("SERP_API_KEY required for Google Maps");
+
+  const { getJson } = await import("serpapi");
+  const results = [];
+  const data = await getJson({
+    engine: "google_maps",
+    q: job.searchQuery,
+    api_key: apiKey,
+    ll: "@6.5244,3.3792,12z",
+    type: "search",
+  });
+
+  for (const place of data.local_results || []) {
+    results.push({
+      companyName: place.title || "",
+      address: place.address || "",
+      phone: place.phone || "",
+      website: place.website || "",
+      rating: place.rating,
+      category: place.type || "",
+      scrapeSource: place.place_id_search || "",
+      leadType: job.leadType || "B2B",
+    });
+    if (results.length >= job.maxResults) break;
+  }
+  return results;
+}
+
+// ── LinkedIn (B2B: company pages) ─────────────────────────────────────────────
+async function scrapeLinkedIn(job) {
+  if (job.leadType === "B2C") return scrapeLinkedInPeople(job);
+
+  const apiKey = process.env.SERP_API_KEY;
+  if (!apiKey) throw new Error("SERP_API_KEY required for LinkedIn");
+  const { getJson } = await import("serpapi");
   const results = [];
   const query = `site:linkedin.com/company ${job.searchQuery}`;
-
   const data = await getJson({
-    engine: 'google',
+    engine: "google",
     q: query,
     api_key: apiKey,
     num: Math.min(10, job.maxResults),
-    gl: 'ng',
+    gl: "ng",
   });
 
-  const organic = data.organic_results || [];
-  for (const r of organic) {
-    const companyName = r.title?.replace(' | LinkedIn', '').replace(' - LinkedIn', '').trim();
+  for (const r of data.organic_results || []) {
     results.push({
-      companyName: companyName || '',
-      linkedinUrl: r.link || '',
-      description: r.snippet || '',
-      website: '',
+      companyName:
+        r.title?.replace(" | LinkedIn", "").replace(" - LinkedIn", "").trim() ||
+        "",
+      linkedinUrl: r.link || "",
+      description: r.snippet || "",
       scrapeSource: r.link,
     });
   }
   return results;
 }
 
-// ── Facebook (via SerpAPI Google + Facebook domain filter) ───────────────────
+// ── Facebook ──────────────────────────────────────────────────────────────────
 async function scrapeFacebook(job) {
   const apiKey = process.env.SERP_API_KEY;
-  if (!apiKey) throw new Error('SERP_API_KEY required for Facebook scraping');
-
-  const { getJson } = await import('serpapi');
+  if (!apiKey) throw new Error("SERP_API_KEY required for Facebook");
+  const { getJson } = await import("serpapi");
   const results = [];
-  const query = `site:facebook.com ${job.searchQuery}`;
+  // B2C: search personal profiles (facebook.com/people or regular profiles)
+  // B2B: search business pages
+  const query =
+    job.leadType === "B2C"
+      ? `site:facebook.com ${job.searchQuery} -pages`
+      : `site:facebook.com/pages ${job.searchQuery}`;
 
   const data = await getJson({
-    engine: 'google',
+    engine: "google",
     q: query,
     api_key: apiKey,
     num: Math.min(10, job.maxResults),
-    gl: 'ng',
+    gl: "ng",
   });
 
-  const organic = data.organic_results || [];
-  for (const r of organic) {
-    const name = r.title?.replace(' | Facebook', '').replace(' - Facebook', '').replace(' - Home', '').trim();
-    results.push({
-      companyName: name || '',
-      facebookUrl: r.link || '',
-      description: r.snippet || '',
-      scrapeSource: r.link,
-    });
+  for (const r of data.organic_results || []) {
+    const entry =
+      job.leadType === "B2C"
+        ? parseB2CResult({ ...r, scrapeSource: r.link })
+        : {
+            companyName: r.title || "",
+            facebookUrl: r.link || "",
+            description: r.snippet || "",
+            scrapeSource: r.link,
+          };
+    results.push(entry);
   }
   return results;
 }
 
-// ── VConnect NG ──────────────────────────────────────────────────────────────
+// ── VConnect NG ───────────────────────────────────────────────────────────────
 async function scrapeVConnect(job) {
   const results = [];
-  const query = encodeURIComponent(job.searchQuery);
   try {
-    const { load } = await import('cheerio');
+    const { load } = await import("cheerio");
     for (let page = 1; page <= job.maxPages; page++) {
-      const url = `https://www.vconnect.com/search?q=${query}&page=${page}`;
+      const url = `https://www.vconnect.com/search?q=${encodeURIComponent(job.searchQuery)}&page=${page}`;
       const html = await fetchHtml(url);
       const $ = load(html);
-
-      $('.business-listing, .biz-listing, [class*="listing"]').each((_, el) => {
-        const name = $(el).find('[class*="name"], h2, h3').first().text().trim();
-        const phone = $(el).find('[class*="phone"], [href^="tel:"]').first().text().trim();
-        const addr = $(el).find('[class*="address"], [class*="location"]').first().text().trim();
-        const website = $(el).find('a[href*="http"]').attr('href') || '';
-        if (name) results.push({ companyName: name, phone, address: addr, website, scrapeSource: url });
-      });
-
+      $('.search-result-item, .company-card, [class*="result"]').each(
+        (_, el) => {
+          const name = $(el)
+            .find('h2,h3,[class*="name"],[class*="title"]')
+            .first()
+            .text()
+            .trim();
+          const phone = $(el)
+            .find('[class*="phone"],[href^="tel:"]')
+            .first()
+            .text()
+            .trim();
+          const email =
+            $(el).find('[href^="mailto:"]').first().text().trim() || "";
+          const addr = $(el)
+            .find('[class*="address"],[class*="location"]')
+            .first()
+            .text()
+            .trim();
+          if (name)
+            results.push({
+              companyName: name,
+              phone,
+              email,
+              address: addr,
+              scrapeSource: url,
+            });
+        },
+      );
       if (results.length >= job.maxResults) break;
     }
   } catch (err) {
@@ -249,21 +374,30 @@ async function scrapeVConnect(job) {
 async function scrapeYellowPagesNG(job) {
   const results = [];
   try {
-    const { load } = await import('cheerio');
-    const query = job.searchQuery.replace(/\s+/g, '-').toLowerCase();
+    const { load } = await import("cheerio");
     for (let page = 1; page <= job.maxPages; page++) {
       const url = `https://www.yellowpages.com.ng/search?q=${encodeURIComponent(job.searchQuery)}&page=${page}`;
       const html = await fetchHtml(url);
       const $ = load(html);
-
       $('.listing, .business-card, [class*="business"]').each((_, el) => {
-        const name = $(el).find('h2, h3, [class*="title"]').first().text().trim();
-        const phone = $(el).find('[class*="phone"], [href^="tel:"]').first().text().trim();
-        const email = $(el).find('[href^="mailto:"]').first().text().trim() || '';
+        const name = $(el).find('h2,h3,[class*="title"]').first().text().trim();
+        const phone = $(el)
+          .find('[class*="phone"],[href^="tel:"]')
+          .first()
+          .text()
+          .trim();
+        const email =
+          $(el).find('[href^="mailto:"]').first().text().trim() || "";
         const addr = $(el).find('[class*="address"]').first().text().trim();
-        if (name) results.push({ companyName: name, phone, email, address: addr, scrapeSource: url });
+        if (name)
+          results.push({
+            companyName: name,
+            phone,
+            email,
+            address: addr,
+            scrapeSource: url,
+          });
       });
-
       if (results.length >= job.maxResults) break;
     }
   } catch (err) {
@@ -272,50 +406,67 @@ async function scrapeYellowPagesNG(job) {
   return results.slice(0, job.maxResults);
 }
 
-// ── Custom URL scraper ────────────────────────────────────────────────────────
+// ── Custom URL ────────────────────────────────────────────────────────────────
 async function scrapeCustomUrl(job) {
   const results = [];
   try {
-    const { load } = await import('cheerio');
-    const url = job.targetUrl;
-    const html = await fetchHtml(url);
+    const { load } = await import("cheerio");
+    const html = await fetchHtml(job.targetUrl);
     const $ = load(html);
     const { emails, phones } = extractFromHtml(html);
 
-    // Best-effort: find any structured listing cards
     const listingSelectors = [
-      '[class*="listing"]', '[class*="card"]', '[class*="result"]',
-      '[class*="business"]', 'article', '.item', '.entry',
+      '[class*="listing"]',
+      '[class*="card"]',
+      '[class*="result"]',
+      "article",
+      ".item",
+      ".entry",
     ];
-
     let found = false;
     for (const selector of listingSelectors) {
       const els = $(selector);
       if (els.length > 2) {
         els.each((_, el) => {
-          const name = $(el).find('h1,h2,h3,h4,[class*="title"],[class*="name"]').first().text().trim();
-          const phone = $(el).find('[class*="phone"],[href^="tel:"]').first().text().trim();
+          const name = $(el)
+            .find('h1,h2,h3,h4,[class*="title"],[class*="name"]')
+            .first()
+            .text()
+            .trim();
+          const phone = $(el)
+            .find('[class*="phone"],[href^="tel:"]')
+            .first()
+            .text()
+            .trim();
           const emailEl = $(el).find('[href^="mailto:"]').first().text().trim();
-          const addr = $(el).find('[class*="address"],[class*="location"]').first().text().trim();
-          const link = $(el).find('a[href]').first().attr('href') || '';
-          if (name) {
-            results.push({ companyName: name, phone, email: emailEl, address: addr, website: link.startsWith('http') ? link : '', scrapeSource: url });
-          }
+          const addr = $(el)
+            .find('[class*="address"],[class*="location"]')
+            .first()
+            .text()
+            .trim();
+          const link = $(el).find("a[href]").first().attr("href") || "";
+          if (name)
+            results.push({
+              companyName: name,
+              phone,
+              email: emailEl,
+              address: addr,
+              website: link.startsWith("http") ? link : "",
+              scrapeSource: job.targetUrl,
+            });
         });
         found = true;
         break;
       }
     }
-
-    // Fallback: page-level email/phone extraction
     if (!found) {
-      const title = $('title').text().trim();
+      const title = $("title").text().trim();
       results.push({
         companyName: title,
         emails,
         phones,
-        website: url,
-        scrapeSource: url,
+        website: job.targetUrl,
+        scrapeSource: job.targetUrl,
       });
     }
   } catch (err) {
@@ -327,13 +478,21 @@ async function scrapeCustomUrl(job) {
 // ── Main dispatcher ───────────────────────────────────────────────────────────
 export async function runScrapeJob(job) {
   switch (job.platform) {
-    case 'Google Search': return scrapeGoogleSearch(job);
-    case 'Google Maps': return scrapeGoogleMaps(job);
-    case 'LinkedIn': return scrapeLinkedIn(job);
-    case 'Facebook': return scrapeFacebook(job);
-    case 'VConnect NG': return scrapeVConnect(job);
-    case 'Yellow Pages NG': return scrapeYellowPagesNG(job);
-    case 'Custom URL': return scrapeCustomUrl(job);
-    default: return scrapeGoogleSearch(job);
+    case "Google Search":
+      return scrapeGoogleSearch(job);
+    case "Google Maps":
+      return scrapeGoogleMaps(job);
+    case "LinkedIn":
+      return scrapeLinkedIn(job); // auto-switches to people search for B2C
+    case "Facebook":
+      return scrapeFacebook(job);
+    case "VConnect NG":
+      return scrapeVConnect(job);
+    case "Yellow Pages NG":
+      return scrapeYellowPagesNG(job);
+    case "Custom URL":
+      return scrapeCustomUrl(job);
+    default:
+      return scrapeGoogleSearch(job);
   }
 }

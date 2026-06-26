@@ -79,7 +79,7 @@ const userSchema = new mongoose.Schema(
         "SALES",
         "HR",
         "MANAGER",
-        "SALES-MANAGER",
+        "SALES_MANAGER",
         "ACCOUNTANT",
         "HR",
         "GRAPHICS",
@@ -99,7 +99,7 @@ const userSchema = new mongoose.Schema(
             "IT",
             "DIRECTOR",
             "MANAGER",
-            "SALES-MANAGER",
+            "SALES_MANAGER",
             "HR",
             "SALES",
             "WAREHOUSE",
@@ -134,6 +134,18 @@ const userSchema = new mongoose.Schema(
         message:
           "userMode is only allowed for ADMIN/SALES or USER with BTC or BTB subRole",
       },
+    },
+    scrapeQuota: {
+      monthlyLimit: { type: Number, default: 0 },
+      usedThisMonth: { type: Number, default: 0 },
+      quotaResetDate: { type: Date, default: null },
+      setBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+      setByName: { type: String, default: "" },
+      updatedAt: { type: Date, default: null },
     },
   },
   {
