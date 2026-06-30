@@ -1,7 +1,18 @@
 import mongoose from "mongoose";
+import { countryField, addCountryIndex } from "../config/countrySchema.js";
 
 const productSchema = new mongoose.Schema(
   {
+    // ── MULTI-COUNTRY: which country/market this product is visible in ──────
+    // Empty array = visible in ALL countries (default behaviour, no change needed)
+    // Populated array = only visible in listed countries
+    visibleInCountries: {
+      type: [String],
+      default: [],
+    },
+    // The country where this product was created / primarily managed
+    ...countryField,
+
     name: {
       type: String,
       required: true,
@@ -257,7 +268,12 @@ const productSchema = new mongoose.Schema(
     },
     stockSource: {
       type: String,
-      enum: ["WAREHOUSE_MANUAL", "STOCK_BATCHES", "PRODUCT_DEFAULT", "PARTNER_MANAGED"],
+      enum: [
+        "WAREHOUSE_MANUAL",
+        "STOCK_BATCHES",
+        "PRODUCT_DEFAULT",
+        "PARTNER_MANAGED",
+      ],
       default: "PRODUCT_DEFAULT",
     },
     // Partner stock — products held by partners but listed as available online.
@@ -482,6 +498,8 @@ productSchema.index({ "warehouseStock.lastUpdated": -1 });
 // Note: Your existing Stock model remains unchanged!
 // The warehouse system works as an overlay that can optionally override
 // the stock calculations from your existing Stock model.
+
+addCountryIndex(productSchema);
 
 const ProductModel = mongoose.model("Product", productSchema);
 

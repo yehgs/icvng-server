@@ -1,6 +1,5 @@
 {
   "version": 2,
-  "name": "icv",
   "builds": [
     {
       "src": "index.js",
@@ -9,7 +8,16 @@
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
+      "src": "/api/order/webhook",
+      "methods": ["POST"],
+      "dest": "index.js",
+      "headers": {
+        "Content-Type": "application/json"
+      }
+    },
+    {
+      "src": "/api/order/paystack-webhook",
+      "methods": ["POST"],
       "dest": "index.js"
     },
     {
@@ -19,5 +27,6 @@
   ],
   "env": {
     "NODE_ENV": "production"
-  }
+  },
+  "regions": ["fra1"]
 }

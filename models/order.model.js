@@ -1,8 +1,12 @@
 // models/order.model.js -
 import mongoose from "mongoose";
+import { countryField, addCountryIndex } from "../config/countrySchema.js";
 
 const orderSchema = new mongoose.Schema(
   {
+    // ── MULTI-COUNTRY ──────────────────────────────────────────────────────
+    ...countryField,
+
     // ===== UNIFIED IDENTIFIERS =====
     orderId: {
       type: String,
@@ -567,6 +571,9 @@ orderSchema.statics.getOrderStats = async function (filters = {}) {
     }
   );
 };
+
+// Add compound country index for efficient per-country dashboard queries
+addCountryIndex(orderSchema);
 
 const OrderModel = mongoose.model("order", orderSchema);
 

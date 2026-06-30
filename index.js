@@ -6,6 +6,16 @@ import cookieParser from "cookie-parser";
 import morgan from "morgan";
 import helmet from "helmet";
 import connectDB from "./config/connectDB.js";
+// ── Phase 1: Multi-country ──────────────────────────────────────────────────
+import countryDetect from "./middleware/countryDetect.js";
+import { paymentConfigMiddleware } from "./config/paymentRouter.js";
+import countryRouter from "./route/country.route.js";
+import translationRouter from "./route/translation.route.js";
+import dashboardRouter from "./route/dashboard.route.js";
+import seoRouter from "./route/seo.route.js";
+// ── Phase 4: Google OAuth ─────────────────────────────────────────────────────
+import googleAuthRouter from "./route/google-auth.route.js";
+// ── Existing routers ────────────────────────────────────────────────────────
 import userRouter from "./route/user.route.js";
 import activityLogRouter from "./route/activity-log.route.js";
 import categoryRouter from "./route/category.route.js";
@@ -102,8 +112,18 @@ app.use(
         // Client side — i-coffee.ng (the site the server also serves)
         "https://i-coffee.ng",
         "https://www.i-coffee.ng",
-        // Admin panel
+        // New country domains
+        "https://i-coffee.tg",
+        "https://www.i-coffee.tg",
+        "https://i-coffee.bj",
+        "https://www.i-coffee.bj",
+        "https://i-coffee.it",
+        "https://www.i-coffee.it",
+        // Admin panels
         "https://app.i-coffee.ng",
+        "https://app.i-coffee.tg",
+        "https://app.i-coffee.bj",
+        "https://app.i-coffee.it",
         // Vercel deployment URLs
         "https://icvng-client.vercel.app",
         "https://icvng-admin.vercel.app",
@@ -111,6 +131,9 @@ app.use(
         // Local development
         "http://localhost:5173",
         "http://localhost:5174",
+        "http://localhost:5175",
+        "http://localhost:5176",
+        "http://localhost:5177",
         "http://localhost:3000",
         "http://localhost:3001",
       ];
@@ -162,6 +185,10 @@ app.use(
   }),
 );
 
+// ── Phase 1: Attach country context to EVERY request ────────────────────────
+app.use(countryDetect);
+app.use(paymentConfigMiddleware);
+// ─────────────────────────────────────────────────────────────────────────────
 // ============================================
 // Debug middleware (optional but helpful)
 // ============================================
@@ -187,6 +214,16 @@ app.get("/", (request, response) => {
   });
 });
 app.use("/api/file", uploadRouter);
+// ── Phase 1: Multi-country endpoints ─────────────────────────────────────────
+app.use("/api/country", countryRouter);
+app.use("/api/translations", translationRouter);
+app.use("/api/admin/dashboard", dashboardRouter);
+// SEO files served at root — must be before API routes
+app.use("/", seoRouter);
+app.use("/api/seo", seoRouter);
+// ── Phase 4: Google OAuth ─────────────────────────────────────────────────────
+app.use("/api/auth/google", googleAuthRouter);
+// ─────────────────────────────────────────────────────────────────────────────
 app.use("/api/user", userRouter);
 app.use("/api/category", categoryRouter);
 app.use("/api/subcategory", subCategoryRouter);

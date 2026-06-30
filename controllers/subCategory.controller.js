@@ -1,5 +1,5 @@
-import SubCategoryModel from '../models/subCategory.model.js';
-import generateSlug from '../utils/generateSlug.js';
+import SubCategoryModel from "../models/subCategory.model.js";
+import generateSlug from "../utils/generateSlug.js";
 
 export const AddSubCategoryController = async (request, response) => {
   try {
@@ -7,7 +7,7 @@ export const AddSubCategoryController = async (request, response) => {
 
     if (!name && !image && !category[0]) {
       return response.status(400).json({
-        message: 'Provide name, image, category',
+        message: "Provide name, image, category",
         error: true,
         success: false,
       });
@@ -22,7 +22,7 @@ export const AddSubCategoryController = async (request, response) => {
     });
     if (existingSubCategory) {
       return response.status(400).json({
-        message: 'A subCategory with this slug already exists',
+        message: "A subCategory with this slug already exists",
         error: true,
         success: false,
       });
@@ -39,7 +39,7 @@ export const AddSubCategoryController = async (request, response) => {
     const save = await createSubCategory.save();
 
     return response.json({
-      message: 'Sub Category Created',
+      message: "Sub Category Created",
       data: save,
       error: false,
       success: true,
@@ -57,9 +57,9 @@ export const getSubCategoryController = async (request, response) => {
   try {
     const data = await SubCategoryModel.find()
       .sort({ createdAt: -1 })
-      .populate('category');
+      .populate("category");
     return response.json({
-      message: 'Sub Category data',
+      message: "Sub Category data",
       data: data,
       error: false,
       success: true,
@@ -95,7 +95,7 @@ export const updateSubCategoryController = async (request, response) => {
 
       if (existingSubCategory) {
         return response.status(400).json({
-          message: 'A subcategory with this slug already exists',
+          message: "A subcategory with this slug already exists",
           error: true,
           success: false,
         });
@@ -106,7 +106,7 @@ export const updateSubCategoryController = async (request, response) => {
 
     if (!checkSub) {
       return response.status(400).json({
-        message: 'Invalid _id provided',
+        message: "Invalid _id provided",
         error: true,
         success: false,
       });
@@ -115,11 +115,11 @@ export const updateSubCategoryController = async (request, response) => {
     const updateSubCategory = await SubCategoryModel.findByIdAndUpdate(
       _id,
       updateData,
-      { new: true } // return updated document
+      { new: true }, // return updated document
     );
 
     return response.json({
-      message: 'Updated Successfully',
+      message: "Updated Successfully",
       data: updateSubCategory,
       error: false,
       success: true,
@@ -136,11 +136,11 @@ export const updateSubCategoryController = async (request, response) => {
 export const deleteSubCategoryController = async (request, response) => {
   try {
     const { _id } = request.body;
-    console.log('Id', _id);
+    console.log("Id", _id);
     const deleteSub = await SubCategoryModel.findByIdAndDelete(_id);
 
     return response.json({
-      message: 'Delete successfully',
+      message: "Delete successfully",
       data: deleteSub,
       error: false,
       success: true,

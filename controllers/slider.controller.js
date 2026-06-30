@@ -1,4 +1,5 @@
-import SliderModel from '../models/slider.model.js';
+import { translateEntity } from "../utils/translationService.js";
+import SliderModel from "../models/slider.model.js";
 
 export const addSliderController = async (request, response) => {
   try {
@@ -6,7 +7,7 @@ export const addSliderController = async (request, response) => {
 
     if (!title || !imageUrl) {
       return response.status(400).json({
-        message: 'Title and image URL are required',
+        message: "Title and image URL are required",
         error: true,
         success: false,
       });
@@ -14,9 +15,9 @@ export const addSliderController = async (request, response) => {
 
     const addSlider = new SliderModel({
       title,
-      description: description || '',
+      description: description || "",
       imageUrl,
-      url: url || '',
+      url: url || "",
       isActive: isActive !== undefined ? isActive : true,
       order: order || 0,
     });
@@ -25,14 +26,14 @@ export const addSliderController = async (request, response) => {
 
     if (!saveSlider) {
       return response.status(500).json({
-        message: 'Slider not created!',
+        message: "Slider not created!",
         error: true,
         success: false,
       });
     }
 
     return response.json({
-      message: 'Slider successfully created',
+      message: "Slider successfully created",
       data: saveSlider,
       success: true,
       error: false,
@@ -91,7 +92,7 @@ export const updateSliderController = async (request, response) => {
 
     if (!_id) {
       return response.status(400).json({
-        message: 'Slider ID is required',
+        message: "Slider ID is required",
         error: true,
         success: false,
       });
@@ -112,14 +113,14 @@ export const updateSliderController = async (request, response) => {
 
     if (!update) {
       return response.status(404).json({
-        message: 'Slider not found',
+        message: "Slider not found",
         error: true,
         success: false,
       });
     }
 
     return response.json({
-      message: 'Slider updated successfully',
+      message: "Slider updated successfully",
       success: true,
       error: false,
       data: update,
@@ -139,7 +140,7 @@ export const deleteSliderController = async (request, response) => {
 
     if (!_id) {
       return response.status(400).json({
-        message: 'Slider ID is required',
+        message: "Slider ID is required",
         error: true,
         success: false,
       });
@@ -149,14 +150,14 @@ export const deleteSliderController = async (request, response) => {
 
     if (!deleteSlider) {
       return response.status(404).json({
-        message: 'Slider not found',
+        message: "Slider not found",
         error: true,
         success: false,
       });
     }
 
     return response.json({
-      message: 'Slider deleted successfully',
+      message: "Slider deleted successfully",
       data: deleteSlider,
       error: false,
       success: true,

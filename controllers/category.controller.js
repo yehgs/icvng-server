@@ -2,6 +2,7 @@ import CategoryModel from "../models/category.model.js";
 import SubCategoryModel from "../models/subCategory.model.js";
 import ProductModel from "../models/product.model.js";
 import generateSlug from "../utils/generateSlug.js";
+import { translateEntity } from "../utils/translationService.js";
 
 export const AddCategoryController = async (request, response) => {
   try {

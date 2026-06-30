@@ -1,6 +1,7 @@
-import BrandModel from '../models/brand.model.js';
-import ProductModel from '../models/product.model.js';
-import generateSlug from '../utils/generateSlug.js';
+import BrandModel from "../models/brand.model.js";
+import ProductModel from "../models/product.model.js";
+import generateSlug from "../utils/generateSlug.js";
+import { translateEntity } from "../utils/translationService.js";
 
 export const AddBrandController = async (request, response) => {
   try {
@@ -8,7 +9,7 @@ export const AddBrandController = async (request, response) => {
 
     if (!name || !image) {
       return response.status(400).json({
-        message: 'Enter required fields',
+        message: "Enter required fields",
         error: true,
         success: false,
       });
@@ -23,7 +24,7 @@ export const AddBrandController = async (request, response) => {
 
     if (existingBrand) {
       return response.status(400).json({
-        message: 'A brand with this slug already exists',
+        message: "A brand with this slug already exists",
         error: true,
         success: false,
       });
@@ -40,14 +41,14 @@ export const AddBrandController = async (request, response) => {
 
     if (!saveBrand) {
       return response.status(500).json({
-        message: 'Brand not created!',
+        message: "Brand not created!",
         error: true,
         success: false,
       });
     }
 
     return response.json({
-      message: 'Brand successfully created',
+      message: "Brand successfully created",
       data: saveBrand,
       success: true,
       error: false,
@@ -99,7 +100,7 @@ export const updateBrandController = async (request, response) => {
 
       if (existingBrand) {
         return response.status(400).json({
-          message: 'A brand with this slug already exists',
+          message: "A brand with this slug already exists",
           error: true,
           success: false,
         });
@@ -109,7 +110,7 @@ export const updateBrandController = async (request, response) => {
     const update = await BrandModel.updateOne({ _id: _id }, updateData);
 
     return response.json({
-      message: 'Updated Brand',
+      message: "Updated Brand",
       success: true,
       error: false,
       data: update,
@@ -144,7 +145,7 @@ export const deleteBrandController = async (request, response) => {
     const deleteBrand = await BrandModel.deleteOne({ _id: _id });
 
     return response.json({
-      message: 'Delete brand successfully',
+      message: "Delete brand successfully",
       data: deleteBrand,
       error: false,
       success: true,

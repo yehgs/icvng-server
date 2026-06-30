@@ -6,6 +6,7 @@ import BrandModel from "../models/brand.model.js";
 import generateSlug from "../utils/generateSlug.js";
 import generateSKU from "../utils/generateSKU.js";
 import { logActivity } from "../utils/activityLogger.js";
+import { translateEntity } from "../utils/translationService.js";
 
 // ─── Client Visibility Rule ────────────────────────────────────────────────
 // A product is shown to customers if it is PUBLISHED and at least one of:
@@ -144,7 +145,7 @@ export const createProductController = async (request, response) => {
       name,
       image,
       weight,
-      brand: Array.isArray(brand) ? brand.filter(v => v && v !== "") : brand,
+      brand: Array.isArray(brand) ? brand.filter((v) => v && v !== "") : brand,
       compatibleSystem: compatibleSystem || null,
       producer: producer || null,
       productType,
@@ -153,15 +154,16 @@ export const createProductController = async (request, response) => {
       alcoholLevel: alcoholLevel || undefined,
       blend: blend || undefined,
       featured: featured || false,
-      limitedEdition: limitedEdition && typeof limitedEdition === "object"
-        ? {
-            isLimitedEdition: !!limitedEdition.isLimitedEdition,
-            bannerText: limitedEdition.bannerText || "Limited Edition",
-            bannerColor: limitedEdition.bannerColor || "#c8102e",
-            totalUnits: parseInt(limitedEdition.totalUnits) || 0,
-            carouselOrder: parseInt(limitedEdition.carouselOrder) || 0,
-          }
-        : undefined,
+      limitedEdition:
+        limitedEdition && typeof limitedEdition === "object"
+          ? {
+              isLimitedEdition: !!limitedEdition.isLimitedEdition,
+              bannerText: limitedEdition.bannerText || "Limited Edition",
+              bannerColor: limitedEdition.bannerColor || "#c8102e",
+              totalUnits: parseInt(limitedEdition.totalUnits) || 0,
+              carouselOrder: parseInt(limitedEdition.carouselOrder) || 0,
+            }
+          : undefined,
       aromaticProfile: aromaticProfile || undefined,
       coffeeOrigin: coffeeOrigin || undefined,
       intensity: intensity || undefined,
@@ -169,8 +171,10 @@ export const createProductController = async (request, response) => {
       packaging: packaging || undefined,
       category,
       subCategory: subCategory || null,
-      tags: Array.isArray(tags) ? tags.filter(v => v && v !== "") : tags,
-      attributes: Array.isArray(attributes) ? attributes.filter(v => v && v !== "") : attributes,
+      tags: Array.isArray(tags) ? tags.filter((v) => v && v !== "") : tags,
+      attributes: Array.isArray(attributes)
+        ? attributes.filter((v) => v && v !== "")
+        : attributes,
       unit,
       stock: stock || 0,
       productAvailability:
@@ -199,12 +203,21 @@ export const createProductController = async (request, response) => {
 
     const saveProduct = await product.save();
 
+    // Auto-translate to all non-English languages (non-blocking)
+    translateEntity({
+      entityType: "product",
+      entityId: saveProduct._id,
+      document: saveProduct.toObject(),
+    }).catch((err) =>
+      console.error("[translate] product create:", err.message),
+    );
+
     // Log activity (non-blocking)
     logActivity({
       userId: request.user?._id,
-      action: 'PRODUCT_CREATE',
+      action: "PRODUCT_CREATE",
       description: `Created product: ${saveProduct.name}`,
-      resourceType: 'Product',
+      resourceType: "Product",
       resourceId: saveProduct._id,
       resourceName: saveProduct.name,
       req: request,
@@ -389,7 +402,18 @@ export const getCategoryStructureController = async (request, response) => {
 
 export const getProductControllerAdmin = async (request, response) => {
   try {
-    let { page, limit, search, category, brand, publish, productType, lowStock, priceFilter, hiddenFromShop } = request.body;
+    let {
+      page,
+      limit,
+      search,
+      category,
+      brand,
+      publish,
+      productType,
+      lowStock,
+      priceFilter,
+      hiddenFromShop,
+    } = request.body;
 
     page = parseInt(page) || 1;
     limit = parseInt(limit) || 10;
@@ -400,19 +424,27 @@ export const getProductControllerAdmin = async (request, response) => {
 
     if (search && search.trim()) {
       const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      andConditions.push({ $or: [
-        { name: { $regex: escaped, $options: "i" } },
-        { sku: { $regex: escaped, $options: "i" } },
-        { description: { $regex: escaped, $options: "i" } },
-      ]});
+      andConditions.push({
+        $or: [
+          { name: { $regex: escaped, $options: "i" } },
+          { sku: { $regex: escaped, $options: "i" } },
+          { description: { $regex: escaped, $options: "i" } },
+        ],
+      });
     }
 
     if (category) {
-      try { andConditions.push({ category: new mongoose.Types.ObjectId(category) }); } catch {}
+      try {
+        andConditions.push({ category: new mongoose.Types.ObjectId(category) });
+      } catch {}
     }
 
     if (brand) {
-      try { andConditions.push({ brand: { $in: [new mongoose.Types.ObjectId(brand)] } }); } catch {}
+      try {
+        andConditions.push({
+          brand: { $in: [new mongoose.Types.ObjectId(brand)] },
+        });
+      } catch {}
     }
 
     if (publish) {
@@ -424,47 +456,64 @@ export const getProductControllerAdmin = async (request, response) => {
     }
 
     // Low stock filter — online stock only
-    if (lowStock === 'true') {
-      andConditions.push({ $or: [
-        { "warehouseStock.onlineStock": { $gt: 0, $lte: 5 } },
-        { "partnerStock.enabled": true, "partnerStock.quantity": { $gt: 0, $lte: 5 } },
-      ]});
-    } else if (lowStock === 'critical') {
-      andConditions.push({ $or: [
-        { "warehouseStock.onlineStock": 0 },
-        { "partnerStock.enabled": true, "partnerStock.quantity": 0 },
-      ]});
+    if (lowStock === "true") {
+      andConditions.push({
+        $or: [
+          { "warehouseStock.onlineStock": { $gt: 0, $lte: 5 } },
+          {
+            "partnerStock.enabled": true,
+            "partnerStock.quantity": { $gt: 0, $lte: 5 },
+          },
+        ],
+      });
+    } else if (lowStock === "critical") {
+      andConditions.push({
+        $or: [
+          { "warehouseStock.onlineStock": 0 },
+          { "partnerStock.enabled": true, "partnerStock.quantity": 0 },
+        ],
+      });
     }
 
     // Price volume filter
-    if (priceFilter === 'hasbtc') {
+    if (priceFilter === "hasbtc") {
       andConditions.push({ btcPrice: { $gt: 0 } });
-    } else if (priceFilter === 'has3week') {
+    } else if (priceFilter === "has3week") {
       andConditions.push({ price3weeksDelivery: { $gt: 0 } });
-    } else if (priceFilter === 'has5week') {
+    } else if (priceFilter === "has5week") {
       andConditions.push({ price5weeksDelivery: { $gt: 0 } });
-    } else if (priceFilter === 'noPrice') {
+    } else if (priceFilter === "noPrice") {
       andConditions.push(
         { $or: [{ btcPrice: { $lte: 0 } }, { btcPrice: null }] },
-        { $or: [{ price3weeksDelivery: { $lte: 0 } }, { price3weeksDelivery: null }] },
-        { $or: [{ price5weeksDelivery: { $lte: 0 } }, { price5weeksDelivery: null }] },
+        {
+          $or: [
+            { price3weeksDelivery: { $lte: 0 } },
+            { price3weeksDelivery: null },
+          ],
+        },
+        {
+          $or: [
+            { price5weeksDelivery: { $lte: 0 } },
+            { price5weeksDelivery: null },
+          ],
+        },
       );
     }
 
     // Hidden from shop filter — products that are PUBLISHED but invisible to clients
     // Hidden = onlineStock=0 AND not partner AND no 3/5-week delivery price
-    if (hiddenFromShop === 'true') {
-      andConditions.push({ publish: 'PUBLISHED' });
-      andConditions.push({ 'warehouseStock.onlineStock': { $lte: 0 } });
-      andConditions.push({ 'partnerStock.enabled': { $ne: true } });
+    if (hiddenFromShop === "true") {
+      andConditions.push({ publish: "PUBLISHED" });
+      andConditions.push({ "warehouseStock.onlineStock": { $lte: 0 } });
+      andConditions.push({ "partnerStock.enabled": { $ne: true } });
       andConditions.push({ price3weeksDelivery: { $lte: 0 } });
       andConditions.push({ price5weeksDelivery: { $lte: 0 } });
-    } else if (hiddenFromShop === 'false') {
+    } else if (hiddenFromShop === "false") {
       // Visible = matches the CLIENT_VISIBILITY_FILTER
       andConditions.push({
         $or: [
-          { 'warehouseStock.onlineStock': { $gt: 0 } },
-          { 'partnerStock.enabled': true },
+          { "warehouseStock.onlineStock": { $gt: 0 } },
+          { "partnerStock.enabled": true },
           { price3weeksDelivery: { $gt: 0 } },
           { price5weeksDelivery: { $gt: 0 } },
         ],
@@ -482,7 +531,9 @@ export const getProductControllerAdmin = async (request, response) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .populate("category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy")
+        .populate(
+          "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy",
+        )
         .populate("partnerStock.supplier", "name contactPerson.phone"),
       ProductModel.countDocuments(query),
     ]);
@@ -507,7 +558,15 @@ export const getProductControllerAdmin = async (request, response) => {
 // Controller 1: getProductController
 export const getProductController = async (request, response) => {
   try {
-    let { page, limit, search, category, brand, productType, compatibleSystem } = request.body;
+    let {
+      page,
+      limit,
+      search,
+      category,
+      brand,
+      productType,
+      compatibleSystem,
+    } = request.body;
 
     page = parseInt(page) || 1;
     limit = parseInt(limit) || 10;
@@ -530,11 +589,17 @@ export const getProductController = async (request, response) => {
     }
 
     if (category) {
-      try { andConditions.push({ category: new mongoose.Types.ObjectId(category) }); } catch {}
+      try {
+        andConditions.push({ category: new mongoose.Types.ObjectId(category) });
+      } catch {}
     }
 
     if (brand) {
-      try { andConditions.push({ brand: { $in: [new mongoose.Types.ObjectId(brand)] } }); } catch {}
+      try {
+        andConditions.push({
+          brand: { $in: [new mongoose.Types.ObjectId(brand)] },
+        });
+      } catch {}
     }
 
     if (productType) {
@@ -542,7 +607,11 @@ export const getProductController = async (request, response) => {
     }
 
     if (compatibleSystem) {
-      try { andConditions.push({ compatibleSystem: new mongoose.Types.ObjectId(compatibleSystem) }); } catch {}
+      try {
+        andConditions.push({
+          compatibleSystem: new mongoose.Types.ObjectId(compatibleSystem),
+        });
+      } catch {}
     }
 
     query.$and = andConditions;
@@ -624,7 +693,8 @@ export const getProductDetails = async (request, response) => {
     // We merge them into the product object so the client always shows what the
     // accountant configured — even if ProductModel fell out of sync.
     try {
-      const { default: DirectPricingModel } = await import('../models/direct-pricing.model.js');
+      const { default: DirectPricingModel } =
+        await import("../models/direct-pricing.model.js");
       const activeDP = await DirectPricingModel.findOne({
         product: product._id,
         isActive: true,
@@ -634,18 +704,29 @@ export const getProductDetails = async (request, response) => {
         const dp = activeDP.directPrices;
         const merged = product.toObject();
         if (dp.btcPrice > 0) merged.btcPrice = dp.btcPrice;
-        if (dp.price3weeksDelivery > 0) merged.price3weeksDelivery = dp.price3weeksDelivery;
-        if (dp.price5weeksDelivery > 0) merged.price5weeksDelivery = dp.price5weeksDelivery;
+        if (dp.price3weeksDelivery > 0)
+          merged.price3weeksDelivery = dp.price3weeksDelivery;
+        if (dp.price5weeksDelivery > 0)
+          merged.price5weeksDelivery = dp.price5weeksDelivery;
         // Also ensure ProductModel is in sync for future calls
-        const needsSync = (dp.btcPrice > 0 && product.btcPrice !== dp.btcPrice)
-          || (dp.price3weeksDelivery > 0 && product.price3weeksDelivery !== dp.price3weeksDelivery)
-          || (dp.price5weeksDelivery > 0 && product.price5weeksDelivery !== dp.price5weeksDelivery);
+        const needsSync =
+          (dp.btcPrice > 0 && product.btcPrice !== dp.btcPrice) ||
+          (dp.price3weeksDelivery > 0 &&
+            product.price3weeksDelivery !== dp.price3weeksDelivery) ||
+          (dp.price5weeksDelivery > 0 &&
+            product.price5weeksDelivery !== dp.price5weeksDelivery);
         if (needsSync) {
           ProductModel.findByIdAndUpdate(product._id, {
             ...(dp.btcPrice > 0 ? { btcPrice: dp.btcPrice } : {}),
-            ...(dp.price3weeksDelivery > 0 ? { price3weeksDelivery: dp.price3weeksDelivery } : {}),
-            ...(dp.price5weeksDelivery > 0 ? { price5weeksDelivery: dp.price5weeksDelivery } : {}),
-          }).exec().catch(() => {}); // fire-and-forget sync, non-blocking
+            ...(dp.price3weeksDelivery > 0
+              ? { price3weeksDelivery: dp.price3weeksDelivery }
+              : {}),
+            ...(dp.price5weeksDelivery > 0
+              ? { price5weeksDelivery: dp.price5weeksDelivery }
+              : {}),
+          })
+            .exec()
+            .catch(() => {}); // fire-and-forget sync, non-blocking
         }
         return response.json({
           message: "product details",
@@ -655,7 +736,7 @@ export const getProductDetails = async (request, response) => {
         });
       }
     } catch (_err) {
-      console.error('DirectPricing merge failed:', _err.message);
+      console.error("DirectPricing merge failed:", _err.message);
     }
     // ────────────────────────────────────────────────────────────────────────
 
@@ -702,8 +783,11 @@ export const updateProductDetails = async (request, response) => {
     // Sanitize ObjectId reference fields — Mongoose throws BSONError if they are ""
     // Convert empty strings to null for all ref fields so Mongoose clears them cleanly
     const objectIdFields = [
-      "compatibleSystem", "producer", "supplier",
-      "category", "subCategory",
+      "compatibleSystem",
+      "producer",
+      "supplier",
+      "category",
+      "subCategory",
     ];
     objectIdFields.forEach((field) => {
       if (updateData[field] === "" || updateData[field] === null) {
@@ -712,7 +796,13 @@ export const updateProductDetails = async (request, response) => {
     });
 
     // Array ObjectId fields — filter out empty strings
-    const arrayObjectIdFields = ["brand", "tags", "attributes", "colors", "relatedProducts"];
+    const arrayObjectIdFields = [
+      "brand",
+      "tags",
+      "attributes",
+      "colors",
+      "relatedProducts",
+    ];
     arrayObjectIdFields.forEach((field) => {
       if (Array.isArray(updateData[field])) {
         updateData[field] = updateData[field].filter((v) => v && v !== "");
@@ -721,14 +811,25 @@ export const updateProductDetails = async (request, response) => {
 
     // Sanitize partnerStock.supplier — empty string → null
     if (updateData.partnerStock) {
-      if (updateData.partnerStock.supplier === "" || updateData.partnerStock.supplier === undefined) {
+      if (
+        updateData.partnerStock.supplier === "" ||
+        updateData.partnerStock.supplier === undefined
+      ) {
         updateData.partnerStock.supplier = null;
       }
     }
 
     // Sanitize enum fields — Mongoose rejects "" for fields with enum constraints
     // Convert "" → undefined so Mongoose uses the existing value or skips the field
-    const enumFields = ["roastLevel", "blend", "intensity", "packaging", "productType", "publish", "stockSource"];
+    const enumFields = [
+      "roastLevel",
+      "blend",
+      "intensity",
+      "packaging",
+      "productType",
+      "publish",
+      "stockSource",
+    ];
     enumFields.forEach((field) => {
       if (updateData[field] === "" || updateData[field] === null) {
         delete updateData[field]; // remove from updateData so existing value is preserved
@@ -736,7 +837,14 @@ export const updateProductDetails = async (request, response) => {
     });
 
     // Also clear plain string fields that are empty — convert to undefined
-    const optionalStringFields = ["roastOrigin", "aromaticProfile", "alcoholLevel", "coffeeOrigin", "unit", "blend"];
+    const optionalStringFields = [
+      "roastOrigin",
+      "aromaticProfile",
+      "alcoholLevel",
+      "coffeeOrigin",
+      "unit",
+      "blend",
+    ];
     optionalStringFields.forEach((field) => {
       if (updateData[field] === "") {
         updateData[field] = undefined;
@@ -744,7 +852,15 @@ export const updateProductDetails = async (request, response) => {
     });
 
     // Sanitize numeric price fields — empty string → 0
-    const numericFields = ["btbPrice", "btcPrice", "price3weeksDelivery", "price5weeksDelivery", "price", "discount", "stock"];
+    const numericFields = [
+      "btbPrice",
+      "btcPrice",
+      "price3weeksDelivery",
+      "price5weeksDelivery",
+      "price",
+      "discount",
+      "stock",
+    ];
     numericFields.forEach((field) => {
       if (updateData[field] === "" || updateData[field] === undefined) {
         updateData[field] = 0;
@@ -754,12 +870,20 @@ export const updateProductDetails = async (request, response) => {
     });
 
     // Sanitize limitedEdition nested object
-    if (updateData.limitedEdition && typeof updateData.limitedEdition === "object") {
-      updateData.limitedEdition.isLimitedEdition = !!updateData.limitedEdition.isLimitedEdition;
-      updateData.limitedEdition.bannerText = updateData.limitedEdition.bannerText || "Limited Edition";
-      updateData.limitedEdition.bannerColor = updateData.limitedEdition.bannerColor || "#c8102e";
-      updateData.limitedEdition.totalUnits = parseInt(updateData.limitedEdition.totalUnits) || 0;
-      updateData.limitedEdition.carouselOrder = parseInt(updateData.limitedEdition.carouselOrder) || 0;
+    if (
+      updateData.limitedEdition &&
+      typeof updateData.limitedEdition === "object"
+    ) {
+      updateData.limitedEdition.isLimitedEdition =
+        !!updateData.limitedEdition.isLimitedEdition;
+      updateData.limitedEdition.bannerText =
+        updateData.limitedEdition.bannerText || "Limited Edition";
+      updateData.limitedEdition.bannerColor =
+        updateData.limitedEdition.bannerColor || "#c8102e";
+      updateData.limitedEdition.totalUnits =
+        parseInt(updateData.limitedEdition.totalUnits) || 0;
+      updateData.limitedEdition.carouselOrder =
+        parseInt(updateData.limitedEdition.carouselOrder) || 0;
     }
 
     // ── DIRECT PRICING PROTECTION ────────────────────────────────────────────
@@ -771,7 +895,8 @@ export const updateProductDetails = async (request, response) => {
     // 0 / empty because the form loaded before DirectPricing was applied) from
     // silently zeroing out the accountant-set prices.
     try {
-      const { default: DirectPricingModel } = await import('../models/direct-pricing.model.js');
+      const { default: DirectPricingModel } =
+        await import("../models/direct-pricing.model.js");
       const activeDirectPricing = await DirectPricingModel.findOne({
         product: _id,
         isActive: true,
@@ -781,12 +906,14 @@ export const updateProductDetails = async (request, response) => {
         const dp = activeDirectPricing.directPrices;
         // Restore Direct-Pricing-managed prices so they are not overwritten
         if (dp.btcPrice > 0) updateData.btcPrice = dp.btcPrice;
-        if (dp.price3weeksDelivery > 0) updateData.price3weeksDelivery = dp.price3weeksDelivery;
-        if (dp.price5weeksDelivery > 0) updateData.price5weeksDelivery = dp.price5weeksDelivery;
+        if (dp.price3weeksDelivery > 0)
+          updateData.price3weeksDelivery = dp.price3weeksDelivery;
+        if (dp.price5weeksDelivery > 0)
+          updateData.price5weeksDelivery = dp.price5weeksDelivery;
       }
     } catch (_err) {
       // Non-fatal — if DirectPricingModel can't be loaded, continue without protection
-      console.error('DirectPricing protection check failed:', _err.message);
+      console.error("DirectPricing protection check failed:", _err.message);
     }
     // ────────────────────────────────────────────────────────────────────────
 
@@ -853,13 +980,24 @@ export const updateProductDetails = async (request, response) => {
 
     logActivity({
       userId: request.user?._id,
-      action: 'PRODUCT_UPDATE',
+      action: "PRODUCT_UPDATE",
       description: `Updated product: ${updateProduct?.name || _id}`,
-      resourceType: 'Product',
+      resourceType: "Product",
       resourceId: _id,
       resourceName: updateProduct?.name || String(_id),
       req: request,
     });
+
+    // Re-translate only new/changed fields (manual edits are protected inside translateEntity)
+    if (updateProduct) {
+      translateEntity({
+        entityType: "product",
+        entityId: _id,
+        document: updateProduct.toObject(),
+      }).catch((err) =>
+        console.error("[translate] product update:", err.message),
+      );
+    }
 
     return response.json({
       message: "updated successfully",
@@ -900,9 +1038,9 @@ export const deleteProductDetails = async (request, response) => {
 
     logActivity({
       userId: request.user?._id,
-      action: 'PRODUCT_DELETE',
+      action: "PRODUCT_DELETE",
       description: `Deleted product ID: ${_id}`,
-      resourceType: 'Product',
+      resourceType: "Product",
       resourceId: _id,
       req: request,
     });
@@ -1115,7 +1253,10 @@ export const getProductByCategory = async (request, response) => {
         .populate(
           "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
         ),
-      ProductModel.countDocuments({ category: categoryId, ...CLIENT_VISIBILITY_FILTER }),
+      ProductModel.countDocuments({
+        category: categoryId,
+        ...CLIENT_VISIBILITY_FILTER,
+      }),
     ]);
 
     return response.json({
@@ -1154,7 +1295,11 @@ export const getProductByCategoryAndSubCategory = async (request, response) => {
     const pageSize = limit || 12;
     const skip = (pageNumber - 1) * pageSize;
 
-    const visibilityQuery = { category: categoryId, subCategory: subCategoryId, ...CLIENT_VISIBILITY_FILTER };
+    const visibilityQuery = {
+      category: categoryId,
+      subCategory: subCategoryId,
+      ...CLIENT_VISIBILITY_FILTER,
+    };
 
     const [data, dataCount] = await Promise.all([
       ProductModel.find(visibilityQuery)
@@ -1829,10 +1974,7 @@ export const getFeaturedProducts = async (request, response) => {
     // ✅ Apply shared client visibility rules (partnerStock + delivery prices + warehouse stock)
     query.push({
       $match: {
-        $and: [
-          { image: { $exists: true, $ne: [] } },
-          CLIENT_VISIBILITY_FILTER,
-        ],
+        $and: [{ image: { $exists: true, $ne: [] } }, CLIENT_VISIBILITY_FILTER],
       },
     });
 
@@ -1941,10 +2083,7 @@ export const getLimitedEditionProducts = async (request, response) => {
     // ✅ Apply shared client visibility rules (partnerStock + delivery prices + warehouse stock)
     query.push({
       $match: {
-        $and: [
-          { image: { $exists: true, $ne: [] } },
-          CLIENT_VISIBILITY_FILTER,
-        ],
+        $and: [{ image: { $exists: true, $ne: [] } }, CLIENT_VISIBILITY_FILTER],
       },
     });
 
@@ -2059,10 +2198,7 @@ export const getPopularProducts = async (request, response) => {
     // ✅ Apply shared client visibility rules (partnerStock + delivery prices + warehouse stock)
     query.push({
       $match: {
-        $and: [
-          { image: { $exists: true, $ne: [] } },
-          CLIENT_VISIBILITY_FILTER,
-        ],
+        $and: [{ image: { $exists: true, $ne: [] } }, CLIENT_VISIBILITY_FILTER],
       },
     });
 

@@ -191,7 +191,8 @@ export async function paystackWebhookController(request, response) {
           subTotalAmt: itemSubtotal,
           totalAmt: itemTotal,
           shipping_cost: shippingCostPerItem,
-          currency: "NGN",
+          currency: request.country?.currency?.code || "NGN",
+          countryCode: request.countryCode || "NG",
           exchangeRateUsed: exchangeRateInfo,
           amountsInNGN: {
             subtotal: itemSubtotal,

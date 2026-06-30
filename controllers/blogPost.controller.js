@@ -2,6 +2,7 @@
 import BlogPostModel from "../models/blog-post.model.js";
 import BlogCategoryModel from "../models/blog-category.model.js";
 import BlogTagModel from "../models/blog-tag.model.js";
+import { translateEntity } from "../utils/translationService.js";
 
 // Create blog post
 export async function createBlogPostController(request, response) {
@@ -228,26 +229,22 @@ export async function updateBlogPostController(request, response) {
     if (category) {
       const categoryExists = await BlogCategoryModel.findById(category);
       if (!categoryExists) {
-        return response
-          .status(400)
-          .json({
-            message: "Invalid category selected",
-            error: true,
-            success: false,
-          });
+        return response.status(400).json({
+          message: "Invalid category selected",
+          error: true,
+          success: false,
+        });
       }
     }
 
     if (tags && tags.length > 0) {
       const validTags = await BlogTagModel.find({ _id: { $in: tags } });
       if (validTags.length !== tags.length) {
-        return response
-          .status(400)
-          .json({
-            message: "One or more invalid tags selected",
-            error: true,
-            success: false,
-          });
+        return response.status(400).json({
+          message: "One or more invalid tags selected",
+          error: true,
+          success: false,
+        });
       }
     }
 
@@ -331,13 +328,11 @@ export async function toggleFeaturedBlogPostController(request, response) {
     });
   } catch (error) {
     console.error("Toggle featured blog post error:", error);
-    return response
-      .status(500)
-      .json({
-        message: "Failed to toggle featured status",
-        error: true,
-        success: false,
-      });
+    return response.status(500).json({
+      message: "Failed to toggle featured status",
+      error: true,
+      success: false,
+    });
   }
 }
 
@@ -359,13 +354,11 @@ export async function deleteBlogPostController(request, response) {
     });
   } catch (error) {
     console.error("Delete blog post error:", error);
-    return response
-      .status(500)
-      .json({
-        message: "Failed to delete blog post",
-        error: true,
-        success: false,
-      });
+    return response.status(500).json({
+      message: "Failed to delete blog post",
+      error: true,
+      success: false,
+    });
   }
 }
 
@@ -430,13 +423,11 @@ export async function getPublicBlogPostsController(request, response) {
     });
   } catch (error) {
     console.error("Get public blog posts error:", error);
-    return response
-      .status(500)
-      .json({
-        message: "Failed to retrieve blog posts",
-        error: true,
-        success: false,
-      });
+    return response.status(500).json({
+      message: "Failed to retrieve blog posts",
+      error: true,
+      success: false,
+    });
   }
 }
 
@@ -467,13 +458,11 @@ export async function getBlogPostBySlugController(request, response) {
     });
   } catch (error) {
     console.error("Get blog post by slug error:", error);
-    return response
-      .status(500)
-      .json({
-        message: "Failed to retrieve blog post",
-        error: true,
-        success: false,
-      });
+    return response.status(500).json({
+      message: "Failed to retrieve blog post",
+      error: true,
+      success: false,
+    });
   }
 }
 
@@ -522,13 +511,11 @@ export async function getFeaturedBlogPostsController(request, response) {
     });
   } catch (error) {
     console.error("Get featured blog posts error:", error);
-    return response
-      .status(500)
-      .json({
-        message: "Failed to retrieve featured blog posts",
-        error: true,
-        success: false,
-      });
+    return response.status(500).json({
+      message: "Failed to retrieve featured blog posts",
+      error: true,
+      success: false,
+    });
   }
 }
 
@@ -572,12 +559,10 @@ export async function getRelatedBlogPostsController(request, response) {
     });
   } catch (error) {
     console.error("Get related blog posts error:", error);
-    return response
-      .status(500)
-      .json({
-        message: "Failed to retrieve related blog posts",
-        error: true,
-        success: false,
-      });
+    return response.status(500).json({
+      message: "Failed to retrieve related blog posts",
+      error: true,
+      success: false,
+    });
   }
 }

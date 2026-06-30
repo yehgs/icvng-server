@@ -3,6 +3,9 @@ import UserModel from '../models/user.model.js';
 import bcryptjs from 'bcryptjs';
 import verifyEmailTemplate from '../utils/verifyEmailTemplate.js';
 import generatedAccessToken from '../utils/generatedAccessToken.js';
+// Phase 4: country-aware email templates
+import { verificationEmail, passwordResetEmail, welcomeEmail } from '../utils/countryEmailTemplates.js';
+import { sendCountryEmail } from '../config/emailService.js';
 import genertedRefreshToken from '../utils/generatedRefreshToken.js';
 import uploadImageCloudinary from '../utils/uploadImageCloudinary.js';
 import generatedOtp from '../utils/generatedOtp.js';
@@ -60,18 +63,25 @@ export async function registerUserController(request, response) {
     const newUser = new UserModel(payload);
     const savedUser = await newUser.save();
 
-    // Generate verification email URL
-    const verifyEmailUrl = `${process.env.FRONTEND_URL}/verify-email?code=${savedUser._id}`;
+    // Generate verification email URL — use country domain if available
+    const frontendDomain = request.country?.domain
+      ? `https://${request.country.domain}`
+      : (process.env.FRONTEND_URL || "https://i-coffee.ng");
+    const verifyEmailUrl = `${frontendDomain}/verify-email?code=${savedUser._id}`;
 
-    // Send verification email
+    // Send country-aware verification email
     try {
-      await sendEmail({
+      const countryCode = request.countryCode || "NG";
+      const html = verificationEmail({
+        name,
+        verificationUrl: verifyEmailUrl,
+        country: request.country,
+      });
+      await sendCountryEmail({
+        countryCode,
         sendTo: email,
-        subject: 'Verify your email - I-Coffee.ng',
-        html: verifyEmailTemplate({
-          name: name,
-          url: verifyEmailUrl,
-        }),
+        subject: `Verify your email — ${request.country?.seo?.siteName || "I-Coffee"}`,
+        html,
       });
     } catch (emailError) {
       console.error('Email sending failed:', emailError);
@@ -461,13 +471,17 @@ export async function forgotPasswordController(request, response) {
     });
 
     try {
-      await sendEmail({
+      const countryCode = request.countryCode || "NG";
+      const html = passwordResetEmail({
+        name: user.name,
+        otp,
+        country: request.country,
+      });
+      await sendCountryEmail({
+        countryCode,
         sendTo: email,
-        subject: 'Password Reset - I-Coffee.ng',
-        html: forgotPasswordTemplate({
-          name: user.name,
-          otp: otp,
-        }),
+        subject: `Password Reset — ${request.country?.seo?.siteName || "I-Coffee"}`,
+        html,
       });
 
       return response.json({
