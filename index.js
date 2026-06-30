@@ -79,7 +79,7 @@ app.options("*", (req, res) => {
   );
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type,Authorization,X-Requested-With,x-auth-token,token,x-access-token,x-csrf-token",
+    "Content-Type,Authorization,X-Requested-With,x-auth-token,token,x-access-token,x-csrf-token,x-storefront-host,x-country-code",
   );
   res.sendStatus(204);
 });
