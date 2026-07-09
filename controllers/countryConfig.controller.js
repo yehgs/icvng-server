@@ -12,6 +12,7 @@ import {
   getCountryByCode,
 } from "../config/countries/index.js";
 import { getPublicPaymentInfo } from "../config/paymentRouter.js";
+import { localizeOne } from "../utils/translationService.js";
 
 /**
  * GET /api/country/config
@@ -24,20 +25,38 @@ export async function getCountryConfig(req, res) {
     const country = req.country;
     const payment = getPublicPaymentInfo(req.countryCode);
 
+    // Preheader message + contact address are content-managed per country
+    // (Admin → Settings → Countries) and editable per language (Admin →
+    // Translations → Countries) — localize them here so the storefront on
+    // e.g. i-coffee.tg shows the French copy without any client-side fetch.
+    const language =
+      (req.headers["x-language"] || "").toLowerCase() ||
+      country.language?.default ||
+      "en";
+    const localizedCountry = await localizeOne("country", country, language);
+
     return res.json({
       success: true,
       error: false,
       data: {
-        code: country.code,
-        name: country.name,
-        domain: country.domain,
-        currency: country.currency,
-        language: country.language,
-        timezone: country.timezone,
-        phonePrefix: country.phonePrefix,
-        flagEmoji: country.flagEmoji,
-        seo: country.seo,
+        _id: localizedCountry._id,
+        code: localizedCountry.code,
+        name: localizedCountry.name,
+        domain: localizedCountry.domain,
+        currency: localizedCountry.currency,
+        language: localizedCountry.language,
+        timezone: localizedCountry.timezone,
+        phonePrefix: localizedCountry.phonePrefix,
+        flagEmoji: localizedCountry.flagEmoji,
+        seo: localizedCountry.seo,
         payment,
+        // Content-managed via the admin panel (Settings → Countries): the
+        // header preheader message and the footer contact details are
+        // editable per market and reflect immediately on the domain that
+        // country serves — no static text, no deploy.
+        contacts: localizedCountry.contacts || {},
+        content: localizedCountry.content || {},
+        tawk: localizedCountry.tawk || {},
       },
     });
   } catch (err) {

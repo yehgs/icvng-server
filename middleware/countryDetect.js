@@ -15,11 +15,11 @@
 import jwt from "jsonwebtoken";
 import UserModel from "../models/user.model.js";
 import {
-  getCountryByDomain,
   getCountryByCode,
   DEFAULT_COUNTRY,
   COUNTRY_CONFIG,
 } from "../config/countries/index.js";
+import { syncByDomain, syncByCode } from "../services/countryService.js";
 
 /**
  * PHASE 1 SECURITY: verify that the caller presenting X-Country-Code is a
@@ -72,7 +72,7 @@ const countryDetect = async (req, res, next) => {
     if (headerOverride && COUNTRY_CONFIG[headerOverride.toUpperCase()]) {
       const trusted = await isTrustedCountryOverride(req);
       if (trusted) {
-        req.country = COUNTRY_CONFIG[headerOverride.toUpperCase()];
+        req.country = syncByCode(headerOverride.toUpperCase());
         req.countryCode = req.country.code;
         return next();
       }
@@ -83,12 +83,13 @@ const countryDetect = async (req, res, next) => {
     // The API is served from one shared domain across every country's
     // deployment, so req.headers.host is always the API's own host, never
     // the storefront's. The client sends the browser's real hostname here;
-    // it still goes through the same getCountryByDomain/DOMAIN_MAP lookup
-    // as the Host header would, so a client can't claim an arbitrary
-    // country code — only one that actually maps to a real domain.
+    // it still goes through the same DB-backed domain lookup (falls back to
+    // DOMAIN_MAP/COUNTRY_CONFIG when unseeded) as the Host header would, so a
+    // client can't claim an arbitrary country code — only one that actually
+    // maps to a real domain.
     const storefrontHost = req.headers[STOREFRONT_HOST_HEADER];
     if (storefrontHost) {
-      const country = getCountryByDomain(storefrontHost);
+      const country = syncByDomain(storefrontHost);
       req.country = country;
       req.countryCode = country.code;
       return next();
@@ -96,7 +97,7 @@ const countryDetect = async (req, res, next) => {
 
     // ── 3. Derive from Host header (fallback, e.g. direct API hits) ──────────
     const host = req.headers.host || "";
-    const country = getCountryByDomain(host);
+    const country = syncByDomain(host);
 
     req.country = country;
     req.countryCode = country.code;

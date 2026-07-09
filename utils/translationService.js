@@ -35,6 +35,7 @@ const TRANSLATABLE_FIELDS = {
   fomo: ["notificationMessage"],
   notification: ["title", "message"],
   coupon: ["description"],
+  country: ["content.preheaderMessage", "contacts.address"],
 };
 
 // ── Core translation ─────────────────────────────────────────────────────────

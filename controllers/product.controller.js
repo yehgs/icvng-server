@@ -6,7 +6,7 @@ import BrandModel from "../models/brand.model.js";
 import generateSlug from "../utils/generateSlug.js";
 import generateSKU from "../utils/generateSKU.js";
 import { logActivity } from "../utils/activityLogger.js";
-import { translateEntity } from "../utils/translationService.js";
+import { translateEntity, getBulkTranslations, applyTranslation } from "../utils/translationService.js";
 import { mergeDirectPricingIntoProducts } from "../utils/mergeDirectPricing.js";
 
 // ─── Client Visibility Rule ────────────────────────────────────────────────
@@ -391,9 +391,72 @@ export const getCategoryStructureController = async (request, response) => {
       }),
     );
 
+    // ── Localize into the active language ──────────────────────────────────
+    // The header/nav mega-menu renders category, subcategory, and brand
+    // names straight from this payload, so translations edited in
+    // Admin → Translations only reach the storefront if we resolve them here.
+    // Language comes from the client's X-Language header (kept in sync with
+    // i18n's saved preference), falling back to the visited domain's default.
+    const language =
+      (request.headers["x-language"] || "").toLowerCase() ||
+      request.country?.language?.default ||
+      "en";
+
+    let localizedCategories = enrichedCategories;
+    if (language !== "en") {
+      const categoryIds = enrichedCategories.map((c) => c._id.toString());
+      const subCategoryIds = enrichedCategories.flatMap((c) =>
+        (c.subcategories || []).map((s) => s._id.toString()),
+      );
+      const brandIds = [
+        ...enrichedCategories.flatMap((c) =>
+          (c.brands || []).map((b) => b._id.toString()),
+        ),
+        ...enrichedCategories.flatMap((c) =>
+          (c.subcategories || []).flatMap((s) =>
+            (s.brands || []).map((b) => b._id.toString()),
+          ),
+        ),
+      ];
+
+      const [categoryFields, subCategoryFields, brandFields] =
+        await Promise.all([
+          getBulkTranslations("category", categoryIds, language),
+          getBulkTranslations("subCategory", subCategoryIds, language),
+          getBulkTranslations("brand", [...new Set(brandIds)], language),
+        ]);
+
+      const localizeBrand = (brand) => {
+        const fields = brandFields.get(brand._id.toString());
+        return fields ? applyTranslation(brand, fields) : brand;
+      };
+
+      localizedCategories = enrichedCategories.map((category) => {
+        const catFields = categoryFields.get(category._id.toString());
+        const localizedCategory = catFields
+          ? applyTranslation(category, catFields)
+          : category;
+
+        return {
+          ...localizedCategory,
+          brands: (category.brands || []).map(localizeBrand),
+          subcategories: (category.subcategories || []).map((sub) => {
+            const subFields = subCategoryFields.get(sub._id.toString());
+            const localizedSub = subFields
+              ? applyTranslation(sub, subFields)
+              : sub;
+            return {
+              ...localizedSub,
+              brands: (sub.brands || []).map(localizeBrand),
+            };
+          }),
+        };
+      });
+    }
+
     return response.json({
       message: "Category structure fetched successfully",
-      data: enrichedCategories,
+      data: localizedCategories,
       error: false,
       success: true,
     });

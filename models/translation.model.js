@@ -47,6 +47,7 @@ const translationSchema = new mongoose.Schema(
         "email",
         "page",
         "fomo",
+        "country",
       ],
       index: true,
     },

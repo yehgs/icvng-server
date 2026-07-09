@@ -35,6 +35,7 @@ function normalise(doc) {
   if (!doc) return null;
   const o = typeof doc.toObject === "function" ? doc.toObject() : doc;
   return {
+    _id: o._id ? String(o._id) : "",
     code: o.code,
     name: o.name,
     status: o.status || "ACTIVE",
@@ -52,6 +53,8 @@ function normalise(doc) {
     shipping: o.shipping || {},
     branding: o.branding || {},
     contacts: o.contacts || {},
+    content: o.content || {},
+    tawk: o.tawk || {},
     seo: o.seo || {},
     featureFlags: o.featureFlags || {},
     invoiceSeries: o.invoiceSeries || { prefix: "INV", nextNumber: 1 },
