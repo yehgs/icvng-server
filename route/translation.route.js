@@ -10,11 +10,14 @@ import {
   getAllTranslationsForEntity,
   updateTranslation,
   translateSingleText,
+  getBulkTranslationsController,
 } from "../controllers/translation.controller.js";
 
 const translationRouter = express.Router();
 
 // Public (client reads translations without auth)
+// PHASE 5: bulk endpoint — one request for a whole product grid (fixes N+1).
+translationRouter.post("/bulk", getBulkTranslationsController);
 translationRouter.get(
   "/:entityType/:entityId/:language",
   getEntityTranslation

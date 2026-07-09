@@ -1,5 +1,6 @@
 //server
 import mongoose from 'mongoose';
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 export const INCOME_CATEGORIES = [
   // Formal
@@ -194,6 +195,10 @@ financeEntrySchema.pre('save', function (next) {
 financeEntrySchema.index({ type: 1, transactionDate: -1 });
 financeEntrySchema.index({ currency: 1 });
 financeEntrySchema.index({ category: 1 });
+
+
+// PHASE 3: country dimension + isolation hooks
+financeEntrySchema.plugin(countryScopedPlugin);
 
 const FinanceEntryModel = mongoose.model('FinanceEntry', financeEntrySchema);
 export default FinanceEntryModel;

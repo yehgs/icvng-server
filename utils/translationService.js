@@ -322,3 +322,43 @@ export async function getBulkTranslations(entityType, entityIds, language) {
   }
   return map;
 }
+
+/**
+ * PHASE 5: localize a list of documents in one shot.
+ *
+ * Bulk-fetches translations for the given language and merges them into each
+ * doc with per-field fallback to the source (master) value — a field missing a
+ * translation keeps its master text rather than disappearing.
+ *
+ * @param {string} entityType
+ * @param {object[]} docs        plain objects (use .lean() or .toObject())
+ * @param {string} language      target language ("en" is a no-op passthrough)
+ * @param {object} [opts]
+ * @param {(d:object)=>string} [opts.idOf]  how to read each doc's id
+ * @returns {Promise<object[]>}  localized copies (originals untouched)
+ */
+export async function localizeList(entityType, docs, language, opts = {}) {
+  if (!Array.isArray(docs) || !docs.length) return docs || [];
+  if (!language || language === "en") return docs;
+
+  const idOf = opts.idOf || ((d) => (d._id || d.id)?.toString());
+  const ids = docs.map(idOf).filter(Boolean);
+  const map = await getBulkTranslations(entityType, ids, language);
+  if (map.size === 0) return docs;
+
+  return docs.map((d) => {
+    const fields = map.get(idOf(d));
+    return fields ? applyTranslation(d, fields) : d;
+  });
+}
+
+/**
+ * PHASE 5: localize a single document with per-field fallback to master.
+ */
+export async function localizeOne(entityType, doc, language) {
+  if (!doc || !language || language === "en") return doc;
+  const id = (doc._id || doc.id)?.toString();
+  if (!id) return doc;
+  const fields = await getTranslation(entityType, id, language);
+  return fields ? applyTranslation(doc, fields) : doc;
+}

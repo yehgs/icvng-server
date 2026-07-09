@@ -1,5 +1,6 @@
 // server/models/fomo.model.js
 import mongoose from "mongoose";
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const dummyUserSchema = new mongoose.Schema(
   {
@@ -53,6 +54,10 @@ const fomoSettingsSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+
+// PHASE 3: country dimension + isolation hooks
+fomoSettingsSchema.plugin(countryScopedPlugin);
 
 const FomoModel = mongoose.model("FomoSettings", fomoSettingsSchema);
 export default FomoModel;

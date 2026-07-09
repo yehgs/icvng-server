@@ -1,5 +1,9 @@
+// route/stock.route.js
+// PHASE 4: migrated to guard() composition. HQ-only module with permission
+// gating (was Phase 1 requireRole stacks). Backward compatible — the same
+// principals pass, since roles map to these permissions with exact parity.
 import { Router } from 'express';
-import auth from '../middleware/auth.js';
+import { guard } from '../core/guard.js';
 import {
   createStockBatch,
   getStockBatches,
@@ -14,45 +18,19 @@ import {
 } from '../controllers/stock.controller.js';
 
 const stockRouter = Router();
+const read = () => guard({ permissions: 'stock.view', hqOnly: true });
+const write = () => guard({ permissions: 'stock.manage', hqOnly: true });
+const approve = () => guard({ permissions: 'stock.approve', hqOnly: true });
 
-// Get stock summary by product
-stockRouter.get('/summary', auth, getStockSummary);
-
-// Get expiring batches
-stockRouter.get('/expiring', auth, getExpiringBatches);
-
-// Get all stock batches
-stockRouter.get('/batches', auth, getStockBatches);
-
-// Get specific stock batch details
-stockRouter.get('/batches/:batchId', auth, getStockBatchDetails);
-
-// Create new stock batch (Warehouse, Director, IT, Manager only)
-stockRouter.post('/batches', auth, createStockBatch);
-
-// Perform quality check on batch
-stockRouter.patch('/batches/:batchId/quality-check', auth, performQualityCheck);
-
-// Submit stock distribution for approval
-stockRouter.patch('/batches/:batchId/distribute', auth, distributeStock);
-
-// Approve/reject distribution (Director, IT, Manager only)
-stockRouter.patch(
-  '/batches/:batchId/approve-distribution',
-  auth,
-  approveDistribution
-);
-
-// Purchase order management
-stockRouter.patch(
-  '/purchase-orders/:purchaseOrderId/close',
-  auth,
-  closePurchaseOrder
-);
-stockRouter.patch(
-  '/purchase-orders/:purchaseOrderId/reactivate',
-  auth,
-  reactivatePurchaseOrder
-);
+stockRouter.get('/summary', ...read(), getStockSummary);
+stockRouter.get('/expiring', ...read(), getExpiringBatches);
+stockRouter.get('/batches', ...read(), getStockBatches);
+stockRouter.get('/batches/:batchId', ...read(), getStockBatchDetails);
+stockRouter.post('/batches', ...write(), createStockBatch);
+stockRouter.patch('/batches/:batchId/quality-check', ...write(), performQualityCheck);
+stockRouter.patch('/batches/:batchId/distribute', ...write(), distributeStock);
+stockRouter.patch('/batches/:batchId/approve-distribution', ...approve(), approveDistribution);
+stockRouter.patch('/purchase-orders/:purchaseOrderId/close', ...write(), closePurchaseOrder);
+stockRouter.patch('/purchase-orders/:purchaseOrderId/reactivate', ...approve(), reactivatePurchaseOrder);
 
 export default stockRouter;

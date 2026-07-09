@@ -1,5 +1,6 @@
 //server
 import mongoose from 'mongoose';
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const notificationSchema = new mongoose.Schema(
   {
@@ -80,6 +81,10 @@ const notificationSchema = new mongoose.Schema(
 notificationSchema.index({ targetRoles: 1, createdAt: -1 });
 notificationSchema.index({ targetUsers: 1, createdAt: -1 });
 notificationSchema.index({ targetType: 1, createdAt: -1 });
+
+
+// PHASE 3: country dimension + isolation hooks
+notificationSchema.plugin(countryScopedPlugin);
 
 const NotificationModel = mongoose.model('Notification', notificationSchema);
 export default NotificationModel;

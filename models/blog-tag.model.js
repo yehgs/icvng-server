@@ -1,5 +1,6 @@
 // models/blogTag.model.js
 import mongoose from 'mongoose';
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const blogTagSchema = new mongoose.Schema(
   {
@@ -59,6 +60,10 @@ blogTagSchema.methods.updatePostCount = async function () {
   });
   await this.save();
 };
+
+
+// PHASE 3: country dimension + isolation hooks
+blogTagSchema.plugin(countryScopedPlugin);
 
 const BlogTagModel = mongoose.model('BlogTag', blogTagSchema);
 

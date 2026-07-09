@@ -13,17 +13,24 @@
  * Must run AFTER auth middleware so req.user is populated.
  */
 
+import { setContextScope } from "../core/requestContext.js";
+
 export function countryScope(req, res, next) {
   const user = req.user;
 
   if (!user || user.role !== "ADMIN") {
     req.countryScope = null;
+    setContextScope({ countryScope: null, scope: user?.scope ?? null });
     return next();
   }
 
   req.countryScope = (user.scope === "COUNTRY" && user.assignedCountry)
     ? user.assignedCountry
     : null;
+
+  // PHASE 3: publish the resolved scope into the AsyncLocalStorage context so
+  // the countryScoped Mongoose plugin's query hooks can auto-filter.
+  setContextScope({ countryScope: req.countryScope, scope: user.scope });
 
   next();
 }

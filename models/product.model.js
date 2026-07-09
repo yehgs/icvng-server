@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { countryField, addCountryIndex } from "../config/countrySchema.js";
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const productSchema = new mongoose.Schema(
   {
@@ -500,6 +501,8 @@ productSchema.index({ "warehouseStock.lastUpdated": -1 });
 // the stock calculations from your existing Stock model.
 
 addCountryIndex(productSchema);
+// PHASE 3: isolation query hooks (field already present via countryField)
+productSchema.plugin(countryScopedPlugin);
 
 const ProductModel = mongoose.model("Product", productSchema);
 

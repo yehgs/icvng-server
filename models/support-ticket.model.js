@@ -1,5 +1,6 @@
 //server
 import mongoose from "mongoose";
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const ISSUE_CATEGORIES = [
   "Email Troubleshooting",
@@ -96,6 +97,10 @@ supportTicketSchema.pre("save", async function (next) {
 });
 
 export { ISSUE_CATEGORIES };
+
+
+// PHASE 3: country dimension + isolation hooks
+supportTicketSchema.plugin(countryScopedPlugin);
 
 const SupportTicketModel = mongoose.model("SupportTicket", supportTicketSchema);
 export default SupportTicketModel;

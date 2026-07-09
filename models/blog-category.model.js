@@ -1,5 +1,6 @@
 // models/blogCategory.model.js
 import mongoose from 'mongoose';
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const blogCategorySchema = new mongoose.Schema(
   {
@@ -73,6 +74,10 @@ blogCategorySchema.methods.updatePostCount = async function () {
   });
   await this.save();
 };
+
+
+// PHASE 3: country dimension + isolation hooks
+blogCategorySchema.plugin(countryScopedPlugin);
 
 const BlogCategoryModel = mongoose.model('BlogCategory', blogCategorySchema);
 

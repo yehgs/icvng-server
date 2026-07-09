@@ -1,36 +1,62 @@
 // utils/invoiceTemplate.js - Professional invoice with logo and minimal colors
+// PHASE 5: country/language aware. Falls back to Nigeria + English so existing
+// callers keep working unchanged.
+import { getCountryByCode } from "../config/countries/index.js";
+import { formatCurrencyForCountry } from "./formatCurrency.js";
+import { t } from "./serverStrings.js";
+
 export const generateInvoiceTemplate = ({
   order,
   customer,
   items,
   salesAgent,
+  countryCode = order?.countryCode || "NG",
+  language,
 }) => {
-  // Company information
+  const country = getCountryByCode(countryCode) || getCountryByCode("NG");
+  const lang = language || country?.language?.default || "en";
+
+  // Company information — HQ (Nigeria) defaults; per-country contacts override.
   const COMPANY_INFO = {
-    name: "I-Coffee Nigeria Limited",
-    address: "4 Kafi Street, Alausa, Ikeja, Lagos State.",
-    city: "Lagos, Nigeria",
-    phone: "234-803-982-7194",
-    email: "customercare@i-coffee.ng",
-    website: "www.i-coffee.ng",
+    name: country?.seo?.siteName
+      ? `${country.seo.siteName}`
+      : "I-Coffee Nigeria Limited",
+    address: country?.contacts?.address || "4 Kafi Street, Alausa, Ikeja, Lagos State.",
+    city: country?.name || "Lagos, Nigeria",
+    phone: country?.contacts?.phone || "234-803-982-7194",
+    email: country?.contacts?.email || "customercare@i-coffee.ng",
+    website: country?.domain ? `www.${country.domain}` : "www.i-coffee.ng",
     taxNumber: "TIN: 12345678901",
     rcNumber: "RC: 1234567",
-    logoUrl: "/assets/images/web-logo.svg", // or use full URL: "https://i-coffee.ng/assets/images/logo.png"
+    logoUrl: country?.branding?.logo || "/assets/images/web-logo.svg",
   };
 
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat("en-NG", {
-      style: "currency",
-      currency: "NGN",
-    }).format(amount);
-  };
+  const formatCurrency = (amount) => formatCurrencyForCountry(amount, countryCode);
 
   const formatDate = (date) => {
-    return new Date(date).toLocaleDateString("en-GB", {
+    const locale = country?.language?.locale || "en-GB";
+    return new Date(date).toLocaleDateString(locale, {
       year: "numeric",
       month: "long",
       day: "numeric",
     });
+  };
+
+  // Localized labels
+  const L = {
+    invoice: t("invoice.title", lang),
+    number: t("invoice.number", lang),
+    date: t("invoice.date", lang),
+    billedTo: t("invoice.billedTo", lang),
+    item: t("invoice.item", lang),
+    qty: t("invoice.qty", lang),
+    unitPrice: t("invoice.unitPrice", lang),
+    amount: t("invoice.amount", lang),
+    subtotal: t("invoice.subtotal", lang),
+    tax: t("invoice.tax", lang),
+    shipping: t("invoice.shipping", lang),
+    total: t("invoice.total", lang),
+    thankYou: t("invoice.thankYou", lang),
   };
 
   const itemsHTML = items
@@ -213,7 +239,7 @@ export const generateInvoiceTemplate = ({
     COMPANY_INFO.name
   }" onerror="this.style.display='none'">
                 </div>
-                <h1 style="margin: 0; font-size: 28px; color: #8B4513;">INVOICE</h1>
+                <h1 style="margin: 0; font-size: 28px; color: #8B4513;">${L.invoice.toUpperCase()}</h1>
                 <p style="margin: 10px 0 0 0; font-size: 16px; color: #666;">Premium Coffee Solutions</p>
             </div>
             
@@ -234,11 +260,11 @@ export const generateInvoiceTemplate = ({
                     </div>
                     <div style="text-align: right;">
                         <div style="background: white; padding: 15px; border-radius: 6px; border: 2px solid #8B4513;">
-                            <h3 style="margin: 0 0 10px 0; color: #8B4513;">Invoice #${
+                            <h3 style="margin: 0 0 10px 0; color: #8B4513;">${L.number} ${
                               order.invoiceNumber
                             }</h3>
                             <p style="margin: 0; font-size: 14px; color: #555;">
-                                <strong>Date:</strong> ${formatDate(
+                                <strong>${L.date}:</strong> ${formatDate(
                                   order.invoiceDate || order.createdAt
                                 )}<br>
                                 <strong>Order ID:</strong> ${order.orderId}<br>
@@ -255,7 +281,7 @@ export const generateInvoiceTemplate = ({
                 <!-- Customer and Order Information -->
                 <div class="info-section">
                     <div class="info-box">
-                        <h4 style="margin: 0 0 15px 0; color: #8B4513; border-bottom: 2px solid #8B4513; padding-bottom: 8px;">Bill To:</h4>
+                        <h4 style="margin: 0 0 15px 0; color: #8B4513; border-bottom: 2px solid #8B4513; padding-bottom: 8px;">${L.billedTo}:</h4>
                         <p style="margin: 0; font-size: 16px; line-height: 1.6;">
                             <strong>${
                               customer.customerType === "BTB" &&
@@ -337,9 +363,9 @@ export const generateInvoiceTemplate = ({
                             <tr>
                                 <th style="width: 50px;">#</th>
                                 <th>Product</th>
-                                <th style="width: 80px; text-align: center;">Qty</th>
-                                <th style="width: 120px; text-align: right;">Unit Price</th>
-                                <th style="width: 120px; text-align: right;">Total</th>
+                                <th style="width: 80px; text-align: center;">${L.qty}</th>
+                                <th style="width: 120px; text-align: right;">${L.unitPrice}</th>
+                                <th style="width: 120px; text-align: right;">${L.amount}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -353,7 +379,7 @@ export const generateInvoiceTemplate = ({
                     <h4 style="margin: 0 0 20px 0; color: #8B4513;">Order Summary</h4>
                     
                     <div class="total-row">
-                        <span>Subtotal:</span>
+                        <span>${L.subtotal}:</span>
                         <span>${formatCurrency(order.subTotal)}</span>
                     </div>
                     
@@ -460,7 +486,7 @@ export const generateInvoiceTemplate = ({
             
             <!-- Footer -->
             <div class="footer">
-                <p style="margin: 0 0 10px 0; font-size: 16px; font-weight: bold;">Thank you for choosing I-Coffee Nigeria!</p>
+                <p style="margin: 0 0 10px 0; font-size: 16px; font-weight: bold;">${L.thankYou}</p>
                 <p style="margin: 0; font-size: 14px; opacity: 0.8;">
                     Premium coffee solutions for your business and home
                 </p>

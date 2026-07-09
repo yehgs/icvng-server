@@ -1,5 +1,6 @@
 // models/blogPost.model.js
 import mongoose from "mongoose";
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const blogPostSchema = new mongoose.Schema(
   {
@@ -180,6 +181,10 @@ blogPostSchema.post("save", async function () {
     }
   }
 });
+
+
+// PHASE 3: country dimension + isolation hooks
+blogPostSchema.plugin(countryScopedPlugin);
 
 const BlogPostModel = mongoose.model("BlogPost", blogPostSchema);
 

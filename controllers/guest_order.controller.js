@@ -80,6 +80,7 @@ async function buildGuestOrders({
   groupId,
   exchangeRateInfo = null,
   originalAmounts = null,
+  countryCode = "NG", // PHASE 3: stamp orders with the storefront's country
 }) {
   const orders = [];
   let totalSubtotal = 0;
@@ -117,6 +118,7 @@ async function buildGuestOrders({
     orders.push({
       orderId,
       orderGroupId: groupId,
+      countryCode, // PHASE 3: country isolation
       isParentOrder: i === 0,
       parentOrderId: i === 0 ? null : orders[0]?.orderId || null,
       orderSequence: i + 1,
@@ -596,6 +598,7 @@ export async function guestBankTransferController(request, response) {
       address,
       cartItems,
       shippingMethodId,
+      countryCode: request.countryCode || "NG", // PHASE 3
       shippingCost,
       paymentMethod: "BANK_TRANSFER",
       currency,

@@ -12,12 +12,47 @@
  * directly — they just read from req.country.
  */
 
+import jwt from "jsonwebtoken";
+import UserModel from "../models/user.model.js";
 import {
   getCountryByDomain,
   getCountryByCode,
   DEFAULT_COUNTRY,
   COUNTRY_CONFIG,
 } from "../config/countries/index.js";
+
+/**
+ * PHASE 1 SECURITY: verify that the caller presenting X-Country-Code is a
+ * real, active, GLOBAL-scoped ADMIN. Previously the header was honored from
+ * ANY caller, letting any client impersonate another country's context
+ * (payment gateway selection, order stamping, content scoping).
+ *
+ * Returns true only when the request carries a valid access token belonging
+ * to an active ADMIN with scope === "GLOBAL" (the HQ "view as country" case
+ * the override exists for). Any failure → false, and the header is ignored.
+ */
+async function isTrustedCountryOverride(req) {
+  try {
+    const token =
+      req.cookies?.accessToken || req.headers?.authorization?.split(" ")[1];
+    if (!token) return false;
+
+    const decoded = jwt.verify(token, process.env.SECRET_KEY_ACCESS_TOKEN);
+    if (!decoded?.id) return false;
+
+    const user = await UserModel.findById(decoded.id).select(
+      "role scope status",
+    );
+    return (
+      !!user &&
+      user.role === "ADMIN" &&
+      user.status === "Active" &&
+      user.scope === "GLOBAL"
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Trust list of internal/admin callers that are allowed to override
@@ -28,14 +63,20 @@ import {
 const TRUSTED_OVERRIDE_HEADER = "x-country-code";
 const STOREFRONT_HOST_HEADER = "x-storefront-host";
 
-const countryDetect = (req, res, next) => {
+const countryDetect = async (req, res, next) => {
   try {
     // ── 1. Admin / internal override (highest priority, trusted callers only) ──
+    // PHASE 1: the override is now honored ONLY for verified GLOBAL admins.
+    // Untrusted callers sending the header fall through to normal detection.
     const headerOverride = req.headers[TRUSTED_OVERRIDE_HEADER];
     if (headerOverride && COUNTRY_CONFIG[headerOverride.toUpperCase()]) {
-      req.country = COUNTRY_CONFIG[headerOverride.toUpperCase()];
-      req.countryCode = req.country.code;
-      return next();
+      const trusted = await isTrustedCountryOverride(req);
+      if (trusted) {
+        req.country = COUNTRY_CONFIG[headerOverride.toUpperCase()];
+        req.countryCode = req.country.code;
+        return next();
+      }
+      // Not trusted → ignore the header and continue detection below.
     }
 
     // ── 2. Storefront hostname sent by the client SPA ────────────────────────

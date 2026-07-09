@@ -400,6 +400,13 @@ export const getAllOrdersController = async (request, response) => {
       });
     }
 
+    // Country-scoped admin (e.g. a foreign Togo manager) only sees orders
+    // placed in their own country — GLOBAL admins (req.countryScope === null,
+    // i.e. IT/Director with scope GLOBAL) are unrestricted.
+    if (request.countryScope) {
+      query = { $and: [query, { countryCode: request.countryScope }] };
+    }
+
     if (search) {
       const searchRegex = new RegExp(search, "i");
       query.$and = query.$and || [];

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const bannerSchema = new mongoose.Schema(
   {
@@ -46,6 +47,10 @@ const bannerSchema = new mongoose.Schema(
 
 // Index for better query performance
 bannerSchema.index({ position: 1 });
+
+
+// PHASE 3: country dimension + isolation hooks
+bannerSchema.plugin(countryScopedPlugin);
 
 const BannerModel = mongoose.model('banner', bannerSchema);
 

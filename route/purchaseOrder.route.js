@@ -1,6 +1,7 @@
 // route/purchaseOrder.route.js
+// PHASE 4: guard() composition. HQ-only procurement module.
 import { Router } from 'express';
-import auth from '../middleware/auth.js';
+import { guard } from '../core/guard.js';
 import {
   createPurchaseOrder,
   getPurchaseOrders,
@@ -15,39 +16,18 @@ import {
 } from '../controllers/purchaseOrder.controller.js';
 
 const purchaseOrderRouter = Router();
+const view = () => guard({ permissions: 'purchaseOrders.view', hqOnly: true });
+const manage = () => guard({ permissions: 'purchaseOrders.manage', hqOnly: true });
 
-// Get all purchase orders
-purchaseOrderRouter.get('/', auth, getPurchaseOrders);
-
-// Get purchase order statistics
-purchaseOrderRouter.get('/stats', auth, getPurchaseOrderStats);
-
-// Get logistics cost analysis
-purchaseOrderRouter.get('/logistics-analysis', auth, getLogisticsCostAnalysis);
-
-// Get specific purchase order details
-purchaseOrderRouter.get('/:orderId', auth, getPurchaseOrderDetails);
-
-// Get allowed status updates for a specific order
-purchaseOrderRouter.get(
-  '/:orderId/allowed-statuses',
-  auth,
-  getAllowedStatusUpdates
-);
-
-// Get status history for a specific order
-purchaseOrderRouter.get('/:orderId/status-history', auth, getStatusHistory);
-
-// Create new purchase order
-purchaseOrderRouter.post('/', auth, createPurchaseOrder);
-
-// Update purchase order
-purchaseOrderRouter.put('/:orderId', auth, updatePurchaseOrder);
-
-// Update purchase order status
-purchaseOrderRouter.patch('/:orderId/status', auth, updateOrderStatus);
-
-// Delete purchase order
-purchaseOrderRouter.delete('/:orderId', auth, deletePurchaseOrder);
+purchaseOrderRouter.get('/', ...view(), getPurchaseOrders);
+purchaseOrderRouter.get('/stats', ...view(), getPurchaseOrderStats);
+purchaseOrderRouter.get('/logistics-analysis', ...view(), getLogisticsCostAnalysis);
+purchaseOrderRouter.get('/:orderId', ...view(), getPurchaseOrderDetails);
+purchaseOrderRouter.get('/:orderId/allowed-statuses', ...view(), getAllowedStatusUpdates);
+purchaseOrderRouter.get('/:orderId/status-history', ...view(), getStatusHistory);
+purchaseOrderRouter.post('/', ...manage(), createPurchaseOrder);
+purchaseOrderRouter.put('/:orderId', ...manage(), updatePurchaseOrder);
+purchaseOrderRouter.patch('/:orderId/status', ...manage(), updateOrderStatus);
+purchaseOrderRouter.delete('/:orderId', ...manage(), deletePurchaseOrder);
 
 export default purchaseOrderRouter;

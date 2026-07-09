@@ -8,7 +8,7 @@
  *   router.get("/orders", auth, adminAuth, requireRole(["SALES", "MANAGER", "IT", "DIRECTOR"]), handler);
  */
 export const requireRole = (allowedRoles) => {
-  return (req, res, next) => {
+  const mw = (req, res, next) => {
     const user = req.user;
 
     if (!user) {
@@ -29,4 +29,6 @@ export const requireRole = (allowedRoles) => {
       success: false,
     });
   };
+  mw.__isGuard = true;
+  return mw;
 };

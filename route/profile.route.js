@@ -11,6 +11,7 @@ import {
   changeOwnPasswordController,
   forgotPasswordRequestController,
 } from "../controllers/profile.controller.js";
+import { getMyCapabilities } from "../controllers/capabilities.controller.js";
 
 const profileRouter = Router();
 
@@ -22,6 +23,8 @@ profileRouter.use(auth);
 profileRouter.use(adminAuth);
 
 profileRouter.get("/me", getProfileController);
+// PHASE 2 RBAC: single source of truth for admin sidebar/route/button gating
+profileRouter.get("/me/capabilities", getMyCapabilities);
 profileRouter.put("/update", updateProfileController);
 profileRouter.post(
   "/avatar",

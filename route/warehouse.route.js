@@ -1,6 +1,7 @@
 // routes/warehouse.route.js - UPDATED WITH IMPORT/EXPORT
 import { Router } from "express";
 import auth from "../middleware/auth.js";
+import { countryScope, blockCountryScopedAdmins } from "../middleware/countryScope.js";
 import {
   getProductsForStock,
   updateStock,
@@ -26,6 +27,11 @@ import {
 } from "../controllers/warehouse.controller.js";
 
 const warehouseRouter = Router();
+
+// The warehouse is a single physical NG facility — not relevant to any
+// other country office, so it's hard-blocked for country-scoped admins
+// (e.g. a foreign Togo manager) entirely, not just filtered.
+warehouseRouter.use(auth, countryScope, blockCountryScopedAdmins);
 
 // Product stock management routes
 warehouseRouter.get("/products", auth, getProductsForStock);

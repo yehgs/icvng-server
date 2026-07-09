@@ -1,9 +1,12 @@
 // models/customer.model.js
 import mongoose from "mongoose";
 import mongoosePaginate from "mongoose-paginate-v2";
+import { countryField, addCountryIndex } from "../config/countrySchema.js";
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const customerSchema = new mongoose.Schema(
   {
+    ...countryField,
     name: {
       type: String,
       required: [true, "Customer name is required"],
@@ -110,6 +113,9 @@ const customerSchema = new mongoose.Schema(
 
 // Add pagination plugin
 customerSchema.plugin(mongoosePaginate);
+addCountryIndex(customerSchema);
+// PHASE 3: isolation query hooks (field already present via countryField)
+customerSchema.plugin(countryScopedPlugin);
 
 // Create indexes
 customerSchema.index({ assignedTo: 1 });

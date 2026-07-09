@@ -25,6 +25,7 @@
  */
 
 import mongoose from "mongoose";
+import { ALL_SUPPORTED_LANGUAGES } from "../config/countries/index.js";
 
 const translationSchema = new mongoose.Schema(
   {
@@ -57,11 +58,12 @@ const translationSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Target language code  e.g. "fr" | "it" | "en"
+    // Target language code — PHASE 5: driven by country config, not a frozen
+    // enum, so new markets/languages need no schema change.
     language: {
       type: String,
       required: true,
-      enum: ["en", "fr", "it"],
+      enum: ALL_SUPPORTED_LANGUAGES.length ? ALL_SUPPORTED_LANGUAGES : ["en", "fr", "it"],
       index: true,
     },
 
@@ -92,6 +94,16 @@ const translationSchema = new mongoose.Schema(
     engine: {
       type: String,
       default: "libre",
+    },
+
+    // PHASE 5: the language the MASTER content was authored in. Defaults to
+    // English, but a Togo admin authoring in French should set this to "fr"
+    // so the pipeline doesn't mislabel French master text as English
+    // (audit §5.8). Used to skip needless self-translation and to translate
+    // FROM the correct source.
+    sourceLanguage: {
+      type: String,
+      default: "en",
     },
   },
   {

@@ -1,6 +1,7 @@
 // route/admin-order-enhanced.route.js - Enhanced with invoice preview
 import { Router } from 'express';
 import auth from '../middleware/auth.js';
+import { countryScope } from '../middleware/countryScope.js';
 import {
   createAdminOrderController,
   getAllOrdersController,
@@ -14,6 +15,7 @@ const adminOrderRouter = Router();
 
 // All routes require authentication
 adminOrderRouter.use(auth);
+adminOrderRouter.use(countryScope);
 
 // Create manual order (SALES only) - Enhanced with email & stock deduction
 adminOrderRouter.post('/create', createAdminOrderController);

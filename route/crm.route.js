@@ -3,6 +3,7 @@
 import { Router } from "express";
 import auth from "../middleware/auth.js";
 import adminAuth from "../middleware/adminAuth.js";
+import { countryScope } from "../middleware/countryScope.js";
 import {
   getCrmMetaController,
   getLeadsController,
@@ -20,6 +21,7 @@ import {
 const crmRouter = Router();
 crmRouter.use(auth);
 crmRouter.use(adminAuth);
+crmRouter.use(countryScope); // populates req.countryScope — required for lead/stat filtering below
 
 crmRouter.get("/meta", getCrmMetaController);
 crmRouter.get("/stats", getCrmStatsController);

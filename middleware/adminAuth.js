@@ -39,4 +39,7 @@ const adminAuth = async (request, response, next) => {
   }
 };
 
+
+// PHASE 4: mark as a guard so the boot-time route auditor detects it
+adminAuth.__isGuard = true;
 export default adminAuth;

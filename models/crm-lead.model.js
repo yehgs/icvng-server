@@ -109,6 +109,12 @@ const crmLeadSchema = new mongoose.Schema(
     address: { type: String, default: "" },
     city: { type: String, default: "" },
     country: { type: String, default: "Nigeria" },
+    // Which office/country business unit owns this lead — distinct from the
+    // free-text `country` field above (which describes the lead's own
+    // location, e.g. a UK-based company). Stamped automatically from
+    // req.countryCode at creation/import time and used for CRM scoping so a
+    // Togo manager never sees leads created by or for Nigeria, and vice versa.
+    countryCode: { type: String, default: "NG", index: true },
     industry: { type: String, default: "Other" },
     companySize: { type: String, default: "" },
 

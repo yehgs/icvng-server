@@ -1,5 +1,6 @@
 // models/coupon.model.js
 import mongoose from "mongoose";
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const couponSchema = new mongoose.Schema(
   {
@@ -94,6 +95,10 @@ couponSchema.methods.isValid = function () {
     (this.usageLimit === null || this.usageCount < this.usageLimit)
   );
 };
+
+
+// PHASE 3: country dimension + isolation hooks
+couponSchema.plugin(countryScopedPlugin);
 
 const CouponModel = mongoose.model("Coupon", couponSchema);
 

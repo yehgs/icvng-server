@@ -5,7 +5,7 @@ import {
   guestPaystackController,
   guestStripeController,
   guestBankTransferController,
-} from "../controllers/guest_order.controller";
+} from "../controllers/guest_order.controller.js";
 
 const guestOrderRouter = Router();
 

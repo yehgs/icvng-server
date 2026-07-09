@@ -1,6 +1,7 @@
 // models/order.model.js -
 import mongoose from "mongoose";
 import { countryField, addCountryIndex } from "../config/countrySchema.js";
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const orderSchema = new mongoose.Schema(
   {
@@ -574,6 +575,8 @@ orderSchema.statics.getOrderStats = async function (filters = {}) {
 
 // Add compound country index for efficient per-country dashboard queries
 addCountryIndex(orderSchema);
+// PHASE 3: isolation query hooks (field already present via countryField)
+orderSchema.plugin(countryScopedPlugin);
 
 const OrderModel = mongoose.model("order", orderSchema);
 

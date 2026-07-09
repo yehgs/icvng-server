@@ -8,6 +8,7 @@ import CrmLeadModel, {
 import UserModel from "../models/user.model.js";
 import sendEmail from "../config/sendEmail.js";
 import { createNotificationInternal } from "./notification.controller.js";
+import { buildCountryFilter } from "../middleware/countryScope.js";
 
 const CRM_ROLES = [
   "SALES",
@@ -32,6 +33,20 @@ function canHardDelete(user) {
 }
 function canSeeMetrics(user) {
   return METRICS_ROLES.includes(user?.subRole);
+}
+// Blocks a COUNTRY-scoped admin from reading/mutating a lead that belongs
+// to a different office, even if they have the ID (e.g. guessed/shared link).
+// GLOBAL admins (req.countryScope === null) always pass.
+function assertLeadCountryAccess(req, res, lead) {
+  if (!req.countryScope) return true; // GLOBAL — no restriction
+  if (lead.countryCode && lead.countryCode !== req.countryScope) {
+    res.status(403).json({
+      success: false,
+      message: `Access denied: this lead belongs to a different country office`,
+    });
+    return false;
+  }
+  return true;
 }
 
 // ── Won notification email helper ──────────────────────────────────────────
@@ -129,7 +144,7 @@ export async function getLeadsController(req, res) {
       limit = 50,
     } = req.query;
 
-    const query = { isArchived: false };
+    const query = { isArchived: false, ...buildCountryFilter(req) };
     if (stage) query.stage = stage;
     if (assignedTo) query.assignedTo = assignedTo;
     if (source) query.source = source;
@@ -150,8 +165,10 @@ export async function getLeadsController(req, res) {
       .populate("assignedTo", "name avatar email")
       .lean();
 
+    const scopedBase = { isArchived: false, ...buildCountryFilter(req) };
+
     const stageCounts = await CrmLeadModel.aggregate([
-      { $match: { isArchived: false } },
+      { $match: scopedBase },
       {
         $group: {
           _id: "$stage",
@@ -162,7 +179,7 @@ export async function getLeadsController(req, res) {
     ]);
 
     const pipelineValue = await CrmLeadModel.aggregate([
-      { $match: { isArchived: false, stage: { $nin: ["Lost", "On Hold"] } } },
+      { $match: { ...scopedBase, stage: { $nin: ["Lost", "On Hold"] } } },
       {
         $group: {
           _id: null,
@@ -175,7 +192,8 @@ export async function getLeadsController(req, res) {
       },
     ]);
 
-    // Pending delete requests count (for IT/Director badge)
+    // Pending delete requests count (for IT/Director badge) — global only,
+    // never scoped, since only IT/Director can see this in the first place
     const pendingDeleteCount = canHardDelete(req.user)
       ? await CrmLeadModel.countDocuments({
           isArchived: false,
@@ -226,8 +244,14 @@ export async function getDeleteRequestsController(req, res) {
 export async function createLeadController(req, res) {
   try {
     if (!crmAccess(req.user, res)) return;
+    // Country-scoped admins always create leads for their own office;
+    // GLOBAL admins (IT/Director) may specify countryCode in the body,
+    // defaulting to NG if omitted.
+    const ownerCountryCode =
+      req.countryScope || req.body.countryCode || "NG";
     const lead = await CrmLeadModel.create({
       ...req.body,
+      countryCode: ownerCountryCode,
       createdBy: req.user._id,
       createdByName: req.user.name,
       activities: [
@@ -256,6 +280,7 @@ export async function updateLeadController(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "Lead not found" });
+    if (!assertLeadCountryAccess(req, res, existing)) return;
 
     const stageChanged = req.body.stage && req.body.stage !== existing.stage;
     const lead = await CrmLeadModel.findByIdAndUpdate(req.params.id, req.body, {
@@ -314,6 +339,7 @@ export async function moveLeadStageController(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "Lead not found" });
+    if (!assertLeadCountryAccess(req, res, lead)) return;
 
     const oldStage = lead.stage;
     lead.stage = stage;
@@ -384,6 +410,7 @@ export async function deleteLeadController(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "Lead not found" });
+    if (!assertLeadCountryAccess(req, res, lead)) return;
 
     if (lead.pendingDeleteRequest?.status === "pending") {
       return res
@@ -547,8 +574,10 @@ export async function bulkImportLeadsController(req, res) {
       return res
         .status(400)
         .json({ success: false, message: "No leads provided" });
+    const ownerCountryCode = req.countryScope || req.body.countryCode || "NG";
     const toInsert = leads.map((l) => ({
       ...l,
+      countryCode: ownerCountryCode,
       source: source || "Website Scrape",
       stage: "New",
       createdBy: req.user._id,
@@ -583,7 +612,7 @@ export async function getCrmStatsController(req, res) {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const baseMatch = { isArchived: false };
+    const baseMatch = { isArchived: false, ...buildCountryFilter(req) };
     const [
       stageBreakdown,
       sourceBreakdown,

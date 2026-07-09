@@ -1,7 +1,10 @@
 // route/customer.route.js
+// PHASE 4: migrated to the guard() composition. Replaces the legacy `admin`
+// middleware (from Admin.js) with the standard auth→adminAuth→countryScope→
+// requirePermission stack. /featured stays explicitly public (storefront reads
+// featured customers/testimonials).
 import { Router } from 'express';
-import auth from '../middleware/auth.js';
-import { admin } from '../middleware/Admin.js';
+import { guard, guardPublic } from '../core/guard.js';
 import {
   createCustomerController,
   getCustomersController,
@@ -17,33 +20,18 @@ import {
 
 const customerRouter = Router();
 
-// Create customer (DIRECTOR, IT, EDITOR, MANAGER, SALES)
-customerRouter.post('/create', auth, admin, createCustomerController);
+// ── Public (storefront) ──────────────────────────────────────────────────────
+customerRouter.get('/featured', ...guardPublic(), getFeaturedCustomersController);
 
-// Get customers list (role-based access)
-customerRouter.get('/list', auth, admin, getCustomersController);
-
-customerRouter.get('/featured', getFeaturedCustomersController);
-
-// Get customers for order dropdown
-customerRouter.get('/for-order', auth, admin, getCustomersForOrderController);
-
-// Get assignable users (DIRECTOR, IT, MANAGER only)
-customerRouter.get('/assignable-users', auth, admin, getAssignableUsersController);
-
-// Get customer details
-customerRouter.get('/:customerId', auth, admin, getCustomerDetailsController);
-
-// Update customer
-customerRouter.put('/:customerId', auth, admin, updateCustomerController);
-
-// Toggle featured status (EDITOR, IT, DIRECTOR only)
-customerRouter.patch('/:customerId/toggle-featured', auth, admin, toggleFeaturedCustomerController);
-
-// Assign customer to users (DIRECTOR, IT, MANAGER only)
-customerRouter.put('/:customerId/assign', auth, admin, assignCustomerController);
-
-// Export customers CSV (DIRECTOR and IT only)
-customerRouter.get('/export/csv', auth, admin, exportCustomersController);
+// ── Admin ────────────────────────────────────────────────────────────────────
+customerRouter.post('/create', ...guard({ permissions: 'customers.manage' }), createCustomerController);
+customerRouter.get('/list', ...guard({ permissions: 'customers.view' }), getCustomersController);
+customerRouter.get('/for-order', ...guard({ permissions: 'customers.view' }), getCustomersForOrderController);
+customerRouter.get('/assignable-users', ...guard({ permissions: 'users.view' }), getAssignableUsersController);
+customerRouter.get('/export/csv', ...guard({ permissions: 'customers.view' }), exportCustomersController);
+customerRouter.get('/:customerId', ...guard({ permissions: 'customers.view' }), getCustomerDetailsController);
+customerRouter.put('/:customerId', ...guard({ permissions: 'customers.manage' }), updateCustomerController);
+customerRouter.patch('/:customerId/toggle-featured', ...guard({ permissions: 'customers.manage' }), toggleFeaturedCustomerController);
+customerRouter.put('/:customerId/assign', ...guard({ permissions: 'customers.manage' }), assignCustomerController);
 
 export default customerRouter;

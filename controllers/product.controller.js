@@ -7,6 +7,7 @@ import generateSlug from "../utils/generateSlug.js";
 import generateSKU from "../utils/generateSKU.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { translateEntity } from "../utils/translationService.js";
+import { mergeDirectPricingIntoProducts } from "../utils/mergeDirectPricing.js";
 
 // ─── Client Visibility Rule ────────────────────────────────────────────────
 // A product is shown to customers if it is PUBLISHED and at least one of:
@@ -280,19 +281,24 @@ export const searchProductController = async (request, response) => {
     // Fetch products with populated fields
     const products = await ProductModel.find(searchQuery)
       .populate("brand", "name")
-      .populate("category", "name")
+      .populate("category", "name slug")
       .populate("compatibleSystem", "name")
       .populate("producer", "name")
       .sort({ averageRating: -1 })
       .limit(parseInt(limit))
       .lean();
 
+    // Apply the same DirectPricing-override rule used on the single-product
+    // page, so search never shows a price that disagrees with the product's
+    // own page (see utils/mergeDirectPricing.js for the rule).
+    const pricedProducts = await mergeDirectPricingIntoProducts(products);
+
     return response.json({
       message: "Products found",
-      data: products,
+      data: pricedProducts,
       error: false,
       success: true,
-      count: products.length,
+      count: pricedProducts.length,
     });
   } catch (error) {
     return response.status(500).json({
@@ -538,13 +544,29 @@ export const getProductControllerAdmin = async (request, response) => {
       ProductModel.countDocuments(query),
     ]);
 
+    // HQ-only fields: BTB (B2B) pricing and offline warehouse stock are not
+    // relevant to a country-scoped/foreign admin's market — strip them from
+    // the response rather than relying on the admin UI alone to hide them.
+    const isCountryScoped = !!request.countryScope;
+    const responseData = isCountryScoped
+      ? data.map((p) => {
+          const obj = p.toObject ? p.toObject() : p;
+          const { btbPrice, ...rest } = obj;
+          if (rest.warehouseStock) {
+            const { offlineStock, ...stockRest } = rest.warehouseStock;
+            rest.warehouseStock = stockRest;
+          }
+          return rest;
+        })
+      : data;
+
     return response.json({
       message: "Product data",
       error: false,
       success: true,
       totalCount: totalCount,
       totalNoPage: Math.ceil(totalCount / limit),
-      data: data,
+      data: responseData,
     });
   } catch (error) {
     return response.status(500).json({

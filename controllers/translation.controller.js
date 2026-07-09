@@ -7,6 +7,7 @@ import {
   translateEntity,
   translateText,
   getTranslation,
+  getBulkTranslations,
 } from "../utils/translationService.js";
 
 /**
@@ -102,6 +103,39 @@ export async function getAllTranslationsForEntity(req, res) {
  * PUT /api/translations/:entityType/:entityId/:language
  * Manual override: admin edits a specific translation.
  */
+/**
+ * PHASE 5
+ * POST /api/translations/bulk
+ * Body: { entityType, entityIds: [...], language }
+ * Returns translations keyed by entityId, so a product grid needs ONE request
+ * instead of one per item (fixes the N+1 the audit flagged). Public — the
+ * storefront reads translations without auth.
+ */
+export async function getBulkTranslationsController(req, res) {
+  try {
+    const { entityType, entityIds, language } = req.body;
+
+    if (!entityType || !Array.isArray(entityIds) || !language) {
+      return res.status(400).json({
+        message: "entityType, entityIds[] and language are required",
+        error: true,
+        success: false,
+      });
+    }
+    // Cap batch size to protect the endpoint.
+    const ids = entityIds.slice(0, 500);
+
+    const map = await getBulkTranslations(entityType, ids, language);
+    const data = {};
+    for (const [id, fields] of map.entries()) data[id] = fields;
+
+    return res.json({ success: true, error: false, data });
+  } catch (err) {
+    console.error("getBulkTranslationsController error:", err);
+    return res.status(500).json({ message: err.message, error: true, success: false });
+  }
+}
+
 export async function updateTranslation(req, res) {
   try {
     const { entityType, entityId, language } = req.params;

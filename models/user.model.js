@@ -107,6 +107,26 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
+    // ── PHASE 2 RBAC: optional per-user permission overrides ──────────────────
+    // Effective permissions = role(subRole) bundle + extraPermissions − deniedPermissions.
+    // Empty by default → behaviour is 100% driven by the subRole's role bundle,
+    // preserving backward compatibility. No user migration required.
+    extraPermissions: {
+      type: [String],
+      default: [],
+    },
+    deniedPermissions: {
+      type: [String],
+      default: [],
+    },
+
+    // Optional department tag (SALES, LOGISTICS, FINANCE, CONTENT, IT, HR...).
+    // Informational for now; drives future department-scoped views.
+    department: {
+      type: String,
+      default: null,
+    },
+
     userMode: {
       type: String,
       enum: ["ONLINE", "OFFLINE", null],

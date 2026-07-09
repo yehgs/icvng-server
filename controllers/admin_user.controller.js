@@ -140,13 +140,38 @@ export async function createUserController(request, response) {
     const salt = await bcryptjs.genSalt(10);
     const hashPassword = await bcryptjs.hash(password, salt);
 
-    // Determine scope — only IT/DIRECTOR can set COUNTRY scope
-    const resolvedScope =
-      scope === "COUNTRY" && ["IT", "DIRECTOR"].includes(adminUser.subRole)
-        ? "COUNTRY"
-        : "GLOBAL";
-    const resolvedCountry =
-      resolvedScope === "COUNTRY" && assignedCountry ? assignedCountry : null;
+    // ── PHASE 1 SECURITY: scope resolution ─────────────────────────────────
+    // Previously a COUNTRY-scoped creator (e.g. a country HR) producing an
+    // ADMIN account silently produced a GLOBAL-scoped admin. Now:
+    //   • COUNTRY-scoped creators can only create ADMIN accounts scoped to
+    //     their own country, and never HQ-only subRoles (IT/DIRECTOR/LOGISTICS).
+    //   • Only IT/DIRECTOR may choose scope explicitly.
+    let resolvedScope;
+    let resolvedCountry;
+    if (adminUser.scope === "COUNTRY") {
+      if (role === "ADMIN") {
+        if (["IT", "DIRECTOR", "LOGISTICS"].includes(subRole)) {
+          return response.status(403).json({
+            message:
+              "Country-scoped admins cannot create HQ-only roles (IT, DIRECTOR, LOGISTICS)",
+            error: true,
+            success: false,
+          });
+        }
+        resolvedScope = "COUNTRY";
+        resolvedCountry = adminUser.assignedCountry;
+      } else {
+        resolvedScope = "GLOBAL"; // USER (customer) accounts — unchanged
+        resolvedCountry = null;
+      }
+    } else {
+      resolvedScope =
+        scope === "COUNTRY" && ["IT", "DIRECTOR"].includes(adminUser.subRole)
+          ? "COUNTRY"
+          : "GLOBAL";
+      resolvedCountry =
+        resolvedScope === "COUNTRY" && assignedCountry ? assignedCountry : null;
+    }
 
     // Create user payload
     const userPayload = {
@@ -247,6 +272,16 @@ export async function updateUserController(request, response) {
     if (!userToUpdate) {
       return response.status(404).json({
         message: "User not found",
+        error: true,
+        success: false,
+      });
+    }
+
+    // PHASE 1: country-bound — scoped admins only touch admins in their country
+    const bound = countryBoundCheck(adminUser, userToUpdate);
+    if (!bound.allowed) {
+      return response.status(403).json({
+        message: bound.message,
         error: true,
         success: false,
       });
@@ -372,6 +407,12 @@ export async function resetUserPasswordController(request, response) {
       });
     }
 
+    // PHASE 1: country-bound — scoped admins only touch admins in their country
+    const bound = countryBoundCheck(adminUser, userToUpdate);
+    if (!bound.allowed) {
+      return response.status(403).json({ message: bound.message, error: true, success: false });
+    }
+
     // Hash new password
     const salt = await bcryptjs.genSalt(10);
     const hashPassword = await bcryptjs.hash(newPassword, salt);
@@ -490,6 +531,12 @@ export async function generatePasswordRecoveryController(request, response) {
       });
     }
 
+    // PHASE 1: country-bound — scoped admins only touch admins in their country
+    const bound = countryBoundCheck(adminUser, user);
+    if (!bound.allowed) {
+      return response.status(403).json({ message: bound.message, error: true, success: false });
+    }
+
     const otp = generatedOtp();
     const expireTime = new Date().getTime() + 24 * 60 * 60 * 1000; // 24 hours
 
@@ -535,6 +582,25 @@ export async function generatePasswordRecoveryController(request, response) {
 }
 
 // Helper functions
+
+// ── PHASE 1 SECURITY HELPERS ────────────────────────────────────────────────
+// A COUNTRY-scoped admin may only act on ADMIN accounts inside their own
+// country. (Customers/USER accounts are not yet country-stamped — Phase 3.)
+function countryBoundCheck(actor, targetUser) {
+  if (actor.scope !== "COUNTRY") return { allowed: true };
+  if (targetUser.role !== "ADMIN") return { allowed: true };
+  if (
+    targetUser.scope === "COUNTRY" &&
+    targetUser.assignedCountry === actor.assignedCountry
+  ) {
+    return { allowed: true };
+  }
+  return {
+    allowed: false,
+    message: `Access denied: you can only manage admin accounts assigned to ${actor.assignedCountry}`,
+  };
+}
+
 function checkUserCreationPermissions(adminUser, targetRole, targetSubRole) {
   const { subRole } = adminUser;
 
@@ -543,12 +609,13 @@ function checkUserCreationPermissions(adminUser, targetRole, targetSubRole) {
     return { allowed: true };
   }
 
-  // HR cannot create DIRECTOR
+  // HR cannot create DIRECTOR or IT (PHASE 1: IT added — creating an IT
+  // account would be full privilege amplification, since IT can do anything)
   if (subRole === "HR") {
-    if (targetRole === "ADMIN" && targetSubRole === "DIRECTOR") {
+    if (targetRole === "ADMIN" && ["DIRECTOR", "IT"].includes(targetSubRole)) {
       return {
         allowed: false,
-        message: "HR cannot create DIRECTOR users",
+        message: "HR cannot create DIRECTOR or IT users",
       };
     }
     return { allowed: true };
@@ -589,17 +656,17 @@ function checkUserUpdatePermissions(adminUser, userToUpdate, updates) {
 
   // HR cannot update DIRECTOR
   if (subRole === "HR") {
-    if (userToUpdate.subRole === "DIRECTOR") {
+    if (["DIRECTOR", "IT"].includes(userToUpdate.subRole)) {
       return {
         allowed: false,
-        message: "HR cannot update DIRECTOR users",
+        message: "HR cannot update DIRECTOR or IT users",
       };
     }
-    // HR cannot promote someone to DIRECTOR
-    if (updates.subRole === "DIRECTOR") {
+    // HR cannot promote someone to DIRECTOR or IT (PHASE 1: IT added)
+    if (["DIRECTOR", "IT"].includes(updates.subRole)) {
       return {
         allowed: false,
-        message: "HR cannot promote users to DIRECTOR role",
+        message: "HR cannot promote users to DIRECTOR or IT roles",
       };
     }
     return { allowed: true };

@@ -67,6 +67,7 @@ export const createCustomerController = async (request, response) => {
       registrationNumber:
         customerType === 'BTB' ? registrationNumber : undefined,
       createdBy: userId,
+      countryCode: request.countryScope || 'NG',
       isWebsiteCustomer: false,
       notes,
       assignedTo: assignedTo || [userId],
@@ -145,6 +146,12 @@ export const getCustomersController = async (request, response) => {
           { isWebsiteCustomer: true },
         ],
       };
+    }
+
+    // Country-scoped admin (e.g. a foreign Togo manager) only sees customers
+    // belonging to their own office — GLOBAL admins are unrestricted.
+    if (request.countryScope) {
+      query = { $and: [query, { countryCode: request.countryScope }] };
     }
 
     // Add filters

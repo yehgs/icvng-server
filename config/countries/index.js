@@ -209,3 +209,17 @@ export function isPaymentProviderEnabled(countryCode, provider) {
 
 /** Convenience: list of all supported country codes */
 export const ALL_COUNTRY_CODES = Object.keys(COUNTRY_CONFIG);
+
+/**
+ * PHASE 5: the union of every language any country supports — the single
+ * source of truth for the translation system's language set. Adding a market
+ * with a new language (e.g. Portuguese for a future country) here makes it
+ * valid everywhere, no schema edits needed.
+ */
+export const ALL_SUPPORTED_LANGUAGES = Array.from(
+  new Set(
+    Object.values(COUNTRY_CONFIG).flatMap(
+      (c) => c.language?.supported || [],
+    ),
+  ),
+).sort();

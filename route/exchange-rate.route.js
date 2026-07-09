@@ -1,6 +1,14 @@
-// route/exchangeRate.route.js - Updated with new endpoints
+// route/exchangeRate.route.js
+// PHASE 1 SECURITY: exchange-rate management is HQ-only.
+// `GET /get` stays PUBLIC — the storefront CurrencyContext depends on it for
+// price display (read-only, non-sensitive published rates).
+// Every other endpoint (create/update/delete/fetch/convert/stats) was `auth`
+// alone; now ADMIN-only, role-restricted, blocked for country-scoped admins.
 import { Router } from 'express';
 import auth from '../middleware/auth.js';
+import adminAuth from '../middleware/adminAuth.js';
+import { requirePermission } from '../middleware/requirePermission.js';
+import { countryScope, blockCountryScopedAdmins } from '../middleware/countryScope.js';
 import {
   fetchRatesFromAPI,
   getExchangeRates,
@@ -16,38 +24,43 @@ import {
 
 const exchangeRateRouter = Router();
 
-// Get all exchange rates with pagination and search (public - no auth required for client frontend)
+// Get all exchange rates (PUBLIC — client storefront currency display)
 exchangeRateRouter.get('/get', getExchangeRates);
 
-// Get supported currencies list
-exchangeRateRouter.get('/currencies', auth, getSupportedCurrencies);
-
-// Get exchange rate statistics
-exchangeRateRouter.get('/stats', auth, getStats);
-
-// Get stale rates that need updating
-exchangeRateRouter.get('/stale', auth, getStaleRates);
-
-// Get specific exchange rate between two currencies
-exchangeRateRouter.get(
-  '/rate/:baseCurrency/:targetCurrency',
+// Everything below is HQ admin territory
+exchangeRateRouter.use(
   auth,
-  getSpecificRate
+  adminAuth,
+  countryScope,
+  blockCountryScopedAdmins,
+  requirePermission(["exchangeRates.view", "exchangeRates.manage"])
 );
 
+// Get supported currencies list
+exchangeRateRouter.get('/currencies', getSupportedCurrencies);
+
+// Get exchange rate statistics
+exchangeRateRouter.get('/stats', getStats);
+
+// Get stale rates that need updating
+exchangeRateRouter.get('/stale', getStaleRates);
+
+// Get specific exchange rate between two currencies
+exchangeRateRouter.get('/rate/:baseCurrency/:targetCurrency', getSpecificRate);
+
 // Fetch rates from external API with multiple provider support
-exchangeRateRouter.post('/fetch-api-rates', auth, fetchRatesFromAPI);
+exchangeRateRouter.post('/fetch-api-rates', fetchRatesFromAPI);
 
 // Create or update manual exchange rate
-exchangeRateRouter.post('/create-update', auth, createOrUpdateRate);
+exchangeRateRouter.post('/create-update', createOrUpdateRate);
 
 // Convert currency using stored rates
-exchangeRateRouter.post('/convert', auth, convertCurrency);
+exchangeRateRouter.post('/convert', convertCurrency);
 
 // Bulk update multiple rates
-exchangeRateRouter.post('/bulk-update', auth, bulkUpdateRates);
+exchangeRateRouter.post('/bulk-update', bulkUpdateRates);
 
 // Delete exchange rate (soft delete)
-exchangeRateRouter.delete('/delete', auth, deleteExchangeRate);
+exchangeRateRouter.delete('/delete', deleteExchangeRate);
 
 export default exchangeRateRouter;

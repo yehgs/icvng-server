@@ -21,6 +21,7 @@ import {
   getPopularProducts,
 } from "../controllers/product.controller.js";
 import { admin } from "../middleware/Admin.js";
+import { countryScope } from "../middleware/countryScope.js";
 
 const productRouter = Router();
 
@@ -31,7 +32,7 @@ productRouter.post("/create", auth, admin, createProductController);
 productRouter.get("/search", searchProductController);
 productRouter.get("/category-structure", getCategoryStructureController);
 productRouter.post("/get", getProductController);
-productRouter.post("/get-admin", getProductControllerAdmin);
+productRouter.post("/get-admin", auth, admin, countryScope, getProductControllerAdmin);
 productRouter.post("/get-product-by-category", getProductByCategory);
 productRouter.post(
   "/get-product-by-category-and-subcategory",

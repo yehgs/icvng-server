@@ -8,6 +8,9 @@ import helmet from "helmet";
 import connectDB from "./config/connectDB.js";
 // ── Phase 1: Multi-country ──────────────────────────────────────────────────
 import countryDetect from "./middleware/countryDetect.js";
+import countryContext from "./middleware/countryContext.js";
+import { refreshCountryCache } from "./services/countryService.js";
+import { auditRoutes } from "./core/routeAuditor.js";
 import { paymentConfigMiddleware } from "./config/paymentRouter.js";
 import countryRouter from "./route/country.route.js";
 import translationRouter from "./route/translation.route.js";
@@ -96,6 +99,8 @@ app.use(
       "token",
       "x-access-token",
       "x-csrf-token",
+      "x-storefront-host",
+      "x-country-code",
     ],
     exposedHeaders: ["Content-Disposition", "Content-Type"],
     origin: (origin, callback) => {
@@ -187,6 +192,10 @@ app.use(
 
 // ── Phase 1: Attach country context to EVERY request ────────────────────────
 app.use(countryDetect);
+// ── Phase 3: Establish AsyncLocalStorage request context so countryScoped
+// model hooks can auto-filter. countryScope (route-level) mutates the scope
+// inside this store once req.user is known.
+app.use(countryContext);
 app.use(paymentConfigMiddleware);
 // ─────────────────────────────────────────────────────────────────────────────
 // ============================================
@@ -204,7 +213,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const PORT = 8080 || process.env.PORT;
+const PORT = process.env.PORT || 8080; // PHASE 1 FIX: env var could never win
 
 app.get("/", (request, response) => {
   ///server to client
@@ -287,6 +296,17 @@ app.use((err, req, res, next) => {
 // Start server
 // ============================================
 connectDB().then(() => {
+  // PHASE 4: fail-fast (or warn) if any admin/HQ route lacks a guard.
+  try {
+    auditRoutes(app, ["auth", "adminAuth", "requireRole", "requirePermission"]);
+  } catch (e) {
+    console.error(e.message);
+    process.exit(1);
+  }
+  // PHASE 3: warm the country cache from DB (falls back to config if unseeded)
+  refreshCountryCache().catch((e) =>
+    console.warn("Country cache warm failed (using config fallback):", e.message),
+  );
   app.listen(PORT, () => {
     console.log("✅ Server is running on port:", PORT);
     console.log("✅ Database connected");

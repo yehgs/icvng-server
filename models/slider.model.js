@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const sliderSchema = new mongoose.Schema(
   {
@@ -31,6 +32,10 @@ const sliderSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+
+// PHASE 3: country dimension + isolation hooks
+sliderSchema.plugin(countryScopedPlugin);
 
 const SliderModel = mongoose.model('slider', sliderSchema);
 

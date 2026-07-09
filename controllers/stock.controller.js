@@ -257,8 +257,9 @@ export const approveDistribution = async (request, response) => {
     const { batchId } = request.params;
     const { approved, approverNotes } = request.body;
 
-    // Check user role
-    if (!['Director', 'IT', 'Manager'].includes(request.user.role)) {
+    // Check user role (PHASE 1 FIX: was checking request.user.role against
+    // Title-case values — role is ADMIN|USER; permissions live on subRole)
+    if (!['DIRECTOR', 'IT', 'MANAGER'].includes(request.user.subRole)) {
       return response.status(403).json({
         message: 'Only Director, IT, or Manager can approve distributions',
         error: true,
@@ -653,8 +654,9 @@ export const reactivatePurchaseOrder = async (request, response) => {
     const { purchaseOrderId } = request.params;
     const { reason } = request.body;
 
-    // Check user role
-    if (!['Director', 'IT'].includes(request.user.role)) {
+    // Check user role (PHASE 1 FIX: was checking request.user.role against
+    // Title-case values — role is ADMIN|USER; permissions live on subRole)
+    if (!['DIRECTOR', 'IT'].includes(request.user.subRole)) {
       return response.status(403).json({
         message: 'Only Director or IT can reactivate purchase orders',
         error: true,

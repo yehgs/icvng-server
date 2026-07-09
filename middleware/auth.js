@@ -41,8 +41,10 @@ const auth = async (request, response, next) => {
 
     next();
   } catch (error) {
-    return response.status(500).json({
-      message: 'You have not login', // error.message || error,
+    // PHASE 1 FIX: invalid/expired tokens are an auth failure (401), not a
+    // server error (500). Clients rely on 401 to trigger refresh/redirect.
+    return response.status(401).json({
+      message: 'Invalid or expired token. Please login again.',
       error: true,
       success: false,
     });
@@ -87,5 +89,8 @@ const optionalAuth = async (request, response, next) => {
   }
 };
 
+
+// PHASE 4: mark as a guard so the boot-time route auditor detects it
+auth.__isGuard = true;
 export default auth;
 export { optionalAuth };
