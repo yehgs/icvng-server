@@ -48,6 +48,7 @@ const translationSchema = new mongoose.Schema(
         "page",
         "fomo",
         "country",
+        "homeContentBlock",
       ],
       index: true,
     },

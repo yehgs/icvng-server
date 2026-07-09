@@ -36,6 +36,7 @@ const TRANSLATABLE_FIELDS = {
   notification: ["title", "message"],
   coupon: ["description"],
   country: ["content.preheaderMessage", "contacts.address"],
+  homeContentBlock: ["title", "description", "quote", "badge", "message", "contactAddress"],
 };
 
 // ── Core translation ─────────────────────────────────────────────────────────

@@ -24,6 +24,7 @@ export async function createBlogPostController(request, response) {
       socialDescription,
       socialImage,
       relatedProducts,
+      countryCode,
     } = request.body;
 
     if (!title || !excerpt || !content || !featuredImage || !category) {
@@ -73,6 +74,7 @@ export async function createBlogPostController(request, response) {
       socialDescription: socialDescription?.trim() || excerpt.trim(),
       socialImage: socialImage || featuredImage,
       relatedProducts: relatedProducts || [],
+      ...(countryCode && { countryCode: countryCode.toUpperCase() }),
     });
 
     const savedPost = await newPost.save();
@@ -367,6 +369,7 @@ export async function deleteBlogPostController(request, response) {
 export async function getPublicBlogPostsController(request, response) {
   try {
     const { page = 1, limit = 12, category, tag, search } = request.query;
+    const targetCountry = request.country?.code || 'NG';
 
     const query = { status: "PUBLISHED" };
 
@@ -394,6 +397,16 @@ export async function getPublicBlogPostsController(request, response) {
         if (tagDoc) query.tags = tagDoc._id;
       }
     }
+
+    // This market's own posts first; if it has none matching this query
+    // (e.g. hasn't published anything yet), fall back to HQ's (Nigeria's)
+    // so /blogs is never empty for a newly-launched domain.
+    let countryQuery = { ...query, countryCode: targetCountry };
+    const countMatching = await BlogPostModel.countDocuments(countryQuery);
+    if (countMatching === 0 && targetCountry !== 'NG') {
+      countryQuery = { ...query, countryCode: 'NG' };
+    }
+    Object.assign(query, countryQuery);
 
     const skip = (page - 1) * limit;
 
@@ -471,29 +484,51 @@ export async function getBlogPostBySlugController(request, response) {
 export async function getFeaturedBlogPostsController(request, response) {
   try {
     const { limit = 6 } = request.query;
+    const targetCountry = request.country?.code || 'NG';
 
-    const posts = await BlogPostModel.find({
-      status: "PUBLISHED",
-      featured: true,
-    })
+    const baseQuery = { status: "PUBLISHED", featured: true };
+
+    let posts = await BlogPostModel.find({ ...baseQuery, countryCode: targetCountry })
       .populate("category", "name slug")
       .populate("tags", "name slug color")
       .populate("author", "name")
       .select("-content")
-      // ✅ FIX: -1 = newest featured posts first
       .sort({ publishedAt: -1 })
       .limit(parseInt(limit));
 
-    // If no posts are explicitly featured, fall back to the latest published posts
-    // so the homepage blog section is never empty
-    if (posts.length === 0) {
-      const fallback = await BlogPostModel.find({ status: "PUBLISHED" })
+    // This market hasn't published its own featured posts yet — fall back
+    // to HQ's (Nigeria's) featured posts so the section isn't empty.
+    if (posts.length === 0 && targetCountry !== 'NG') {
+      posts = await BlogPostModel.find({ ...baseQuery, countryCode: 'NG' })
         .populate("category", "name slug")
         .populate("tags", "name slug color")
         .populate("author", "name")
         .select("-content")
         .sort({ publishedAt: -1 })
         .limit(parseInt(limit));
+    }
+
+    // If no posts are explicitly featured, fall back to the latest published posts
+    // so the homepage blog section is never empty
+    if (posts.length === 0) {
+      const fallbackQuery = { status: "PUBLISHED", countryCode: targetCountry };
+      let fallback = await BlogPostModel.find(fallbackQuery)
+        .populate("category", "name slug")
+        .populate("tags", "name slug color")
+        .populate("author", "name")
+        .select("-content")
+        .sort({ publishedAt: -1 })
+        .limit(parseInt(limit));
+
+      if (fallback.length === 0 && targetCountry !== 'NG') {
+        fallback = await BlogPostModel.find({ status: "PUBLISHED", countryCode: 'NG' })
+          .populate("category", "name slug")
+          .populate("tags", "name slug color")
+          .populate("author", "name")
+          .select("-content")
+          .sort({ publishedAt: -1 })
+          .limit(parseInt(limit));
+      }
 
       return response.json({
         message: "Latest blog posts retrieved (no featured posts set)",

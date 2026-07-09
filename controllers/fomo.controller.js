@@ -4,9 +4,28 @@ import OrderModel from '../models/order.model.js';
 import ProductModel from '../models/product.model.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-const getOrCreateSettings = async () => {
-  let settings = await FomoModel.findOne();
-  if (!settings) settings = await FomoModel.create({});
+//
+// FOMO settings/dummy-users are per-country content (countryScopedPlugin on
+// FomoModel), but WHO the "target country" is depends on who's asking:
+//   - A COUNTRY-scoped admin (e.g. an editor tagged to Togo) is always
+//     locked to their own assignedCountry — never trust a client-supplied
+//     countryCode for them.
+//   - A GLOBAL/HQ admin has no implicit scope, so the admin UI must tell us
+//     which market's settings to load/edit via ?countryCode= (or
+//     body.countryCode for writes).
+//   - A public storefront request has no admin scope at all — the target is
+//     whichever country the visited domain resolved to (req.country).
+function resolveTargetCountry(req) {
+  if (req.countryScope) return req.countryScope; // COUNTRY-scoped admin — always their own market
+  const explicit = req.query?.countryCode || req.body?.countryCode;
+  if (explicit) return String(explicit).toUpperCase(); // GLOBAL admin picking a market in the UI
+  if (req.country?.code) return req.country.code; // public storefront request
+  return 'NG';
+}
+
+const getOrCreateSettings = async (countryCode) => {
+  let settings = await FomoModel.findOne({ countryCode });
+  if (!settings) settings = await FomoModel.create({ countryCode });
   return settings;
 };
 
@@ -28,10 +47,27 @@ export const timeAgoString = (date) => {
   return `${cappedMonths} month${cappedMonths === 1 ? '' : 's'} ago`;
 };
 
-// ── GET settings (public — client fetches this to configure the widget) ──────
+// ── GET settings ───────────────────────────────────────────────────────────
+// Public (storefront widget config) AND admin (loads the editor) share this
+// handler — the only difference is how resolveTargetCountry() picks the
+// market. Public reads that come up empty fall back to HQ (Nigeria) so a
+// market without its own FOMO setup still shows something sensible instead
+// of nothing.
 export const getFomoSettings = async (req, res) => {
   try {
-    const settings = await getOrCreateSettings();
+    const isAdminRequest = !!req.user;
+    const targetCountry = resolveTargetCountry(req);
+
+    if (!isAdminRequest) {
+      let settings = await FomoModel.findOne({ countryCode: targetCountry, enabled: true });
+      if (!settings && targetCountry !== 'NG') {
+        settings = await FomoModel.findOne({ countryCode: 'NG', enabled: true });
+      }
+      if (!settings) settings = await getOrCreateSettings(targetCountry);
+      return res.json({ success: true, data: settings });
+    }
+
+    const settings = await getOrCreateSettings(targetCountry);
     return res.json({ success: true, data: settings });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -44,10 +80,10 @@ export const updateFomoSettings = async (req, res) => {
     const {
       enabled, animationType, position,
       displayDurationMs, pauseBetweenMs, fadeInMs, fadeOutMs,
-      useDummyUsers, maxRealPurchases,
+      useDummyUsers, maxRealPurchases, notificationMessage,
     } = req.body;
 
-    const settings = await getOrCreateSettings();
+    const settings = await getOrCreateSettings(resolveTargetCountry(req));
 
     if (enabled !== undefined)           settings.enabled            = enabled;
     if (animationType !== undefined)     settings.animationType      = animationType;
@@ -58,6 +94,7 @@ export const updateFomoSettings = async (req, res) => {
     if (fadeOutMs !== undefined)         settings.fadeOutMs          = Number(fadeOutMs);
     if (useDummyUsers !== undefined)     settings.useDummyUsers      = useDummyUsers;
     if (maxRealPurchases !== undefined)  settings.maxRealPurchases   = Number(maxRealPurchases);
+    if (notificationMessage !== undefined) settings.notificationMessage = notificationMessage;
 
     settings.updatedBy = req.user?._id;
     await settings.save();
@@ -74,7 +111,7 @@ export const addDummyUser = async (req, res) => {
     const { name, avatar, state, product, quantity, purchasedAt } = req.body;
     if (!name?.trim()) return res.status(400).json({ success: false, message: 'Name required' });
 
-    const settings = await getOrCreateSettings();
+    const settings = await getOrCreateSettings(resolveTargetCountry(req));
 
     // Resolve product details (name, image, price) from the selected product
     let productName  = '';
@@ -112,7 +149,7 @@ export const addDummyUser = async (req, res) => {
 export const updateDummyUser = async (req, res) => {
   try {
     const { userId, name, avatar, state, isActive, product, quantity, purchasedAt } = req.body;
-    const settings = await getOrCreateSettings();
+    const settings = await getOrCreateSettings(resolveTargetCountry(req));
     const user = settings.dummyUsers.id(userId);
     if (!user) return res.status(404).json({ success: false, message: 'Dummy user not found' });
 
@@ -151,7 +188,7 @@ export const updateDummyUser = async (req, res) => {
 export const deleteDummyUser = async (req, res) => {
   try {
     const { userId } = req.body;
-    const settings = await getOrCreateSettings();
+    const settings = await getOrCreateSettings(resolveTargetCountry(req));
     settings.dummyUsers.pull({ _id: userId });
     await settings.save();
     return res.json({ success: true, data: settings.dummyUsers, message: 'Dummy user removed' });
@@ -163,17 +200,23 @@ export const deleteDummyUser = async (req, res) => {
 // ── PUBLIC: get recent purchases for FOMO widget ─────────────────────────────
 export const getRecentPurchases = async (req, res) => {
   try {
-    const settings = await getOrCreateSettings();
+    const targetCountry = resolveTargetCountry(req);
+    const settings = await getOrCreateSettings(targetCountry);
 
     if (!settings.enabled) {
       return res.json({ success: true, data: [], settings: { enabled: false } });
     }
 
-    // Pull recent paid orders.
+    // Pull recent paid orders FOR THIS COUNTRY ONLY — showing e.g. a Lagos
+    // customer's real purchase on the Togo storefront would be misleading,
+    // not just wrong-language, so (unlike banners/sliders) there's no
+    // cross-country fallback here: an unconfigured market simply shows
+    // fewer/no toasts until it has its own orders or dummy users.
     // product_details is a single EMBEDDED OBJECT per order (not an array),
     // so each order corresponds to exactly one purchase entry.
     const recentOrders = await OrderModel.find({
       payment_status: 'PAID',
+      countryCode: targetCountry,
     })
       .sort({ createdAt: -1 })
       .limit(settings.maxRealPurchases || 20)

@@ -2,7 +2,7 @@ import CategoryModel from "../models/category.model.js";
 import SubCategoryModel from "../models/subCategory.model.js";
 import ProductModel from "../models/product.model.js";
 import generateSlug from "../utils/generateSlug.js";
-import { translateEntity } from "../utils/translationService.js";
+import { translateEntity, getBulkTranslations, applyTranslation } from "../utils/translationService.js";
 
 export const AddCategoryController = async (request, response) => {
   try {
@@ -66,8 +66,27 @@ export const getCategoryController = async (request, response) => {
   try {
     const data = await CategoryModel.find().sort({ createdAt: -1 });
 
+    // Localize into the active language (same mechanism as the category
+    // mega-menu / category-structure endpoint) — this plain list feeds the
+    // homepage "Shop by Category" filter carousel, which was bypassing
+    // localization entirely by calling this endpoint instead.
+    const language =
+      (request.headers["x-language"] || "").toLowerCase() ||
+      request.country?.language?.default ||
+      "en";
+
+    let localizedData = data;
+    if (language !== "en") {
+      const ids = data.map((c) => c._id.toString());
+      const fieldsByCategory = await getBulkTranslations("category", ids, language);
+      localizedData = data.map((cat) => {
+        const fields = fieldsByCategory.get(cat._id.toString());
+        return fields ? applyTranslation(cat.toObject(), fields) : cat;
+      });
+    }
+
     return response.json({
-      data: data,
+      data: localizedData,
       error: false,
       success: true,
     });

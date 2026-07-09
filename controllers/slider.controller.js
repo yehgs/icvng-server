@@ -3,7 +3,7 @@ import SliderModel from "../models/slider.model.js";
 
 export const addSliderController = async (request, response) => {
   try {
-    const { title, description, imageUrl, url, isActive, order } = request.body;
+    const { title, description, imageUrl, url, isActive, order, countryCode } = request.body;
 
     if (!title || !imageUrl) {
       return response.status(400).json({
@@ -20,6 +20,10 @@ export const addSliderController = async (request, response) => {
       url: url || "",
       isActive: isActive !== undefined ? isActive : true,
       order: order || 0,
+      // A COUNTRY-scoped admin is stamped with their own country regardless
+      // of this value — only takes effect for GLOBAL/HQ admins explicitly
+      // targeting a specific market.
+      ...(countryCode && { countryCode: countryCode.toUpperCase() }),
     });
 
     const saveSlider = await addSlider.save();
@@ -68,8 +72,15 @@ export const getSlidersController = async (request, response) => {
 
 export const getActiveSlidersController = async (request, response) => {
   try {
-    // Get only active sliders for the frontend
-    const data = await SliderModel.find({ isActive: true }).sort({ order: 1 });
+    // Get only active sliders for the frontend, scoped to the visited
+    // domain's country — falling back to HQ (Nigeria) if that market hasn't
+    // added its own slider yet.
+    const targetCountry = request.country?.code || 'NG';
+
+    let data = await SliderModel.find({ isActive: true, countryCode: targetCountry }).sort({ order: 1 });
+    if (data.length === 0 && targetCountry !== 'NG') {
+      data = await SliderModel.find({ isActive: true, countryCode: 'NG' }).sort({ order: 1 });
+    }
 
     return response.json({
       data: data,

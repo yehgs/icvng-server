@@ -64,6 +64,7 @@ import supportTicketRouter from "./route/support-ticket.route.js";
 import passwordVaultRouter from "./route/password-vault.route.js";
 import financeRouter from "./route/finance.route.js";
 import crmRouter from "./route/crm.route.js";
+import homeContentBlockRouter from "./route/homeContentBlock.route.js";
 import scraperRouter from "./route/scraper.route.js";
 import profileRouter from "./route/profile.route.js";
 
@@ -266,6 +267,7 @@ app.use("/api/blog", blogRouter);
 app.use("/api/direct-pricing", directPricingRouter);
 app.use("/api/admin/customers", customerRouter);
 app.use("/api/fomo", fomoRouter);
+app.use("/api/home-content", homeContentBlockRouter);
 app.use("/api/send-email", formEmailRouter);
 app.use("/api/admin/orders", adminOrderRouter);
 app.use("/api/order-requests", orderRequestRouter);

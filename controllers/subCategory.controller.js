@@ -1,5 +1,6 @@
 import SubCategoryModel from "../models/subCategory.model.js";
 import generateSlug from "../utils/generateSlug.js";
+import { getBulkTranslations, applyTranslation } from "../utils/translationService.js";
 
 export const AddSubCategoryController = async (request, response) => {
   try {
@@ -58,9 +59,28 @@ export const getSubCategoryController = async (request, response) => {
     const data = await SubCategoryModel.find()
       .sort({ createdAt: -1 })
       .populate("category");
+
+    // Localize into the active language — this endpoint feeds the shop
+    // page's filter sidebar/category tree, which was showing English
+    // subcategory names regardless of the visited domain's language.
+    const language =
+      (request.headers["x-language"] || "").toLowerCase() ||
+      request.country?.language?.default ||
+      "en";
+
+    let localizedData = data;
+    if (language !== "en") {
+      const ids = data.map((s) => s._id.toString());
+      const fieldsById = await getBulkTranslations("subCategory", ids, language);
+      localizedData = data.map((sub) => {
+        const fields = fieldsById.get(sub._id.toString());
+        return fields ? applyTranslation(sub.toObject(), fields) : sub;
+      });
+    }
+
     return response.json({
       message: "Sub Category data",
-      data: data,
+      data: localizedData,
       error: false,
       success: true,
     });

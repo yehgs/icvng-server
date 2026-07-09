@@ -30,6 +30,7 @@ import {
 } from '../controllers/blogPost.controller.js';
 import auth from '../middleware/auth.js';
 import blogAuth from '../middleware/blogAuth.js';
+import { countryScope } from '../middleware/countryScope.js';
 
 const blogRouter = Router();
 
@@ -106,41 +107,50 @@ blogRouter.delete(
   deleteBlogTagController
 );
 
-// Blog Posts
+// Blog Posts — countryScope activates per-country isolation: an editor
+// assigned to a country only sees/edits that market's posts, and can
+// translate + publish independently of HQ's English original. Categories
+// and tags above stay global taxonomy shared across every market.
 blogRouter.post(
   '/admin/posts',
   auth,
   blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  countryScope,
   createBlogPostController
 );
 blogRouter.get(
   '/admin/posts',
   auth,
   blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  countryScope,
   getBlogPostsController
 );
 blogRouter.get(
   '/admin/posts/:id',
   auth,
   blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  countryScope,
   getBlogPostController
 );
 blogRouter.put(
   '/admin/posts/:id',
   auth,
   blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  countryScope,
   updateBlogPostController
 );
 blogRouter.patch(
   '/admin/posts/:id/toggle-featured',
   auth,
   blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  countryScope,
   toggleFeaturedBlogPostController
 );
 blogRouter.delete(
   '/admin/posts/:id',
   auth,
   blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  countryScope,
   deleteBlogPostController
 );
 

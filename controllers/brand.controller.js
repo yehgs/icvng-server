@@ -1,7 +1,7 @@
 import BrandModel from "../models/brand.model.js";
 import ProductModel from "../models/product.model.js";
 import generateSlug from "../utils/generateSlug.js";
-import { translateEntity } from "../utils/translationService.js";
+import { translateEntity, getBulkTranslations, applyTranslation } from "../utils/translationService.js";
 
 export const AddBrandController = async (request, response) => {
   try {
@@ -66,8 +66,25 @@ export const getBrandController = async (request, response) => {
   try {
     const data = await BrandModel.find().sort({ createdAt: -1 });
 
+    // Localize into the active language — same gap as categories/
+    // subcategories: this feeds the shop filter sidebar's brand list.
+    const language =
+      (request.headers["x-language"] || "").toLowerCase() ||
+      request.country?.language?.default ||
+      "en";
+
+    let localizedData = data;
+    if (language !== "en") {
+      const ids = data.map((b) => b._id.toString());
+      const fieldsById = await getBulkTranslations("brand", ids, language);
+      localizedData = data.map((brand) => {
+        const fields = fieldsById.get(brand._id.toString());
+        return fields ? applyTranslation(brand.toObject(), fields) : brand;
+      });
+    }
+
     return response.json({
-      data: data,
+      data: localizedData,
       error: false,
       success: true,
     });
