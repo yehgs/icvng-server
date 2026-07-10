@@ -46,7 +46,11 @@ const fomoSettingsSchema = new mongoose.Schema(
 
     // Translatable: the popup label shown above the purchase notification
     // e.g. "Just purchased" / "Vient d'acheter" / "Ha appena acquistato"
-    notificationMessage: { type: String, default: "Just purchased" },
+    // Left blank on purpose: an empty value lets the storefront show the
+    // translated "Just purchased" label per visitor language (t('fomo.justPurchased'))
+    // instead of a literal English default being stamped onto every new
+    // country's settings doc and permanently overriding it.
+    notificationMessage: { type: String, default: "" },
 
     dummyUsers: [dummyUserSchema],
 

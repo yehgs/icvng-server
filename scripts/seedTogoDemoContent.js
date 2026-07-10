@@ -29,6 +29,23 @@ import HomeContentBlockModel from "../models/homeContentBlock.model.js";
 dotenv.config();
 
 // ─────────────────────────────────────────────────────────────────────────
+// 0. Self-heal: clear a previously-stamped literal "Just purchased" default
+//    from EVERY country's FOMO settings — the schema used to default
+//    notificationMessage to that literal English string, which permanently
+//    overrode the storefront's per-language i18n fallback everywhere, not
+//    just for Togo. Now that the schema default is "", this just cleans up
+//    documents created before that fix.
+// ─────────────────────────────────────────────────────────────────────────
+async function healLegacyNotificationMessage() {
+  console.log("→ Clearing legacy 'Just purchased' default across all markets …");
+  const res = await FomoModel.updateMany(
+    { notificationMessage: { $regex: /^\s*just purchased\s*$/i } },
+    { $set: { notificationMessage: "" } },
+  );
+  console.log(`  + healed ${res.modifiedCount} settings doc(s)`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // 1. FOMO dummy users — Togo
 // ─────────────────────────────────────────────────────────────────────────
 const TOGO_FOMO_USERS = [
@@ -69,9 +86,12 @@ async function seedTogoFomo() {
     added++;
   }
 
-  // Make sure the widget actually mixes them in.
+  // Make sure the widget actually mixes them in. Deliberately NOT setting a
+  // default notificationMessage here — an empty value lets the storefront's
+  // i18n fallback (t('fomo.justPurchased')) render in the visitor's actual
+  // language; stamping a literal English string would permanently override
+  // that, the same bug that hit limitedEdition.bannerText.
   settings.useDummyUsers = true;
-  if (!settings.notificationMessage) settings.notificationMessage = "Just purchased";
 
   await settings.save();
   console.log(`  + added ${added} dummy user(s) for TG (${settings.dummyUsers.length} total)`);
@@ -246,6 +266,7 @@ async function seedHeader() {
 // ─────────────────────────────────────────────────────────────────────────
 async function main() {
   await connectDB();
+  await healLegacyNotificationMessage();
   await seedTogoFomo();
   await seedTestimonials();
   await seedTrustBadges();

@@ -24,7 +24,7 @@ const SUPPORTED_LANGUAGES = ["en", "fr", "it"];
 
 // Fields to translate per entity type  (source language is always "en")
 const TRANSLATABLE_FIELDS = {
-  product: ["name", "description", "unit", "seo.title", "seo.description"],
+  product: ["name", "description", "unit", "seo.title", "seo.description", "roastOrigin", "coffeeOrigin", "blend", "shortDescription", "additionalInfo"],
   category: ["name", "description"],
   subCategory: ["name"],
   brand: ["name", "description"],
@@ -37,6 +37,14 @@ const TRANSLATABLE_FIELDS = {
   coupon: ["description"],
   country: ["content.preheaderMessage", "contacts.address"],
   homeContentBlock: ["title", "description", "quote", "badge", "message", "contactAddress"],
+  // Small shared catalog dictionaries used across products (filters,
+  // variant options) — translating just "name" covers what shoppers see;
+  // an attribute's `values` array (e.g. Size: Small/Medium/Large) isn't
+  // translated yet — the generic field-translation system handles simple
+  // string/dot-path fields, not array elements.
+  tag: ["name"],
+  attribute: ["name"],
+  color: ["name"],
 };
 
 // ── Core translation ─────────────────────────────────────────────────────────
