@@ -7,7 +7,8 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "seed:logistics": "node scripts/seedLogisticsData.js",
-    "seed:logistics:dev": "nodemon scripts/seedLogisticsData.js"
+    "seed:logistics:dev": "nodemon scripts/seedLogisticsData.js",
+    "seed:site-pages": "node scripts/seedSitePages.js"
   },
   "author": "",
   "license": "ISC",

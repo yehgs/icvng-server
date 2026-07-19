@@ -47,6 +47,128 @@ const TRANSLATABLE_FIELDS = {
   color: ["name"],
 };
 
+// PHASE 6: SitePage (`page` entityType) content is a free-form, admin-grown
+// dictionary rather than a fixed field list (that's the whole point of the
+// CMS being "dynamic" — editors add new keys without a deploy). So instead
+// of a static TRANSLATABLE_FIELDS list, walk the document's `content` object
+// and its `seo` block and translate every string it finds (recursing into
+// arrays/objects for list-style content like FAQ items or table rows).
+// A handful of keys are deliberately left alone — they're configuration,
+// not copy, and running them through MT would corrupt them.
+const PAGE_NON_TRANSLATABLE_KEYS = new Set([
+  "icon", "iconKey", "color", "image", "img", "src", "href", "link", "url",
+  "id", "_id", "key", "slug", "type", "order", "phone", "whatsapp", "email",
+  "embedUrl", "mapEmbedUrl", "countryCode", "lat", "lng", "rating",
+]);
+
+function isPlainObject(v) {
+  return v && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * Recursively collect translatable string leaves found under `node`,
+ * skipping configuration-only keys, in a stable, repeatable order.
+ */
+function collectPageStrings(node, keyName, out) {
+  if (node == null) return;
+  if (typeof node === "string") {
+    if (node.trim() && !PAGE_NON_TRANSLATABLE_KEYS.has(keyName)) {
+      out.push(node);
+    }
+    return;
+  }
+  if (Array.isArray(node)) {
+    node.forEach((item) => collectPageStrings(item, keyName, out));
+    return;
+  }
+  if (isPlainObject(node)) {
+    for (const [k, v] of Object.entries(node)) {
+      collectPageStrings(v, k, out);
+    }
+  }
+}
+
+/**
+ * Rebuild a deep clone of `node`, replacing translatable string leaves with
+ * the next value from `translatedQueue` (consumed in the exact same order
+ * collectPageStrings produced them — the two walks must stay in lockstep).
+ */
+function applyPageStrings(node, keyName, translatedQueue) {
+  if (node == null) return node;
+  if (typeof node === "string") {
+    if (node.trim() && !PAGE_NON_TRANSLATABLE_KEYS.has(keyName)) {
+      const next = translatedQueue.shift();
+      return next !== undefined ? next : node;
+    }
+    return node;
+  }
+  if (Array.isArray(node)) {
+    return node.map((item) => applyPageStrings(item, keyName, translatedQueue));
+  }
+  if (isPlainObject(node)) {
+    const out = {};
+    for (const [k, v] of Object.entries(node)) {
+      out[k] = applyPageStrings(v, k, translatedQueue);
+    }
+    return out;
+  }
+  return node;
+}
+
+/**
+ * Translate an entire SitePage's `content` (+ `seo`) dictionary into every
+ * target language and persist to the Translation collection, honoring the
+ * same "don't clobber a human's manual edits" guard as translateEntity().
+ *
+ * @param {{ entityId: string, document: { content: object, seo?: object }, sourceLang?: string, targetLangs?: string[] }} opts
+ */
+export async function translateSitePage({ entityId, document, sourceLang = "en", targetLangs }) {
+  const sourceTree = { content: document.content || {}, seo: document.seo || {} };
+  const strings = [];
+  collectPageStrings(sourceTree, "", strings);
+  if (strings.length === 0) return;
+
+  const targetLanguages = (targetLangs && targetLangs.length ? targetLangs : SUPPORTED_LANGUAGES).filter(
+    (l) => l !== sourceLang
+  );
+
+  for (const targetLang of targetLanguages) {
+    try {
+      const existing = await TranslationModel.findOne({
+        entityType: "page",
+        entityId,
+        language: targetLang,
+      }).lean();
+
+      // A human has reviewed/edited this language for this page already —
+      // never silently overwrite their work with a fresh machine pass.
+      if (existing && existing.autoTranslated === false) {
+        console.log(`[translationService] Skipped page:${entityId} → ${targetLang} (manually reviewed)`);
+        continue;
+      }
+
+      const translatedFlat = await translateBatch(strings, sourceLang, targetLang);
+      const queue = [...translatedFlat];
+      const translatedTree = applyPageStrings(sourceTree, "", queue);
+
+      await TranslationModel.findOneAndUpdate(
+        { entityType: "page", entityId, language: targetLang },
+        {
+          fields: { content: translatedTree.content, seo: translatedTree.seo },
+          autoTranslated: true,
+          translatedAt: new Date(),
+          engine: "libre",
+          sourceLanguage: sourceLang,
+        },
+        { upsert: true, new: true }
+      );
+      console.log(`[translationService] Translated page:${entityId} → ${targetLang}`);
+    } catch (err) {
+      console.error(`[translationService] Error translating page:${entityId} → ${targetLang}:`, err.message);
+    }
+  }
+}
+
 // ── Core translation ─────────────────────────────────────────────────────────
 
 /**

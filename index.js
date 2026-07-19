@@ -14,6 +14,7 @@ import { auditRoutes } from "./core/routeAuditor.js";
 import { paymentConfigMiddleware } from "./config/paymentRouter.js";
 import countryRouter from "./route/country.route.js";
 import translationRouter from "./route/translation.route.js";
+import sitePageRouter from "./route/sitePage.route.js";
 import dashboardRouter from "./route/dashboard.route.js";
 import seoRouter from "./route/seo.route.js";
 // ── Phase 4: Google OAuth ─────────────────────────────────────────────────────
@@ -268,6 +269,7 @@ app.use("/api/direct-pricing", directPricingRouter);
 app.use("/api/admin/customers", customerRouter);
 app.use("/api/fomo", fomoRouter);
 app.use("/api/home-content", homeContentBlockRouter);
+app.use("/api/site-pages", sitePageRouter);
 app.use("/api/send-email", formEmailRouter);
 app.use("/api/admin/orders", adminOrderRouter);
 app.use("/api/order-requests", orderRequestRouter);
