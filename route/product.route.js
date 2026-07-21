@@ -41,7 +41,7 @@ productRouter.post(
 productRouter.post("/get-product-details", getProductDetails);
 
 // Update product
-productRouter.put("/update-product-details", auth, admin, updateProductDetails);
+productRouter.put("/update-product-details", auth, admin, countryScope, updateProductDetails);
 
 // Delete product
 productRouter.delete("/delete-product", auth, admin, deleteProductDetails);

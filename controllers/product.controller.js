@@ -610,7 +610,13 @@ export const getProductControllerAdmin = async (request, response) => {
     // HQ-only fields: BTB (B2B) pricing and offline warehouse stock are not
     // relevant to a country-scoped/foreign admin's market — strip them from
     // the response rather than relying on the admin UI alone to hide them.
+    //
+    // partnerStock ("online BTC-type stock expected from our partners") is
+    // an NG-specific arrangement — only Nigeria-scoped (or global/HQ) admins
+    // should see or edit it. A Togo-scoped admin, for example, has no such
+    // partners and shouldn't see this data at all.
     const isCountryScoped = !!request.countryScope;
+    const stripPartnerStock = isCountryScoped && request.countryScope !== "NG";
     const responseData = isCountryScoped
       ? data.map((p) => {
           const obj = p.toObject ? p.toObject() : p;
@@ -618,6 +624,9 @@ export const getProductControllerAdmin = async (request, response) => {
           if (rest.warehouseStock) {
             const { offlineStock, ...stockRest } = rest.warehouseStock;
             rest.warehouseStock = stockRest;
+          }
+          if (stripPartnerStock) {
+            delete rest.partnerStock;
           }
           return rest;
         })
@@ -902,6 +911,21 @@ export const updateProductDetails = async (request, response) => {
       ) {
         updateData.partnerStock.supplier = null;
       }
+    }
+
+    // partnerStock ("online BTC-type stock expected from our partners") is a
+    // Nigeria-specific arrangement — only Nigeria-scoped or global/HQ admins
+    // may create/edit it. The admin UI already hides this section from other
+    // country-scoped admins, but that's not real enforcement on its own — a
+    // direct API call could still smuggle a partnerStock change through.
+    // NOTE: the form always submits a default partnerStock object even when
+    // the section is hidden/untouched, so we silently drop the field here
+    // (leaving the product's existing partnerStock value untouched) rather
+    // than rejecting the whole update — a non-NG admin editing an unrelated
+    // field (price, description, etc.) should not be blocked by this.
+    const canManagePartnerStock = !request.countryScope || request.countryScope === "NG";
+    if (updateData.partnerStock && !canManagePartnerStock) {
+      delete updateData.partnerStock;
     }
 
     // Sanitize enum fields — Mongoose rejects "" for fields with enum constraints
