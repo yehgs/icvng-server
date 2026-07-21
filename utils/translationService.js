@@ -22,6 +22,19 @@ const LIBRE_URL =
 const LIBRE_API_KEY = process.env.LIBRETRANSLATE_API_KEY || "";
 const SUPPORTED_LANGUAGES = ["en", "fr", "it"];
 
+if (!process.env.LIBRETRANSLATE_URL && !LIBRE_API_KEY) {
+  console.warn(
+    "[translationService] No LIBRETRANSLATE_URL or LIBRETRANSLATE_API_KEY set — " +
+      "falling back to the public libretranslate.com demo endpoint, which heavily " +
+      "rate-limits and often rejects unauthenticated requests. This is fine for a " +
+      "handful of translations, but bulk operations (seed scripts, 'Translate all') " +
+      "will be slow and can fail. For production, either self-host LibreTranslate " +
+      "(https://github.com/LibreTranslate/LibreTranslate, free, no rate limit) and " +
+      "set LIBRETRANSLATE_URL, or buy an API key at https://portal.libretranslate.com " +
+      "and set LIBRETRANSLATE_API_KEY."
+  );
+}
+
 // Fields to translate per entity type  (source language is always "en")
 const TRANSLATABLE_FIELDS = {
   product: ["name", "description", "unit", "seo.title", "seo.description", "roastOrigin", "coffeeOrigin", "blend", "shortDescription", "additionalInfo"],
@@ -59,6 +72,13 @@ const PAGE_NON_TRANSLATABLE_KEYS = new Set([
   "icon", "iconKey", "color", "image", "img", "src", "href", "link", "url",
   "id", "_id", "key", "slug", "type", "order", "phone", "whatsapp", "email",
   "embedUrl", "mapEmbedUrl", "countryCode", "lat", "lng", "rating",
+  // Structural/config values that happen to be strings but aren't copy:
+  // stat counts ("797+"), i18n key references ("statCustomers"), step
+  // numerals ("1", "2", ...), and internal filter taxonomy ("ordering",
+  // "shipping", ...) on FAQ items. Translating these produced garbage
+  // (e.g. "statStates" and "797+" being sent to the MT API as if they
+  // were sentences).
+  "number", "labelKey", "step", "category",
 ]);
 
 function isPlainObject(v) {
@@ -179,79 +199,97 @@ export async function translateSitePage({ entityId, document, sourceLang = "en",
  * @param {string} targetLang  e.g. "fr"
  * @returns {Promise<string>}
  */
-export async function translateText(
-  text,
-  sourceLang = "en",
-  targetLang = "fr",
-) {
+/** Small delay helper for throttling. */
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Translate a single string with retry-on-429 (exponential backoff). Used
+ * as the per-item fallback when a batch request isn't supported/accepted.
+ */
+async function translateTextWithRetry(text, sourceLang, targetLang, maxRetries = 3) {
   if (!text || typeof text !== "string" || text.trim() === "") return text;
   if (sourceLang === targetLang) return text;
 
-  try {
-    const payload = {
-      q: text,
-      source: sourceLang,
-      target: targetLang,
-      format: "text",
-    };
-    if (LIBRE_API_KEY) payload.api_key = LIBRE_API_KEY;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const payload = { q: text, source: sourceLang, target: targetLang, format: "text" };
+      if (LIBRE_API_KEY) payload.api_key = LIBRE_API_KEY;
 
-    const { data } = await axios.post(`${LIBRE_URL}/translate`, payload, {
-      timeout: 10000,
-    });
+      const { data } = await axios.post(`${LIBRE_URL}/translate`, payload, { timeout: 10000 });
+      return data.translatedText || text;
+    } catch (err) {
+      const status = err.response?.status;
+      const isRateLimited = status === 429;
+      const isLastAttempt = attempt === maxRetries;
 
-    return data.translatedText || text;
-  } catch (err) {
-    // Log but don't throw — missing translation is non-fatal
-    console.warn(
-      `[translationService] Failed to translate "${text.substring(0, 40)}…" to ${targetLang}:`,
-      err.message,
-    );
-    return text; // Return source text as fallback
+      if (isRateLimited && !isLastAttempt) {
+        // Back off harder each retry: 1.5s, 3s, 6s — the public
+        // LibreTranslate demo endpoint's rate-limit window is short-lived,
+        // so a short wait is usually enough to get back under it.
+        await sleep(1500 * 2 ** attempt);
+        continue;
+      }
+
+      console.warn(
+        `[translationService] Failed to translate "${text.substring(0, 40)}…" to ${targetLang}:`,
+        err.message,
+      );
+      return text; // Return source text as fallback — non-fatal
+    }
   }
+  return text;
+}
+
+// Kept for any external callers — now just delegates to the retrying version.
+export async function translateText(text, sourceLang = "en", targetLang = "fr") {
+  return translateTextWithRetry(text, sourceLang, targetLang);
 }
 
 /**
  * Translate multiple strings in a single batch request.
+ *
+ * The public LibreTranslate demo endpoint (the default when no
+ * LIBRETRANSLATE_URL/LIBRETRANSLATE_API_KEY is configured — see the header
+ * comment) rejects array-`q` batch requests outright for unauthenticated
+ * callers, and aggressively rate-limits individual requests too. This used
+ * to fall back to firing every string as a *parallel* individual request,
+ * which reliably tripped that rate limit on anything beyond a handful of
+ * strings (exactly what produced the wall of 429s). It now falls back to
+ * a small, sequential, delayed, retrying queue instead — slower, but it
+ * actually succeeds against a free/rate-limited endpoint. For real
+ * production volume, set LIBRETRANSLATE_URL to a self-hosted instance (see
+ * header comment) — this endpoint has no meaningful rate limit and batch
+ * requests work as expected.
  *
  * @param {string[]} texts
  * @param {string} sourceLang
  * @param {string} targetLang
  * @returns {Promise<string[]>}
  */
-export async function translateBatch(
-  texts,
-  sourceLang = "en",
-  targetLang = "fr",
-) {
+export async function translateBatch(texts, sourceLang = "en", targetLang = "fr") {
   if (!texts || texts.length === 0) return texts;
   if (sourceLang === targetLang) return texts;
 
   try {
-    const payload = {
-      q: texts,
-      source: sourceLang,
-      target: targetLang,
-      format: "text",
-    };
+    const payload = { q: texts, source: sourceLang, target: targetLang, format: "text" };
     if (LIBRE_API_KEY) payload.api_key = LIBRE_API_KEY;
 
-    const { data } = await axios.post(`${LIBRE_URL}/translate`, payload, {
-      timeout: 15000,
-    });
+    const { data } = await axios.post(`${LIBRE_URL}/translate`, payload, { timeout: 20000 });
 
     // LibreTranslate returns array when q is array
     if (Array.isArray(data.translatedText)) return data.translatedText;
     return texts;
   } catch (err) {
-    console.warn(
-      `[translationService] Batch translate to ${targetLang} failed:`,
-      err.message,
-    );
-    // Fall back to per-item translation
-    return Promise.all(
-      texts.map((t) => translateText(t, sourceLang, targetLang)),
-    );
+    console.warn(`[translationService] Batch translate to ${targetLang} failed, falling back to a throttled queue:`, err.message);
+
+    // Sequential + delayed, NOT Promise.all — deliberately avoids
+    // re-triggering the same rate limit that just failed the batch call.
+    const results = [];
+    for (let i = 0; i < texts.length; i++) {
+      results.push(await translateTextWithRetry(texts[i], sourceLang, targetLang));
+      if (i < texts.length - 1) await sleep(350); // ~3 req/s ceiling
+    }
+    return results;
   }
 }
 

@@ -51,6 +51,13 @@ const homeContentBlockSchema = new mongoose.Schema(
     contactPhone: { type: String, default: "" },
     contactEmail: { type: String, default: "" },
     contactWhatsapp: { type: String, default: "" },
+
+    // Social handles — a country may run entirely different accounts (or
+    // none yet) than HQ's Facebook/Twitter/Instagram. Falls back to NG's
+    // current links on the client until a country sets its own.
+    socialFacebook: { type: String, default: "" },
+    socialTwitter: { type: String, default: "" },
+    socialInstagram: { type: String, default: "" },
   },
   { timestamps: true },
 );

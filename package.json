@@ -8,7 +8,9 @@
     "dev": "nodemon index.js",
     "seed:logistics": "node scripts/seedLogisticsData.js",
     "seed:logistics:dev": "nodemon scripts/seedLogisticsData.js",
-    "seed:site-pages": "node scripts/seedSitePages.js"
+    "seed:site-pages": "node scripts/seedSitePages.js",
+    "update:multi-country-pages": "node scripts/updateMultiCountryPages.js",
+    "translate:multi-country-pages": "node scripts/translateMultiCountryPagesManually.js"
   },
   "author": "",
   "license": "ISC",
