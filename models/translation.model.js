@@ -40,6 +40,7 @@ const translationSchema = new mongoose.Schema(
         "brand",
         "blog",
         "blogCategory",
+        "blogTag",
         "banner",
         "slider",
         "coupon",
@@ -95,10 +96,10 @@ const translationSchema = new mongoose.Schema(
       default: Date.now,
     },
 
-    // Which translation engine produced this  (e.g. "libre" | "manual")
+    // Which translation engine produced this  (e.g. "openai" | "manual" | "mixed")
     engine: {
       type: String,
-      default: "libre",
+      default: "openai",
     },
 
     // PHASE 5: the language the MASTER content was authored in. Defaults to

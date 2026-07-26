@@ -47,6 +47,15 @@ export const AddCategoryController = async (request, response) => {
       });
     }
 
+    // Auto-translate to all non-English languages (non-blocking)
+    translateEntity({
+      entityType: "category",
+      entityId: saveCategory._id,
+      document: saveCategory.toObject(),
+    }).catch((err) =>
+      console.error("[translate] category create:", err.message),
+    );
+
     return response.json({
       message: "Category Added Successfully",
       data: saveCategory,
@@ -128,6 +137,18 @@ export const updateCategoryController = async (request, response) => {
     }
 
     const update = await CategoryModel.updateOne({ _id: _id }, updateData);
+
+    // Auto-translate to all non-English languages (non-blocking) — only
+    // worth triggering if the translatable field (name) actually changed.
+    if (updateData.name) {
+      translateEntity({
+        entityType: "category",
+        entityId: _id,
+        document: { name: updateData.name },
+      }).catch((err) =>
+        console.error("[translate] category update:", err.message),
+      );
+    }
 
     return response.json({
       message: "Category Updated Successfully",

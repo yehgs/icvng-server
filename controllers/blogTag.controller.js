@@ -1,6 +1,7 @@
 // controllers/blogTag.controller.js
 import BlogTagModel from "../models/blog-tag.model.js";
 import BlogPostModel from "../models/blog-post.model.js";
+import { translateEntity } from "../utils/translationService.js";
 
 // Create tag
 export async function createBlogTagController(request, response) {
@@ -32,6 +33,15 @@ export async function createBlogTagController(request, response) {
     });
 
     const savedTag = await newTag.save();
+
+    // Auto-translate to all non-English languages (non-blocking)
+    translateEntity({
+      entityType: "blogTag",
+      entityId: savedTag._id,
+      document: savedTag.toObject(),
+    }).catch((err) =>
+      console.error("[translate] blog tag create:", err.message),
+    );
 
     return response.status(201).json({
       message: "Blog tag created successfully",
@@ -170,6 +180,16 @@ export async function updateBlogTagController(request, response) {
     const updatedTag = await BlogTagModel.findByIdAndUpdate(id, updateData, {
       new: true,
     });
+
+    if (updatedTag) {
+      translateEntity({
+        entityType: "blogTag",
+        entityId: updatedTag._id,
+        document: updatedTag.toObject(),
+      }).catch((err) =>
+        console.error("[translate] blog tag update:", err.message),
+      );
+    }
 
     return response.json({
       message: "Blog tag updated successfully",

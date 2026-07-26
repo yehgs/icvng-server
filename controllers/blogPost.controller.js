@@ -79,6 +79,15 @@ export async function createBlogPostController(request, response) {
 
     const savedPost = await newPost.save();
 
+    // Auto-translate to all non-English languages (non-blocking)
+    translateEntity({
+      entityType: "blog",
+      entityId: savedPost._id,
+      document: savedPost.toObject(),
+    }).catch((err) =>
+      console.error("[translate] blog post create:", err.message),
+    );
+
     const populatedPost = await BlogPostModel.findById(savedPost._id)
       .populate("category", "name slug")
       .populate("tags", "name slug color")
@@ -289,6 +298,18 @@ export async function updateBlogPostController(request, response) {
       .populate("tags", "name slug color")
       .populate("author", "name email")
       .populate("relatedProducts", "name slug price images");
+
+    // Re-translate only new/changed fields (manual edits are protected
+    // inside translateEntity itself).
+    if (updatedPost) {
+      translateEntity({
+        entityType: "blog",
+        entityId: updatedPost._id,
+        document: updatedPost.toObject(),
+      }).catch((err) =>
+        console.error("[translate] blog post update:", err.message),
+      );
+    }
 
     return response.json({
       message: "Blog post updated successfully",

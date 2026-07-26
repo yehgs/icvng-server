@@ -1,6 +1,7 @@
 // controllers/blogCategory.controller.js
 import BlogCategoryModel from '../models/blog-category.model.js';
 import BlogPostModel from '../models/blog-post.model.js';
+import { translateEntity } from '../utils/translationService.js';
 
 // Create category
 export async function createBlogCategoryController(request, response) {
@@ -36,6 +37,15 @@ export async function createBlogCategoryController(request, response) {
     });
 
     const savedCategory = await newCategory.save();
+
+    // Auto-translate to all non-English languages (non-blocking)
+    translateEntity({
+      entityType: "blogCategory",
+      entityId: savedCategory._id,
+      document: savedCategory.toObject(),
+    }).catch((err) =>
+      console.error("[translate] blog category create:", err.message),
+    );
 
     return response.status(201).json({
       message: 'Blog category created successfully',
@@ -188,6 +198,16 @@ export async function updateBlogCategoryController(request, response) {
       updateData,
       { new: true }
     );
+
+    if (updatedCategory) {
+      translateEntity({
+        entityType: "blogCategory",
+        entityId: updatedCategory._id,
+        document: updatedCategory.toObject(),
+      }).catch((err) =>
+        console.error("[translate] blog category update:", err.message),
+      );
+    }
 
     return response.json({
       message: 'Blog category updated successfully',
