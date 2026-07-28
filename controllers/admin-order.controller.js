@@ -383,8 +383,18 @@ export const getAllOrdersController = async (request, response) => {
 
     let query = {};
 
+    // Sub-roles allowed to see every order regardless of country/domain.
+    // Per policy: ONLY IT and DIRECTOR get cross-country visibility — every
+    // other HQ role (including MANAGER) is restricted to Nigeria's orders,
+    // and a country-scoped admin (e.g. a Togo/Italy manager) is restricted
+    // to their own assignedCountry. (LOGISTICS/etc. still default to GLOBAL
+    // `scope` for other data types — this restriction is order-specific.)
+    const GLOBAL_ORDER_VIEW_SUBROLES = ["IT", "DIRECTOR"];
+    const isGlobalOrderViewer =
+      user.role === "ADMIN" && GLOBAL_ORDER_VIEW_SUBROLES.includes(user.subRole);
+
     if (user.role === "ADMIN") {
-      if (["IT", "MANAGER", "DIRECTOR"].includes(user.subRole)) {
+      if (isGlobalOrderViewer) {
         query = {};
       } else if (user.subRole === "SALES") {
         query = {
@@ -393,6 +403,12 @@ export const getAllOrdersController = async (request, response) => {
             { isWebsiteOrder: true },
           ],
         };
+      } else if (
+        ["MANAGER", "SALES_MANAGER", "HR", "ACCOUNTANT", "GRAPHICS", "EDITOR", "LOGISTICS", "WAREHOUSE"].includes(
+          user.subRole,
+        )
+      ) {
+        query = {};
       } else {
         return response.status(403).json({
           message: "Access denied",
@@ -406,13 +422,22 @@ export const getAllOrdersController = async (request, response) => {
       });
     }
 
-    // Country-scoped admin (e.g. a foreign Togo manager) only sees orders
-    // placed in their own country — GLOBAL admins (req.countryScope === null,
-    // i.e. IT/Director with scope GLOBAL) are unrestricted.
-    if (request.countryScope) {
+    // Country visibility:
+    //   - IT / DIRECTOR                → unrestricted, every country/domain
+    //   - COUNTRY-scoped admin         → only their own assignedCountry
+    //     (e.g. a foreign Togo manager sees only i-coffee.tg orders)
+    //   - every other HQ admin         → Nigeria (HQ) orders only — this is
+    //     the default because `scope` defaults to GLOBAL on the user model
+    //     for non-HQ_ONLY_SUBROLES, so without this an ordinary HQ admin
+    //     (MANAGER, SALES, ACCOUNTANT, etc.) would otherwise see every
+    //     country's orders too.
+    if (isGlobalOrderViewer) {
+      // no country filter
+    } else if (request.countryScope) {
       query = { $and: [query, { countryCode: request.countryScope }] };
+    } else {
+      query = { $and: [query, { countryCode: "NG" }] };
     }
-
     if (search) {
       const searchRegex = new RegExp(search, "i");
       query.$and = query.$and || [];
@@ -489,9 +514,13 @@ export const updateOrderStatusController = async (request, response) => {
       });
     }
 
+    const GLOBAL_ORDER_VIEW_SUBROLES = ["IT", "DIRECTOR"];
+    const isGlobalOrderViewer =
+      user.role === "ADMIN" && GLOBAL_ORDER_VIEW_SUBROLES.includes(user.subRole);
+
     if (user.role === "ADMIN") {
-      if (["IT", "MANAGER", "DIRECTOR"].includes(user.subRole)) {
-        // Can update any order
+      if (isGlobalOrderViewer) {
+        // Can update any order, any country
       } else if (user.subRole === "SALES") {
         if (!order.isWebsiteOrder && order.createdBy?.toString() !== userId) {
           return response.status(403).json({
@@ -499,11 +528,27 @@ export const updateOrderStatusController = async (request, response) => {
             error: true,
           });
         }
-      } else {
+      } else if (
+        !["MANAGER", "SALES_MANAGER", "HR", "ACCOUNTANT", "GRAPHICS", "EDITOR", "LOGISTICS", "WAREHOUSE"].includes(
+          user.subRole,
+        )
+      ) {
         return response.status(403).json({
           message: "Access denied",
           error: true,
         });
+      }
+
+      // Country restriction — mirrors getAllOrdersController: only IT/
+      // DIRECTOR can touch orders outside their own country/scope.
+      if (!isGlobalOrderViewer) {
+        const allowedCountry = request.countryScope || "NG";
+        if (order.countryCode !== allowedCountry) {
+          return response.status(403).json({
+            message: "You can only update orders from your own country",
+            error: true,
+          });
+        }
       }
     }
 

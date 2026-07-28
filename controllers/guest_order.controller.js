@@ -208,14 +208,22 @@ async function buildGuestOrders({
 
       paymentId,
       payment_status: paymentStatus,
-      payment_method:
-        paymentMethod === "stripe"
-          ? "STRIPE"
-          : paymentMethod === "paystack"
-            ? "PAYSTACK"
-            : paymentMethod === "BANK_TRANSFER"
-              ? "BANK_TRANSFER"
-              : "BANK_TRANSFER",
+      // NOTE: callers pass this inconsistently ("PAYSTACK" from the Paystack
+      // webhook, "stripe" lowercase from the Stripe webhook, "BANK_TRANSFER"
+      // from the bank-transfer flow). The old comparison only matched
+      // lowercase "paystack", so every guest Paystack order silently fell
+      // through to the "BANK_TRANSFER" default — it was recorded as paid
+      // via Paystack (paymentId/reference correct) but tagged with the
+      // wrong payment_method, hiding it from admin views filtered to
+      // "Paystack" even though the order itself existed. Normalize to
+      // uppercase before comparing so the caller's casing never matters.
+      payment_method: (() => {
+        const normalized = (paymentMethod || "").toUpperCase();
+        if (normalized === "STRIPE") return "STRIPE";
+        if (normalized === "PAYSTACK") return "PAYSTACK";
+        if (normalized === "BANK_TRANSFER") return "BANK_TRANSFER";
+        return normalized || "BANK_TRANSFER";
+      })(),
 
       delivery_status: "PENDING",
       orderStatus: "PENDING",
