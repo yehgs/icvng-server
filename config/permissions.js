@@ -25,6 +25,7 @@ export const MODULES = {
   INVOICES: "invoices",
   COUPONS: "coupons",
   CONTENT: "content", // banners, sliders, fomo
+  CONTACT: "contact", // contact/partner form submissions + newsletter subscribers
   BLOG: "blog",
   CRM: "crm",
   PRODUCT_REQUESTS: "productRequests",
@@ -96,6 +97,12 @@ export const PERMISSIONS = [
   // Content (banners/sliders/fomo)
   { key: "content.view", module: MODULES.CONTENT, description: "View marketing content", hqOnly: false },
   { key: "content.manage", module: MODULES.CONTENT, description: "Manage banners/sliders/FOMO", hqOnly: false },
+
+  // Contact — item #1: contact/partner form submissions + newsletter
+  // subscribers. Country-scoped (not hqOnly): a foreign admin holding this
+  // sees only their own country's messages/subscribers via countryScope.
+  { key: "contact.view", module: MODULES.CONTACT, description: "View contact/partner form submissions and newsletter subscribers", hqOnly: false },
+  { key: "contact.manage", module: MODULES.CONTACT, description: "Update contact message status (triage)", hqOnly: false },
 
   // Blog
   { key: "blog.view", module: MODULES.BLOG, description: "View blog", hqOnly: false },

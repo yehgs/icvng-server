@@ -4,9 +4,11 @@
  * CRUD for FOREIGN_ADMIN accounts.
  *
  * - DIRECTOR and IT can create / manage all foreign admins.
- * - MANAGER can also create / update foreign admins (but not delete).
- * - IT and MANAGER can assign additional `foreignSubRoles` to give a
- *   foreign admin access to more sections.
+ * - MANAGER (HQ or country/"foreign" scoped) is NOT allowed to create,
+ *   update, delete, promote, or assign sub-roles to foreign admins — user
+ *   management (foreign or normal) is not exposed to MANAGER. See item #8.
+ * - IT can assign additional `foreignSubRoles` to give a foreign admin
+ *   access to more sections.
  * - LOGISTICS is never allowed in foreignSubRoles.
  */
 
@@ -17,8 +19,10 @@ import { getCountryByCode, ALL_COUNTRY_CODES } from "../config/countries/index.j
 import { logActivity } from "../utils/activityLogger.js";
 import { FOREIGN_EXPOSABLE_SUBROLES, LOGISTICS_SUBROLES } from "../models/user.model.js";
 
-// Who can create / manage foreign admins
-const ALLOWED_CREATORS = ["DIRECTOR", "IT", "MANAGER"];
+// Who can create / manage foreign admins — DIRECTOR and IT only.
+// MANAGER intentionally excluded (item #8): user management, whether over
+// normal admins or "foreign" (country) admins, is not a MANAGER capability.
+const ALLOWED_CREATORS = ["DIRECTOR", "IT"];
 // Who can delete
 const ALLOWED_DELETERS = ["DIRECTOR", "IT"];
 
@@ -41,7 +45,7 @@ export async function createForeignAdmin(req, res) {
 
     if (!ALLOWED_CREATORS.includes(creator.subRole)) {
       return res.status(403).json({
-        message: "Only DIRECTOR, IT, or MANAGER can create foreign admin accounts",
+        message: "Only DIRECTOR or IT can create foreign admin accounts",
         error: true,
         success: false,
       });
@@ -201,7 +205,7 @@ export async function listForeignAdmins(req, res) {
 /**
  * PATCH /api/admin/foreign-admins/:id
  * Update country assignment, language, status, or foreignSubRoles.
- * IT/MANAGER can update; DIRECTOR can update everything.
+ * IT and DIRECTOR can update (MANAGER excluded, see item #8).
  */
 export async function updateForeignAdmin(req, res) {
   try {
@@ -287,9 +291,9 @@ export async function updateForeignAdminSubRoles(req, res) {
   try {
     const actor = req.user;
 
-    if (!["DIRECTOR", "IT", "MANAGER"].includes(actor.subRole)) {
+    if (!["DIRECTOR", "IT"].includes(actor.subRole)) {
       return res.status(403).json({
-        message: "Only DIRECTOR, IT, or MANAGER can assign sub-roles",
+        message: "Only DIRECTOR or IT can assign sub-roles",
         error: true,
         success: false,
       });
@@ -386,16 +390,16 @@ export async function deleteForeignAdmin(req, res) {
 
 /**
  * PATCH /api/admin/users/:id/promote-to-foreign
- * IT or MANAGER can upgrade an existing admin to FOREIGN_ADMIN
+ * IT or DIRECTOR can upgrade an existing admin to FOREIGN_ADMIN
  * (changes their subRole to FOREIGN_ADMIN and assigns a country).
  */
 export async function promoteToForeignAdmin(req, res) {
   try {
     const actor = req.user;
 
-    if (!["DIRECTOR", "IT", "MANAGER"].includes(actor.subRole)) {
+    if (!["DIRECTOR", "IT"].includes(actor.subRole)) {
       return res.status(403).json({
-        message: "Only DIRECTOR, IT, or MANAGER can promote users to foreign admin",
+        message: "Only DIRECTOR or IT can promote users to foreign admin",
         error: true,
         success: false,
       });

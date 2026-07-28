@@ -372,6 +372,11 @@ export async function guestPaystackController(request, response) {
               price: i.selectedPrice || i.price,
               priceOption: i.priceOption || "regular",
             })),
+            // Item #7: read back by processGuestPaystackWebhook below —
+            // without it, guest Paystack orders silently defaulted to "NG"
+            // regardless of the storefront domain the guest actually
+            // checked out from.
+            countryCode: request.countryCode || "NG",
           },
         }),
       },
@@ -534,6 +539,10 @@ export async function guestStripeController(request, response) {
             priceOption: i.priceOption || "regular",
           })),
         ),
+        // Item #7: read back by processGuestStripeWebhook — without it,
+        // guest Stripe orders (Italy's only payment gateway) silently
+        // defaulted to "NG" regardless of the storefront domain.
+        countryCode: request.countryCode || "NG",
       },
       line_items,
       success_url: `${process.env.FRONTEND_URL}/success?guest=true&session_id={CHECKOUT_SESSION_ID}`,
@@ -657,6 +666,7 @@ export async function processGuestPaystackWebhook(metadata, reference) {
     shippingMethodId,
     shippingCost,
     cartItems,
+    countryCode, // Item #7: stamped at checkout initiation, see guestPaystackController
   } = metadata;
 
   // Idempotency check
@@ -687,6 +697,7 @@ export async function processGuestPaystackWebhook(metadata, reference) {
     currency: "NGN",
     paymentId: reference,
     paymentStatus: "PAID",
+    countryCode: countryCode || "NG", // Item #7
     groupId: groupId || generateGroupId("PSK-WH"),
   });
 
@@ -764,6 +775,7 @@ export async function processGuestStripeWebhook(session) {
     currency: meta.toCurrency || "USD",
     paymentId: session.payment_intent || session.id,
     paymentStatus: "PAID",
+    countryCode: meta.countryCode || "NG", // Item #7
     groupId,
     exchangeRateInfo,
     originalAmounts,

@@ -214,6 +214,12 @@ export const createAdminOrderController = async (request, response) => {
           shipping_cost: shippingCostPerItem,
           totalAmt: itemTotal,
           currency: "NGN",
+          // Item #7: manual/offline orders need the same country stamping
+          // as website orders — prefer the creating admin's own assigned
+          // country (req.countryScope) so a Togo admin's manual order is
+          // correctly attributed to Togo; GLOBAL admins fall back to the
+          // domain-detected country like every other order path.
+          countryCode: request.countryScope || request.countryCode || "NG",
           groupTotals: isParent ? groupTotals : {},
           payment_status: paymentMethod === "CASH" ? "PENDING" : "PENDING",
           payment_method: paymentMethod,

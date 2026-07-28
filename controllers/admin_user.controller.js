@@ -611,11 +611,14 @@ function checkUserCreationPermissions(adminUser, targetRole, targetSubRole) {
 
   // HR cannot create DIRECTOR or IT (PHASE 1: IT added — creating an IT
   // account would be full privilege amplification, since IT can do anything)
+  // Item #4: HR also cannot create MANAGER accounts — MANAGER holds
+  // near-full operational permissions, so granting it is restricted to
+  // IT/DIRECTOR only, same reasoning as DIRECTOR/IT above.
   if (subRole === "HR") {
-    if (targetRole === "ADMIN" && ["DIRECTOR", "IT"].includes(targetSubRole)) {
+    if (targetRole === "ADMIN" && ["DIRECTOR", "IT", "MANAGER"].includes(targetSubRole)) {
       return {
         allowed: false,
-        message: "HR cannot create DIRECTOR or IT users",
+        message: "HR cannot create DIRECTOR, IT, or MANAGER users",
       };
     }
     return { allowed: true };
@@ -654,19 +657,20 @@ function checkUserUpdatePermissions(adminUser, userToUpdate, updates) {
     return { allowed: true };
   }
 
-  // HR cannot update DIRECTOR
+  // HR cannot update DIRECTOR/IT/MANAGER accounts, and cannot promote
+  // anyone into those roles either (item #4: MANAGER is not HR’s to grant).
   if (subRole === "HR") {
-    if (["DIRECTOR", "IT"].includes(userToUpdate.subRole)) {
+    if (["DIRECTOR", "IT", "MANAGER"].includes(userToUpdate.subRole)) {
       return {
         allowed: false,
-        message: "HR cannot update DIRECTOR or IT users",
+        message: "HR cannot update DIRECTOR, IT, or MANAGER users",
       };
     }
-    // HR cannot promote someone to DIRECTOR or IT (PHASE 1: IT added)
-    if (["DIRECTOR", "IT"].includes(updates.subRole)) {
+    // HR cannot promote someone to DIRECTOR, IT, or MANAGER (PHASE 1: IT added; item #4: MANAGER added)
+    if (["DIRECTOR", "IT", "MANAGER"].includes(updates.subRole)) {
       return {
         allowed: false,
-        message: "HR cannot promote users to DIRECTOR or IT roles",
+        message: "HR cannot promote users to DIRECTOR, IT, or MANAGER roles",
       };
     }
     return { allowed: true };

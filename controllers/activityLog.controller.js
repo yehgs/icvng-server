@@ -1,7 +1,31 @@
 // server/controllers/activityLog.controller.js
 import ActivityLogModel from "../models/activity-log.model.js";
+import UserModel from "../models/user.model.js";
 
-// GET /api/activity-logs — DIRECTOR and IT only
+/**
+ * Item #4 — MANAGER can now view the Activity Log, but only entries
+ * performed by users belonging to their own assigned country. GLOBAL
+ * admins (IT, DIRECTOR) are unrestricted.
+ *
+ * ActivityLog rows have no countryCode of their own (they're written from
+ * dozens of call sites across the codebase via logActivity(), and
+ * retrofitting every one of them to stamp a country reliably would be a
+ * much larger, riskier change than this needs). Instead, scoping is
+ * resolved by joining through the acting user: "which users belong to my
+ * country?" then "show me only their log rows."
+ *
+ * Returns:
+ *   null        → GLOBAL admin, no filter, sees every country's activity.
+ *   ObjectId[]  → COUNTRY-scoped admin, restrict to these users' rows only.
+ */
+async function getCountryScopedUserIds(req) {
+  const user = req.user;
+  if (!user || user.scope !== "COUNTRY" || !user.assignedCountry) return null;
+  const ids = await UserModel.find({ assignedCountry: user.assignedCountry }).select("_id");
+  return ids.map((u) => u._id);
+}
+
+// GET /api/activity-logs — IT, DIRECTOR (global), and MANAGER (country-scoped)
 export const getActivityLogs = async (req, res) => {
   try {
     const {
@@ -18,7 +42,24 @@ export const getActivityLogs = async (req, res) => {
 
     const query = {};
 
-    if (userId) query.user = userId;
+    // Item #4: country-scoped MANAGER only sees activity from users in
+    // their own country. GLOBAL admins (IT/DIRECTOR) are unrestricted.
+    // IMPORTANT: an explicit ?userId= filter must still respect this scope
+    // — otherwise a country-scoped MANAGER could just pass another
+    // country's userId and read their activity directly.
+    const scopedUserIds = await getCountryScopedUserIds(req);
+    if (scopedUserIds) {
+      const allowedIds = scopedUserIds.map((id) => id.toString());
+      if (userId) {
+        // Requested a specific user — only honor it if that user is in scope;
+        // otherwise force an empty result rather than leaking cross-country data.
+        query.user = allowedIds.includes(String(userId)) ? userId : "000000000000000000000000";
+      } else {
+        query.user = { $in: scopedUserIds };
+      }
+    } else if (userId) {
+      query.user = userId;
+    }
     if (action) query.action = action;
     if (resourceType) query.resourceType = resourceType;
     if (status) query.status = status;
@@ -65,21 +106,25 @@ export const getActivityLogs = async (req, res) => {
   }
 };
 
-// GET /api/activity-logs/summary — for dashboard widget (DIRECTOR + IT)
+// GET /api/activity-logs/summary — for dashboard widget (IT/DIRECTOR global, MANAGER country-scoped)
 export const getActivitySummary = async (req, res) => {
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000); // last 24h
 
+    // Item #4: same country scoping as getActivityLogs.
+    const scopedUserIds = await getCountryScopedUserIds(req);
+    const scopeMatch = scopedUserIds ? { user: { $in: scopedUserIds } } : {};
+
     const [totalToday, byAction, byUser, recentLogs] = await Promise.all([
-      ActivityLogModel.countDocuments({ createdAt: { $gte: since } }),
+      ActivityLogModel.countDocuments({ createdAt: { $gte: since }, ...scopeMatch }),
       ActivityLogModel.aggregate([
-        { $match: { createdAt: { $gte: since } } },
+        { $match: { createdAt: { $gte: since }, ...scopeMatch } },
         { $group: { _id: "$action", count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 8 },
       ]),
       ActivityLogModel.aggregate([
-        { $match: { createdAt: { $gte: since } } },
+        { $match: { createdAt: { $gte: since }, ...scopeMatch } },
         { $group: { _id: "$user", count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 5 },
@@ -101,7 +146,7 @@ export const getActivitySummary = async (req, res) => {
           },
         },
       ]),
-      ActivityLogModel.find()
+      ActivityLogModel.find(scopeMatch)
         .populate("user", "name email subRole")
         .sort({ createdAt: -1 })
         .limit(10),

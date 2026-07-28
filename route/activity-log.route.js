@@ -9,21 +9,24 @@ import {
 
 const activityLogRouter = Router();
 
-// All routes require auth + DIRECTOR or IT only
-const directorOrIT = (req, res, next) => {
-  const allowed = ['DIRECTOR', 'IT'];
+// Item #4: MANAGER can now view the Activity Log (previously IT/DIRECTOR
+// only) — but only their own country's entries, enforced in the controller
+// via getCountryScopedUserIds(). IT/DIRECTOR remain unrestricted (GLOBAL
+// scope). Any other subRole is still denied outright here.
+const allowedRoles = (req, res, next) => {
+  const allowed = ['DIRECTOR', 'IT', 'MANAGER'];
   if (!req.user || !allowed.includes(req.user.subRole)) {
     return res.status(403).json({
       success: false,
       error: true,
-      message: 'Access denied. Director or IT only.',
+      message: 'Access denied. Director, IT, or Manager only.',
     });
   }
   next();
 };
 
-activityLogRouter.get('/summary', auth, directorOrIT, getActivitySummary);
-activityLogRouter.get('/actions', auth, directorOrIT, getActionTypes);
-activityLogRouter.get('/', auth, directorOrIT, getActivityLogs);
+activityLogRouter.get('/summary', auth, allowedRoles, getActivitySummary);
+activityLogRouter.get('/actions', auth, allowedRoles, getActionTypes);
+activityLogRouter.get('/', auth, allowedRoles, getActivityLogs);
 
 export default activityLogRouter;

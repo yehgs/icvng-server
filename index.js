@@ -55,6 +55,8 @@ import directPricingRouter from "./route/direct-pricing.route.js";
 import customerRouter from "./route/customer.route.js";
 import fomoRouter from "./route/fomo.route.js";
 import formEmailRouter from "./route/form-email.route.js";
+import contactMessageRouter from "./route/contact-message.route.js";
+import subscriberRouter from "./route/subscriber.route.js";
 import adminOrderRouter from "./route/admin-order.route.js";
 import orderRequestRouter from "./route/order-request.route.js";
 import couponRouter from "./route/coupon.route.js";
@@ -271,6 +273,11 @@ app.use("/api/fomo", fomoRouter);
 app.use("/api/home-content", homeContentBlockRouter);
 app.use("/api/site-pages", sitePageRouter);
 app.use("/api/send-email", formEmailRouter);
+// Item #1: newsletter subscribe (public /api/subscribe) + admin subscriber
+// list (/api/admin/subscribers) both live on this router, mounted at /api
+// root so its own internal paths resolve exactly as written.
+app.use("/api", subscriberRouter);
+app.use("/api/admin/contact-messages", contactMessageRouter);
 app.use("/api/admin/orders", adminOrderRouter);
 app.use("/api/order-requests", orderRequestRouter);
 app.use("/api/coupons", couponRouter);

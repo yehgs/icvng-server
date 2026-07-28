@@ -31,6 +31,46 @@ function isUnlimited(user) {
   return UNLIMITED_ROLES.includes(user?.subRole);
 }
 
+/**
+ * Item #6 — separation of concern: a COUNTRY-scoped admin (e.g. a Togo
+ * MANAGER) must only see scrape jobs created by users in THEIR country, not
+ * every country's output. isSuperRole() alone used to grant a country-scoped
+ * MANAGER an unfiltered query ({}) — the same "sees everyone's roles/jobs"
+ * bug shown in the screenshots.
+ *
+ * ScrapeJobModel has no countryCode of its own, so — same approach as the
+ * activity log — this resolves scope by joining through the creator's
+ * assignedCountry rather than retrofitting every job-creation call site to
+ * stamp a country.
+ *
+ * Returns:
+ *   null        → GLOBAL admin (IT/DIRECTOR, or a GLOBAL-scope MANAGER at HQ)
+ *                 — no filter, sees every country's jobs.
+ *   ObjectId[]  → COUNTRY-scoped admin — restrict to these users' jobs only.
+ */
+async function getCountryScopedCreatorIds(user) {
+  if (!user || user.scope !== "COUNTRY" || !user.assignedCountry) return null;
+  const ids = await UserModel.find({ assignedCountry: user.assignedCountry }).select("_id");
+  return ids.map((u) => u._id);
+}
+
+/**
+ * Item #6: shared replacement for the repeated
+ * "!isSuperRole && createdBy !== me" ownership check used across the
+ * delete-row/bulk-delete/import/delete-job endpoints. Adds the same
+ * country-scope restriction as getJobByIdController: a country-scoped
+ * super role (foreign MANAGER) can act on their own country's jobs but
+ * not another country's, even though they're a "super" role.
+ */
+async function canActOnJob(user, job) {
+  if (!isSuperRole(user)) {
+    return job.createdBy.toString() === user._id.toString();
+  }
+  const scopedIds = await getCountryScopedCreatorIds(user);
+  if (!scopedIds) return true; // GLOBAL super — unrestricted
+  return scopedIds.some((id) => id.toString() === job.createdBy.toString());
+}
+
 // ── Quota check helper (non-unlimited users) ─────────────────────────────────
 async function enforceQuota(user, res) {
   if (isUnlimited(user)) return true; // skip for admins
@@ -115,7 +155,17 @@ export async function getPlatformsController(req, res) {
 export async function getJobsController(req, res) {
   try {
     if (!crmAccess(req.user, res)) return;
-    const query = isSuperRole(req.user) ? {} : { createdBy: req.user._id };
+    // Item #6: country-scoped super roles (a "foreign" MANAGER) get their
+    // country's jobs, not every country's. GLOBAL supers (IT/DIRECTOR, or
+    // an HQ MANAGER) still see everything; non-super roles still only see
+    // their own jobs, unchanged.
+    let query;
+    if (isSuperRole(req.user)) {
+      const scopedIds = await getCountryScopedCreatorIds(req.user);
+      query = scopedIds ? { createdBy: { $in: scopedIds } } : {};
+    } else {
+      query = { createdBy: req.user._id };
+    }
     const jobs = await ScrapeJobModel.find(query)
       .sort({ createdAt: -1 })
       .limit(100)
@@ -137,11 +187,17 @@ export async function getJobByIdController(req, res) {
     const job = await ScrapeJobModel.findById(req.params.id);
     if (!job)
       return res.status(404).json({ success: false, message: "Job not found" });
-    if (
-      !isSuperRole(req.user) &&
-      job.createdBy.toString() !== req.user._id.toString()
-    ) {
-      return res.status(403).json({ success: false, message: "Access denied" });
+    if (!isSuperRole(req.user)) {
+      if (job.createdBy.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ success: false, message: "Access denied" });
+      }
+    } else {
+      // Item #6: a country-scoped super role (foreign MANAGER) can only
+      // open jobs created by someone in their own country.
+      const scopedIds = await getCountryScopedCreatorIds(req.user);
+      if (scopedIds && !scopedIds.some((id) => id.toString() === job.createdBy.toString())) {
+        return res.status(403).json({ success: false, message: "Access denied" });
+      }
     }
     return res.json({ success: true, data: job });
   } catch (err) {
@@ -260,10 +316,7 @@ export async function deleteBulkResultRowsController(req, res) {
     const job = await ScrapeJobModel.findById(req.params.id);
     if (!job)
       return res.status(404).json({ success: false, message: "Job not found" });
-    if (
-      !isSuperRole(req.user) &&
-      job.createdBy.toString() !== req.user._id.toString()
-    ) {
+    if (!(await canActOnJob(req.user, job))) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
     const indexSet = new Set((indices || []).map(Number));
@@ -288,10 +341,7 @@ export async function deleteResultRowController(req, res) {
     const job = await ScrapeJobModel.findById(req.params.id);
     if (!job)
       return res.status(404).json({ success: false, message: "Job not found" });
-    if (
-      !isSuperRole(req.user) &&
-      job.createdBy.toString() !== req.user._id.toString()
-    ) {
+    if (!(await canActOnJob(req.user, job))) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
     const idx = parseInt(req.params.index);
@@ -320,10 +370,7 @@ export async function importJobResultsController(req, res) {
     const job = await ScrapeJobModel.findById(req.params.id);
     if (!job)
       return res.status(404).json({ success: false, message: "Job not found" });
-    if (
-      !isSuperRole(req.user) &&
-      job.createdBy.toString() !== req.user._id.toString()
-    ) {
+    if (!(await canActOnJob(req.user, job))) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
@@ -384,10 +431,7 @@ export async function deleteJobController(req, res) {
     const job = await ScrapeJobModel.findById(req.params.id);
     if (!job)
       return res.status(404).json({ success: false, message: "Job not found" });
-    if (
-      !isSuperRole(req.user) &&
-      job.createdBy.toString() !== req.user._id.toString()
-    ) {
+    if (!(await canActOnJob(req.user, job))) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
     await ScrapeJobModel.findByIdAndDelete(req.params.id);

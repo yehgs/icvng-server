@@ -59,6 +59,7 @@ export const ROLE_DEFINITIONS = {
       "content.view", "content.manage",
       "blog.view", "blog.manage",
       "crm.view", "crm.manage",
+      "contact.view", "contact.manage",
       "productRequests.view", "productRequests.manage",
       "orderRequests.view", "orderRequests.manage",
       "suppliers.view",
@@ -70,7 +71,9 @@ export const ROLE_DEFINITIONS = {
       "logistics.view", "logistics.manage",
       "shipping.view", "shipping.manage",
       "scraper.use", "scraper.admin",
-      "users.view", "users.manage",
+      // Intentionally NO "users.view"/"users.manage" — MANAGER (HQ or
+      // country/"foreign" scoped) must not see or touch User Management.
+      // That stays with IT, DIRECTOR (full) and HR (bounded). See item #8.
       "translations.view", "translations.manage",
       "finance.view",
       "reports.view", "reports.viewGlobal",
@@ -93,6 +96,7 @@ export const ROLE_DEFINITIONS = {
       "invoices.view", "invoices.manage",
       "coupons.view", "coupons.manage",
       "crm.view", "crm.manage",
+      "contact.view", "contact.manage",
       "productRequests.view", "productRequests.manage",
       "orderRequests.view", "orderRequests.manage",
       "logistics.view",
@@ -117,6 +121,7 @@ export const ROLE_DEFINITIONS = {
       "invoices.view", "invoices.manage",
       "coupons.view", "coupons.manage",
       "crm.view", "crm.manage",
+      "contact.view", "contact.manage",
       "productRequests.view", "productRequests.manage",
       "orderRequests.view", "orderRequests.manage",
       "scraper.use",

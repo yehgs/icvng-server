@@ -4,6 +4,7 @@ import {
   generatePlainText,
 } from "../utils/generateEmailFormTemplate.js";
 import { transporter } from "../utils/nodemailer.js";
+import ContactMessageModel from "../models/contact-message.model.js";
 
 export async function formEmailController(req, res) {
   try {
@@ -93,6 +94,31 @@ export async function formEmailController(req, res) {
       businessType: businessType?.trim() || "",
       productCategories: productCategories?.trim() || "",
     };
+
+    // Item #1: persist the submission so it shows up in the admin panel
+    // (country-scoped: a Togo admin sees only Togo's messages, IT/DIRECTOR
+    // see all countries) instead of only ever existing as an email.
+    // Best-effort -- a DB hiccup here must never block the email from
+    // sending, so it's wrapped and only logged on failure.
+    try {
+      await ContactMessageModel.create({
+        formType,
+        name: emailData.name,
+        email: emailData.email,
+        phone: emailData.phone,
+        company: emailData.company,
+        subject: emailData.subject,
+        message: emailData.message,
+        howDidYouHear: emailData.howDidYouHear,
+        preferredContact: emailData.preferredContact,
+        businessType: emailData.businessType,
+        productCategories: emailData.productCategories,
+        countryCode: req.countryCode,
+        submittedLanguage: req.body.language || "en",
+      });
+    } catch (dbErr) {
+      console.error("Failed to save ContactMessage to DB:", dbErr.message);
+    }
 
     // Generate HTML email body
     const htmlBody = generateEmailHTML(emailData);

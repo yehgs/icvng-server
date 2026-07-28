@@ -527,6 +527,13 @@ export async function stripePaymentController(request, response) {
         originalShippingNGN: originalAmounts.shippingCost.toString(),
         originalTotalNGN: originalAmounts.totalAmt.toString(),
         itemCount: cartItems.length.toString(),
+        // Item #7: the Stripe webhook that later creates the Order docs
+        // has no Host header from the customer's browser to detect country
+        // from (Stripe calls our server directly) — it can only read this
+        // back from session.metadata. Without it, every Stripe order
+        // silently defaulted to "NG" regardless of which domain (e.g.
+        // i-coffee.it) the purchase actually came from.
+        countryCode: request.countryCode || "NG",
       },
       line_items: line_items,
       success_url: `${process.env.FRONTEND_URL}/success`,
@@ -672,6 +679,11 @@ async function getOrderProductItemsFromStripe({
       totalAmt: amountInTargetCurrency + shippingCostPerItem,
       shipping_cost: shippingCostPerItem,
       currency: session.currency.toUpperCase(),
+      // Item #7: read back the country the customer actually purchased
+      // from (stamped into session.metadata by stripePaymentController) —
+      // insertMany() doesn't run countryScopedPlugin's pre-save stamping,
+      // so without this every Stripe order would silently default to "NG".
+      countryCode: session.metadata?.countryCode || "NG",
       exchangeRateUsed: exchangeRateInfo,
       amountsInNGN: {
         subtotal: originalAmountsNGN.subtotal / productItems.length,
@@ -844,6 +856,10 @@ export async function DirectBankTransferOrderController(request, response) {
         totalAmt: itemTotal,
         shipping_cost: shippingCostPerItem,
         currency: "NGN",
+        // Item #7: same country-isolation stamping as the Paystack/Stripe
+        // paths above — insertMany() skips countryScopedPlugin's pre-save
+        // hook, so without this every bank-transfer order defaulted to "NG".
+        countryCode: request.countryCode || "NG",
 
         // Group totals
         groupTotals: isParent ? groupTotals : {},

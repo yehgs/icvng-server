@@ -81,6 +81,12 @@ export const registerBTBCustomer = async (req, res) => {
       address: address || {},
       isWebsiteCustomer: true,
       status: "ACTIVE",
+      // Item #7: public self-registration has no admin countryScope
+      // context for countryScopedPlugin's pre-save hook to read (that's
+      // only set by the ADMIN countryScope middleware) — without this
+      // explicit stamp, every B2B signup silently defaulted to "NG"
+      // regardless of which country's domain they registered from.
+      countryCode: req.countryCode || "NG",
     });
 
     await customer.save();

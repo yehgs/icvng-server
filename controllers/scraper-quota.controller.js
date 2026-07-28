@@ -133,7 +133,14 @@ export async function getAllQuotasController(req, res) {
         .json({ success: false, message: "Manager, IT or Director only" });
     }
 
-    const users = await UserModel.find({ role: "ADMIN", status: "Active" })
+    // Item #6: a country-scoped MANAGER (foreign admin) only sees users in
+    // their own country to assign quotas to — not every admin globally.
+    // GLOBAL admins (IT/DIRECTOR, or an HQ-scoped MANAGER) still see everyone.
+    const userFilter = { role: "ADMIN", status: "Active" };
+    if (req.user.scope === "COUNTRY" && req.user.assignedCountry) {
+      userFilter.assignedCountry = req.user.assignedCountry;
+    }
+    const users = await UserModel.find(userFilter)
       .select("name email subRole scrapeQuota")
       .lean();
 
@@ -211,6 +218,17 @@ export async function setUserQuotaController(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
+    // Item #6: a country-scoped MANAGER can only set quotas for users in
+    // their own country — not another country's admin.
+    if (
+      req.user.scope === "COUNTRY" &&
+      target.assignedCountry !== req.user.assignedCountry
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: `Access denied: you can only manage quotas for ${req.user.assignedCountry} users`,
+      });
+    }
     if (UNLIMITED_ROLES.includes(target.subRole)) {
       return res
         .status(400)
@@ -255,6 +273,16 @@ export async function resetUserQuotaController(req, res) {
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
+    // Item #6: same country restriction as setUserQuotaController.
+    if (
+      req.user.scope === "COUNTRY" &&
+      target.assignedCountry !== req.user.assignedCountry
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: `Access denied: you can only manage quotas for ${req.user.assignedCountry} users`,
+      });
+    }
 
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
