@@ -9,10 +9,11 @@ import {
 
 const activityLogRouter = Router();
 
-// Item #4: MANAGER can now view the Activity Log (previously IT/DIRECTOR
-// only) — but only their own country's entries, enforced in the controller
-// via getCountryScopedUserIds(). IT/DIRECTOR remain unrestricted (GLOBAL
-// scope). Any other subRole is still denied outright here.
+// MANAGER can view the Activity Log (previously IT/DIRECTOR only), scoped
+// in the controller via getScopedUserIds():
+//   - MANAGER + scope GLOBAL  ("HQ Manager")      → sees HQ staff only, minus IT/DIRECTOR
+//   - MANAGER + scope COUNTRY ("Foreign Manager") → sees their own country's staff only, minus IT/DIRECTOR
+// IT/DIRECTOR remain unrestricted. Any other subRole is denied outright here.
 const allowedRoles = (req, res, next) => {
   const allowed = ['DIRECTOR', 'IT', 'MANAGER'];
   if (!req.user || !allowed.includes(req.user.subRole)) {
