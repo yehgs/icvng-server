@@ -438,7 +438,7 @@ export const updateWeight = async (request, response) => {
     const { productId, weight } = request.body;
 
     const userRole = request.user.subRole || request.user.role;
-    if (userRole !== "WAREHOUSE") {
+    if (!["WAREHOUSE", "IT", "DIRECTOR"].includes(userRole)) {
       return response.status(403).json({
         message: "Only warehouse staff can update product weight",
         error: true,
@@ -1050,7 +1050,7 @@ export const bulkUpdateStock = async (request, response) => {
     }
 
     const userRole = request.user.subRole || request.user.role;
-    if (userRole !== "WAREHOUSE") {
+    if (!["WAREHOUSE", "IT", "DIRECTOR"].includes(userRole)) {
       return response.status(403).json({
         message: "Only warehouse staff can update stock quantities",
         error: true,
@@ -1894,7 +1894,7 @@ export const updateStock = async (request, response) => {
     }
 
     const userRole = request.user.subRole || request.user.role;
-    if (userRole !== "WAREHOUSE") {
+    if (!["WAREHOUSE", "IT", "DIRECTOR"].includes(userRole)) {
       return response.status(403).json({
         message: "Only warehouse staff can update stock quantities",
         error: true,
@@ -2059,7 +2059,7 @@ export const updateStock = async (request, response) => {
 export const importStockCSV = async (request, response) => {
   try {
     const userRole = request.user.subRole || request.user.role;
-    if (userRole !== "WAREHOUSE") {
+    if (!["WAREHOUSE", "IT", "DIRECTOR"].includes(userRole)) {
       return response.status(403).json({
         message: "Only warehouse staff can import stock",
         error: true,

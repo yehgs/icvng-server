@@ -1,4 +1,4 @@
-// server/controllers/guestOrder.controller.js
+// server/controllers/guest_order.controller.js
 // Guest checkout — no account required.
 // Supports: Paystack (NGN) + Stripe (USD/EUR/GBP) + Bank Transfer
 
@@ -684,10 +684,19 @@ export async function processGuestPaystackWebhook(metadata, reference) {
     return;
   }
 
+  // The address is looked up again here (rather than trusting the one
+  // validated at checkout initiation) because the webhook can fire minutes
+  // later. If it's gone by then, DO NOT silently drop the order — the
+  // customer has already been charged. buildGuestOrders() already handles
+  // a null address gracefully (falls back to empty shipping fields), so we
+  // still create the order and flag it for manual follow-up rather than
+  // losing a paid transaction with zero record of it anywhere.
   const address = await AddressModel.findById(addressId).catch(() => null);
-  if (!address) {
-    console.error("Guest webhook: address not found", addressId);
-    return;
+  const addressMissing = !address;
+  if (addressMissing) {
+    console.error(
+      `Guest webhook: address ${addressId} not found for paid reference ${reference} — creating order anyway with guest contact info, flagged for follow-up`,
+    );
   }
 
   const orders = await buildGuestOrders({
@@ -708,6 +717,15 @@ export async function processGuestPaystackWebhook(metadata, reference) {
     countryCode: countryCode || "NG", // Item #7
     groupId: groupId || generateGroupId("PSK-WH"),
   });
+
+  if (addressMissing && orders.length > 0) {
+    orders.forEach((o) => {
+      o.admin_notes =
+        `⚠️ Delivery address could not be found at payment confirmation time. ` +
+        `Contact the customer (${guestInfo?.email || "email on file"}, ${guestInfo?.phone || "phone on file"}) ` +
+        `to confirm shipping details before dispatch.`;
+    });
+  }
 
   if (orders.length > 0) {
     await OrderModel.insertMany(orders);
@@ -743,9 +761,11 @@ export async function processGuestStripeWebhook(session) {
   };
 
   const address = await AddressModel.findById(meta.addressId).catch(() => null);
-  if (!address) {
-    console.error("Guest Stripe webhook: address not found", meta.addressId);
-    return;
+  const addressMissing = !address;
+  if (addressMissing) {
+    console.error(
+      `Guest Stripe webhook: address ${meta.addressId} not found for paid group ${groupId} — creating order anyway with guest contact info, flagged for follow-up`,
+    );
   }
 
   let cartItems = [];
@@ -788,6 +808,15 @@ export async function processGuestStripeWebhook(session) {
     exchangeRateInfo,
     originalAmounts,
   });
+
+  if (addressMissing && orders.length > 0) {
+    orders.forEach((o) => {
+      o.admin_notes =
+        `⚠️ Delivery address could not be found at payment confirmation time. ` +
+        `Contact the customer (${guestInfo?.email || "email on file"}, ${guestInfo?.phone || "phone on file"}) ` +
+        `to confirm shipping details before dispatch.`;
+    });
+  }
 
   if (orders.length > 0) {
     await OrderModel.insertMany(orders);

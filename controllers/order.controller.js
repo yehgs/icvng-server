@@ -26,6 +26,235 @@ const pricewithDiscount = (price, dis = 0) => {
   return Number(price) - discountAmount;
 };
 
+// ===== Shared: create a logged-in user's order(s) from a confirmed Paystack charge =====
+// Used by BOTH the server-to-server webhook (paystackWebhookController) and the
+// browser-redirect verification endpoint (verifyPaystackController) — the app
+// relies on the latter for order creation (the customer is always logged in
+// before checkout; there's no anonymous/guest path in this flow), so this
+// logic must not live only inside the webhook handler.
+//
+// Idempotent: if an order already exists for this reference (e.g. the
+// webhook already created it before the browser redirect arrived, or vice
+// versa), returns the existing order group instead of creating a duplicate.
+async function createOrderFromPaystackTransaction({
+  reference,
+  metadata,
+  countryCode,
+  currencyCode,
+}) {
+  // Idempotency — whichever of (webhook, verify-on-redirect) runs first wins;
+  // the other just returns what's already there.
+  const existing = await OrderModel.findOne({ paymentId: reference });
+  if (existing) {
+    const groupOrders = await OrderModel.find({
+      orderGroupId: existing.orderGroupId,
+    });
+    return { orders: groupOrders, orderGroupId: existing.orderGroupId, alreadyExisted: true };
+  }
+
+  const userId = metadata.userId;
+
+  const user = await UserModel.findById(userId);
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  // Prefer the cart SNAPSHOT taken at checkout initiation (immune to the
+  // live cart changing/clearing between initiation and confirmation — see
+  // paystackPaymentController). Falls back to querying the live cart for
+  // transactions initiated before this snapshot existed in metadata.
+  let cartItems;
+  if (metadata.cartItemsJSON) {
+    let snapshot = [];
+    try {
+      snapshot = JSON.parse(metadata.cartItemsJSON);
+    } catch (_err) {
+      snapshot = [];
+    }
+    const productIds = snapshot.map((i) => i.productId).filter(Boolean);
+    const products = await ProductModel.find({
+      _id: { $in: productIds },
+    }).populate("category");
+    const productMap = new Map(products.map((p) => [p._id.toString(), p]));
+    cartItems = snapshot
+      .map((i) => ({
+        productId: productMap.get(i.productId),
+        quantity: i.quantity,
+        priceOption: i.priceOption || "regular",
+      }))
+      .filter((i) => i.productId); // drop any product deleted since checkout
+  } else {
+    cartItems = await CartProductModel.find({ userId }).populate({
+      path: "productId",
+      populate: { path: "category" },
+    });
+  }
+
+  if (cartItems.length === 0) {
+    throw new Error("No cart items found");
+  }
+
+  // Validate products
+  for (const item of cartItems) {
+    if (!item.productId?.productAvailability) {
+      throw new Error(`Product ${item.productId?.name} is not available`);
+    }
+  }
+
+  // Get shipping info
+  let shippingZone = null;
+  let shippingMethod = null;
+
+  if (metadata.addressId) {
+    const address = await mongoose.model("address").findById(metadata.addressId);
+    if (address) {
+      shippingZone = await ShippingZoneModel.findZoneByCity(
+        address.city,
+        address.state,
+      );
+    }
+  }
+
+  if (metadata.shippingMethodId) {
+    shippingMethod = await ShippingMethodModel.findById(
+      metadata.shippingMethodId,
+    );
+  }
+
+  // ✅ CREATE ORDER GROUP ID - Unique for this checkout session
+  const orderGroupId = `GRP-${Date.now()}-${userId}`;
+  const shippingCostPerItem =
+    parseFloat(metadata.shippingCost || "0") / cartItems.length;
+
+  // Calculate group totals
+  const groupTotals = {
+    subTotal: 0,
+    totalShipping: parseFloat(metadata.shippingCost || "0"),
+    totalDiscount: 0,
+    totalTax: 0,
+    grandTotal: 0,
+    itemCount: cartItems.length,
+  };
+
+  // Exchange rate info
+  const exchangeRateInfo = {
+    rate: 1,
+    fromCurrency: "NGN",
+    toCurrency: "NGN",
+    rateSource: "manual",
+    appliedAt: new Date(),
+  };
+
+  // ✅ Create orders - ONE ORDER PER PRODUCT, but GROUPED
+  const orderItems = cartItems.map((item, index) => {
+    const priceOption = item.priceOption || "regular";
+    const productPrice = getProductPrice(item.productId, priceOption);
+    const finalPrice = pricewithDiscount(
+      productPrice,
+      item.productId.discount,
+    );
+    const itemSubtotal = finalPrice * item.quantity;
+    const itemTotal = itemSubtotal + shippingCostPerItem;
+
+    // Add to group totals
+    groupTotals.subTotal += itemSubtotal;
+    groupTotals.grandTotal += itemTotal;
+
+    // First order is parent
+    const isParent = index === 0;
+    const firstOrderId = `PSK-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 9)}`;
+
+    return {
+      // Individual order ID
+      orderId: isParent
+        ? firstOrderId
+        : `PSK-${Date.now()}-${index}-${Math.random()
+            .toString(36)
+            .substr(2, 9)}`,
+
+      // ✅ ORDER GROUPING
+      orderGroupId, // Same for all orders from this checkout
+      isParentOrder: isParent, // First order is parent
+      parentOrderId: isParent ? null : firstOrderId, // Reference to parent
+      orderSequence: index + 1, // 1, 2, 3, 4...
+      totalItemsInGroup: cartItems.length, // Same for all
+
+      // Website order defaults
+      userId,
+      customerId: null,
+      orderType: "BTC",
+      orderMode: "ONLINE",
+      isWebsiteOrder: true,
+      createdBy: null,
+
+      // Product - ONE PRODUCT PER ORDER
+      productId: item.productId._id,
+      product_details: {
+        name: item.productId.name,
+        image: item.productId.image,
+        priceOption,
+        deliveryTime: priceOption,
+      },
+      quantity: item.quantity,
+      unitPrice: finalPrice,
+
+      // Individual pricing
+      subTotalAmt: itemSubtotal,
+      totalAmt: itemTotal,
+      shipping_cost: shippingCostPerItem,
+      currency: currencyCode || "NGN",
+      countryCode: countryCode || "NG",
+      exchangeRateUsed: exchangeRateInfo,
+      amountsInNGN: {
+        subtotal: itemSubtotal,
+        shipping: shippingCostPerItem,
+        total: itemTotal,
+      },
+
+      // ✅ Group totals (stored in all orders, but mainly used by parent)
+      groupTotals: isParent ? groupTotals : {},
+
+      // Payment (SHARED across all orders in group)
+      paymentId: reference,
+      payment_status: "PAID",
+      payment_method: "PAYSTACK",
+
+      // Delivery (SHARED)
+      delivery_address: metadata.addressId,
+      shippingMethod: metadata.shippingMethodId,
+      shippingZone: shippingZone?._id,
+      shipping_details: shippingMethod
+        ? {
+            method_name: shippingMethod.name,
+            method_type: shippingMethod.type,
+            carrier: { name: "I-Coffee Logistics", code: "ICF" },
+            estimated_delivery_days: {
+              min: shippingMethod.estimatedDelivery?.minDays || 1,
+              max: shippingMethod.estimatedDelivery?.maxDays || 7,
+            },
+          }
+        : {},
+    };
+  });
+
+  // Update group totals in first order (parent)
+  orderItems[0].groupTotals = groupTotals;
+
+  const orders = await OrderModel.insertMany(orderItems);
+
+  // Clear cart
+  await CartProductModel.deleteMany({ userId });
+  await UserModel.updateOne({ _id: userId }, { shopping_cart: [] });
+
+  console.log(
+    `✅ Paystack: Created order group ${orderGroupId} with ${orders.length} orders`,
+  );
+
+  return { orders, orderGroupId, alreadyExisted: false };
+}
+
 // ===== PAYSTACK WEBHOOK =====
 export async function paystackWebhookController(request, response) {
   try {
@@ -44,200 +273,31 @@ export async function paystackWebhookController(request, response) {
     const { event, data } = request.body;
 
     if (event === "charge.success") {
-      const { reference, amount, currency, metadata, customer } = data;
+      const { reference, metadata } = data;
 
       // ── Guest order path ──
       if (metadata?.isGuest === true) {
         const { processGuestPaystackWebhook } =
-          await import("./guestOrder.controller.js");
+          await import("./guest_order.controller.js");
         await processGuestPaystackWebhook(metadata, reference);
         return response.json({ received: true });
       }
 
-      const userId = metadata.userId;
-
-      const user = await UserModel.findById(userId);
-      if (!user) {
-        return response.status(404).json({
-          message: "User not found",
-          error: true,
-        });
-      }
-
-      const cartItems = await CartProductModel.find({ userId }).populate({
-        path: "productId",
-        populate: { path: "category" },
-      });
-
-      if (cartItems.length === 0) {
-        return response.status(400).json({
-          message: "No cart items found",
-          error: true,
-        });
-      }
-
-      // Validate products
-      for (const item of cartItems) {
-        if (!item.productId?.productAvailability) {
-          return response.status(400).json({
-            message: `Product ${item.productId?.name} is not available`,
-            error: true,
-          });
-        }
-      }
-
-      // Get shipping info
-      let shippingZone = null;
-      let shippingMethod = null;
-
-      if (metadata.addressId) {
-        const address = await mongoose
-          .model("address")
-          .findById(metadata.addressId);
-        if (address) {
-          shippingZone = await ShippingZoneModel.findZoneByCity(
-            address.city,
-            address.state,
-          );
-        }
-      }
-
-      if (metadata.shippingMethodId) {
-        shippingMethod = await ShippingMethodModel.findById(
-          metadata.shippingMethodId,
-        );
-      }
-
-      // ✅ CREATE ORDER GROUP ID - Unique for this checkout session
-      const orderGroupId = `GRP-${Date.now()}-${userId}`;
-      const shippingCostPerItem =
-        parseFloat(metadata.shippingCost || "0") / cartItems.length;
-
-      // Calculate group totals
-      const groupTotals = {
-        subTotal: 0,
-        totalShipping: parseFloat(metadata.shippingCost || "0"),
-        totalDiscount: 0,
-        totalTax: 0,
-        grandTotal: 0,
-        itemCount: cartItems.length,
-      };
-
-      // Exchange rate info
-      const exchangeRateInfo = {
-        rate: 1,
-        fromCurrency: "NGN",
-        toCurrency: "NGN",
-        rateSource: "manual",
-        appliedAt: new Date(),
-      };
-
-      // ✅ Create orders - ONE ORDER PER PRODUCT, but GROUPED
-      const orderItems = cartItems.map((item, index) => {
-        const priceOption = item.priceOption || "regular";
-        const productPrice = getProductPrice(item.productId, priceOption);
-        const finalPrice = pricewithDiscount(
-          productPrice,
-          item.productId.discount,
-        );
-        const itemSubtotal = finalPrice * item.quantity;
-        const itemTotal = itemSubtotal + shippingCostPerItem;
-
-        // Add to group totals
-        groupTotals.subTotal += itemSubtotal;
-        groupTotals.grandTotal += itemTotal;
-
-        // First order is parent
-        const isParent = index === 0;
-        const firstOrderId = `PSK-${Date.now()}-${Math.random()
-          .toString(36)
-          .substr(2, 9)}`;
-
-        return {
-          // Individual order ID
-          orderId: isParent
-            ? firstOrderId
-            : `PSK-${Date.now()}-${index}-${Math.random()
-                .toString(36)
-                .substr(2, 9)}`,
-
-          // ✅ ORDER GROUPING
-          orderGroupId, // Same for all orders from this checkout
-          isParentOrder: isParent, // First order is parent
-          parentOrderId: isParent ? null : firstOrderId, // Reference to parent
-          orderSequence: index + 1, // 1, 2, 3, 4...
-          totalItemsInGroup: cartItems.length, // Same for all
-
-          // Website order defaults
-          userId,
-          customerId: null,
-          orderType: "BTC",
-          orderMode: "ONLINE",
-          isWebsiteOrder: true,
-          createdBy: null,
-
-          // Product - ONE PRODUCT PER ORDER
-          productId: item.productId._id,
-          product_details: {
-            name: item.productId.name,
-            image: item.productId.image,
-            priceOption,
-            deliveryTime: priceOption,
-          },
-          quantity: item.quantity,
-          unitPrice: finalPrice,
-
-          // Individual pricing
-          subTotalAmt: itemSubtotal,
-          totalAmt: itemTotal,
-          shipping_cost: shippingCostPerItem,
-          currency: request.country?.currency?.code || "NGN",
+      try {
+        await createOrderFromPaystackTransaction({
+          reference,
+          metadata,
           countryCode: request.countryCode || "NG",
-          exchangeRateUsed: exchangeRateInfo,
-          amountsInNGN: {
-            subtotal: itemSubtotal,
-            shipping: shippingCostPerItem,
-            total: itemTotal,
-          },
-
-          // ✅ Group totals (stored in all orders, but mainly used by parent)
-          groupTotals: isParent ? groupTotals : {},
-
-          // Payment (SHARED across all orders in group)
-          paymentId: reference,
-          payment_status: "PAID",
-          payment_method: "PAYSTACK",
-
-          // Delivery (SHARED)
-          delivery_address: metadata.addressId,
-          shippingMethod: metadata.shippingMethodId,
-          shippingZone: shippingZone?._id,
-          shipping_details: shippingMethod
-            ? {
-                method_name: shippingMethod.name,
-                method_type: shippingMethod.type,
-                carrier: { name: "I-Coffee Logistics", code: "ICF" },
-                estimated_delivery_days: {
-                  min: shippingMethod.estimatedDelivery?.minDays || 1,
-                  max: shippingMethod.estimatedDelivery?.maxDays || 7,
-                },
-              }
-            : {},
-        };
-      });
-
-      // Update group totals in first order (parent)
-      orderItems[0].groupTotals = groupTotals;
-
-      const orders = await OrderModel.insertMany(orderItems);
-
-      // Clear cart
-      await CartProductModel.deleteMany({ userId });
-      await UserModel.updateOne({ _id: userId }, { shopping_cart: [] });
-
-      console.log(
-        `✅ Paystack: Created order group ${orderGroupId} with ${orders.length} orders`,
-      );
+          currencyCode: request.country?.currency?.code || "NGN",
+        });
+      } catch (err) {
+        // Validation failures (no cart, user missing, product unavailable)
+        // are logged but still ack the webhook with 200 — Paystack retries
+        // on non-2xx, and retrying won't fix a genuinely empty cart. The
+        // verify-on-redirect path (verifyPaystackController) is the primary
+        // order-creation mechanism for this app; this webhook is a backup.
+        console.error("Paystack webhook order creation failed:", err.message);
+      }
     }
 
     return response.json({ received: true });
@@ -246,6 +306,84 @@ export async function paystackWebhookController(request, response) {
     return response.status(500).json({
       message: error.message,
       error: true,
+    });
+  }
+}
+
+// ===== PAYSTACK VERIFY (called by the browser after Paystack redirects back) =====
+// This is the PRIMARY order-creation path for this app: checkout always
+// requires the customer to be logged in first (no true guest checkout), so
+// there is no separate "guest webhook" flow to fall back on here — the
+// frontend's PaystackCallbackPage hits this endpoint with the transaction
+// reference from the URL as soon as Paystack redirects the browser back.
+// Previously this route didn't exist at all, so paid orders were never
+// created through this path (the webhook was the only other mechanism, and
+// depends on Paystack's dashboard webhook URL being configured/reachable).
+export async function verifyPaystackController(request, response) {
+  try {
+    const { reference } = request.params;
+    if (!reference) {
+      return response.status(400).json({
+        message: "Transaction reference is required",
+        error: true,
+        success: false,
+      });
+    }
+
+    const verifyRes = await fetch(
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        },
+      },
+    );
+    const verifyData = await verifyRes.json();
+
+    if (!verifyData.status || verifyData.data?.status !== "success") {
+      return response.status(400).json({
+        message: verifyData.data?.gateway_response || "Payment was not successful",
+        error: true,
+        success: false,
+      });
+    }
+
+    const { metadata, amount, currency } = verifyData.data;
+
+    let orderGroupId;
+    if (metadata?.isGuest === true) {
+      const { processGuestPaystackWebhook } =
+        await import("./guest_order.controller.js");
+      await processGuestPaystackWebhook(metadata, reference);
+      const guestOrder = await OrderModel.findOne({ paymentId: reference });
+      orderGroupId = guestOrder?.orderGroupId;
+    } else {
+      const result = await createOrderFromPaystackTransaction({
+        reference,
+        metadata,
+        countryCode: request.countryCode || "NG",
+        currencyCode: request.country?.currency?.code || "NGN",
+      });
+      orderGroupId = result.orderGroupId;
+    }
+
+    return response.json({
+      message: "Payment verified and order placed",
+      success: true,
+      error: false,
+      data: {
+        reference,
+        amount: amount / 100,
+        currency,
+        orderGroupId,
+      },
+    });
+  } catch (error) {
+    console.error("Paystack verify error:", error);
+    return response.status(500).json({
+      message: error.message,
+      error: true,
+      success: false,
     });
   }
 }
@@ -296,6 +434,20 @@ export async function paystackPaymentController(request, response) {
         shippingMethodId: shippingMethodId || "",
         shippingCost,
         itemCount: cartItems.length,
+        // Snapshot the cart NOW, at checkout initiation, instead of relying
+        // on re-querying the live cart at confirmation time (webhook or the
+        // browser-redirect verify endpoint) — that gap can be minutes long
+        // (Paystack's own hosted page, network delays, etc.), and if the
+        // cart changes or gets cleared in between, the order used to be
+        // lost with zero record of it anywhere. Same pattern the guest
+        // checkout flow already uses successfully.
+        cartItemsJSON: JSON.stringify(
+          cartItems.map((item) => ({
+            productId: item.productId?._id?.toString() || item.productId,
+            quantity: item.quantity,
+            priceOption: item.priceOption || "regular",
+          })),
+        ),
       },
     };
 
@@ -358,7 +510,7 @@ export async function webhookStripe(request, response) {
         // ── Guest Stripe order path ──
         if (session.metadata?.isGuest === "true") {
           const { processGuestStripeWebhook } =
-            await import("./guestOrder.controller.js");
+            await import("./guest_order.controller.js");
           await processGuestStripeWebhook(session);
           break;
         }

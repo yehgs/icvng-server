@@ -10,47 +10,211 @@ import { translateEntity, getBulkTranslations, applyTranslation } from "../utils
 import { mergeDirectPricingIntoProducts } from "../utils/mergeDirectPricing.js";
 
 // ─── Client Visibility Rule ────────────────────────────────────────────────
-// A product is shown to customers if it is PUBLISHED and at least one of:
-//   (a) warehouseStock.onlineStock > 0  (in-house stock, regular price works)
-//   (b) partnerStock.enabled === true   (partner/supplier manages stock)
-//   (c) price3weeksDelivery > 0         (special order option available)
-//   (d) price5weeksDelivery > 0         (special order option available)
+// Canonical, single source of truth — MUST stay in sync with:
+//   - icvng-client/src/config/deliveryCategories.js (isFiveWeekDeliveryCategory)
+//   - icvng-admin/src/config/deliveryCategories.js (isFiveWeekDeliveryCategory)
+//   - icvng-admin ProductForm.jsx live "hidden from shop" warning
+// See PRODUCT_VISIBILITY_RULES.md at the repo root for the full write-up.
 //
-// Products with ONLY btcPrice and 0 online stock and no partner stock are hidden
-// because the customer would see "Pricing Unavailable" with no way to order.
+// A product is PURCHASABLE (and therefore allowed to be PUBLISHED, and
+// allowed to appear in any listing) if, and only if, at least one of:
+//
+//   (a) It has the delivery price that matches whether it's "five-week
+//       type" — which is true if EITHER:
+//         - productType === "MACHINE", OR
+//         - its category slug is one of FIVE_WEEK_DELIVERY_SLUGS
+//       (checked with OR, not just productType alone, because productType
+//       data isn't fully reliable on its own — e.g. a Tassimo coffee
+//       machine filed under category "Coffee Maker" but with productType
+//       left as "COFFEE". Trusting productType alone let that exact
+//       product pass the server's check while the client — which also
+//       checks category — correctly refused to show it, a contradiction
+//       that let an unpurchasable product stay fetchable.)
+//       Five-week-type  → price5weeksDelivery > 0
+//       Otherwise       → price3weeksDelivery > 0
+//       ("3-week" is what the admin/server call the option the client
+//       labels "2 Weeks Delivery" — same field, `price3weeksDelivery`.)
+//       A delivery price on the WRONG field does not count — e.g. a
+//       five-week-type product with only price3weeksDelivery set is not
+//       purchasable via this path.
+//
+//   (b) It has a regular price (btcPrice > 0) AND actual online stock:
+//         - warehouseStock.onlineStock > 0, OR
+//         - partnerStock.enabled === true AND partnerStock.quantity > 0
+//       (Merely toggling partnerStock.enabled with quantity 0 does NOT
+//       count as stock.)
+//
+// `productAvailability` (the "Product Available for Sale" checkbox) is a
+// SEPARATE, independent switch — an admin explicitly marking a product
+// discontinued. It does not affect the purchasability check above, but it
+// changes what happens when the rule above fails:
+//   - Listings (home/shop/search/carousel/category) always require BOTH
+//     purchasable AND productAvailability !== false.
+//   - The single-product detail page is fetchable if EITHER purchasable OR
+//     productAvailability === false — so a discontinued product still
+//     loads (to show the "join the waitlist" screen), but a product that's
+//     merely missing its pricing/stock setup 404s instead of rendering a
+//     confusing "why can't I buy this" page.
 // ──────────────────────────────────────────────────────────────────────────
-const CLIENT_VISIBILITY_FILTER = {
+
+const FIVE_WEEK_DELIVERY_SLUGS = ["capsule-machine", "coffee-maker"];
+
+const isMachineType = (productType) => productType === "MACHINE";
+
+// Category IDs whose slug is in FIVE_WEEK_DELIVERY_SLUGS, cached briefly —
+// categories change rarely, and re-resolving this on every single product
+// list/detail request would be wasteful. Any create/update to a category
+// (or to FIVE_WEEK_DELIVERY_SLUGS itself) is reflected within the TTL.
+let _fiveWeekCategoryIdsCache = null;
+let _fiveWeekCategoryIdsCacheAt = 0;
+const FIVE_WEEK_CATEGORY_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+
+const getFiveWeekCategoryIds = async () => {
+  const now = Date.now();
+  if (
+    _fiveWeekCategoryIdsCache &&
+    now - _fiveWeekCategoryIdsCacheAt < FIVE_WEEK_CATEGORY_CACHE_TTL_MS
+  ) {
+    return _fiveWeekCategoryIdsCache;
+  }
+  const cats = await CategoryModel.find({
+    slug: { $in: FIVE_WEEK_DELIVERY_SLUGS },
+  })
+    .select("_id")
+    .lean();
+  _fiveWeekCategoryIdsCache = cats.map((c) => c._id);
+  _fiveWeekCategoryIdsCacheAt = now;
+  return _fiveWeekCategoryIdsCache;
+};
+
+// The reusable $or clause expressing "this product has online stock",
+// mirroring the product model's own `effectiveOnlineStock` virtual priority
+// exactly: partnerStock (if enabled) wins, else warehouseStock (if
+// enabled), else the legacy top-level `stock` field.
+const HAS_ONLINE_STOCK_OR = [
+  { "partnerStock.enabled": true, "partnerStock.quantity": { $gt: 0 } },
+  {
+    "partnerStock.enabled": { $ne: true },
+    "warehouseStock.enabled": true,
+    "warehouseStock.onlineStock": { $gt: 0 },
+  },
+  {
+    "partnerStock.enabled": { $ne: true },
+    "warehouseStock.enabled": { $ne: true },
+    stock: { $gt: 0 },
+  },
+];
+
+// Builds the "purchasable" $or clause, resolving the current set of
+// five-week category IDs. Every element still only needs simple top-level
+// field comparisons — no $lookup/aggregation required, since we resolve
+// category membership to a plain $in list up front.
+const buildPurchasableOr = async () => {
+  const fiveWeekCategoryIds = await getFiveWeekCategoryIds();
+  return [
+    {
+      $or: [{ productType: "MACHINE" }, { category: { $in: fiveWeekCategoryIds } }],
+      price5weeksDelivery: { $gt: 0 },
+    },
+    {
+      productType: { $ne: "MACHINE" },
+      category: { $nin: fiveWeekCategoryIds },
+      price3weeksDelivery: { $gt: 0 },
+    },
+    {
+      btcPrice: { $gt: 0 },
+      $or: HAS_ONLINE_STOCK_OR,
+    },
+  ];
+};
+
+// STRICT — for every listing endpoint (home, shop, search, carousel,
+// category pages, related products, featured, etc.). A discontinued
+// product never appears here even if its pricing happens to still qualify.
+const buildClientVisibilityFilter = async () => ({
   publish: "PUBLISHED",
-  $or: [
-    { "warehouseStock.onlineStock": { $gt: 0 } },
-    { "partnerStock.enabled": true },
-    { price3weeksDelivery: { $gt: 0 } },
-    { price5weeksDelivery: { $gt: 0 } },
-  ],
+  productAvailability: { $ne: false },
+  $or: await buildPurchasableOr(),
+});
+
+// LENIENT — for the single-product detail fetch only. A discontinued
+// product is still fetchable (so the storefront can render the "join the
+// waitlist" screen for it) even though it's hidden from every listing.
+const buildProductDetailFilter = async () => {
+  const purchasableOr = await buildPurchasableOr();
+  return {
+    publish: "PUBLISHED",
+    $or: [{ productAvailability: false }, ...purchasableOr],
+  };
 };
 
-// JS-level helper (used for admin visibility badge)
-const shouldDisplayProduct = (product) => {
-  const onlineStock = product.warehouseStock?.onlineStock || 0;
-  const isPartner = product.partnerStock?.enabled === true;
-  const has3WeeksPrice = product.price3weeksDelivery > 0;
-  const has5WeeksPrice = product.price5weeksDelivery > 0;
-  const hasImage = product.image && product.image.length > 0;
-
-  if (!hasImage) return false;
-
-  // Has delivery option regardless of stock
-  if (has3WeeksPrice || has5WeeksPrice) return true;
-
-  // Partner product — supplier manages availability
-  if (isPartner) return true;
-
-  // Regular stock available
-  if (onlineStock > 0) return true;
-
-  // No stock, no partner, no delivery option → hidden from clients
-  return false;
+// JS-level mirror of the purchasability rule, for use outside Mongo queries
+// (create/update draft-forcing, admin visibility badges). Takes a plain
+// object with the same shape as a product document (or a partial merge of
+// one), PLUS the resolved category slug (caller must fetch this — a
+// product's `category` field is just an ObjectId, not a slug).
+const hasOnlineStock = (data) => {
+  const partnerEnabled = data.partnerStock?.enabled === true;
+  if (partnerEnabled) return Number(data.partnerStock?.quantity) > 0;
+  const warehouseEnabled = data.warehouseStock?.enabled === true;
+  if (warehouseEnabled) return Number(data.warehouseStock?.onlineStock) > 0;
+  return Number(data.stock) > 0;
 };
+
+const isFiveWeekType = (data, categorySlug) =>
+  isMachineType(data.productType) ||
+  (!!categorySlug && FIVE_WEEK_DELIVERY_SLUGS.includes(categorySlug));
+
+const isProductPurchasable = (data, categorySlug = null) => {
+  const hasRegularPrice = Number(data.btcPrice) > 0;
+  const hasDeliveryPrice = isFiveWeekType(data, categorySlug)
+    ? Number(data.price5weeksDelivery) > 0
+    : Number(data.price3weeksDelivery) > 0;
+
+  return hasDeliveryPrice || (hasRegularPrice && hasOnlineStock(data));
+};
+
+// Small helper for create/update controllers: resolve a single product's
+// category slug (or null if it has none / lookup fails — falls back to
+// productType-only behavior, which is still correct, just less defensive).
+const resolveCategorySlug = async (categoryId) => {
+  if (!categoryId) return null;
+  try {
+    const categoryDoc = await CategoryModel.findById(categoryId)
+      .select("slug")
+      .lean();
+    return categoryDoc?.slug || null;
+  } catch (_err) {
+    return null;
+  }
+};
+
+// Sub-roles allowed to set/change pricing fields (BTB/BTC/2-week/5-week
+// price, discount) on the general product form. Everyone else's submitted
+// values for these fields are ignored — pricing is an Accountant function
+// (IT/DIRECTOR retain override access) — UNLESS the product is toggled as
+// a partner/supplier product (partnerStock.enabled), in which case pricing
+// is supplier-driven and any role may set it.
+//
+// The equivalent rule for warehouse online-stock quantity lives in
+// warehouse.controller.js's updateStock (that's a separate endpoint/form —
+// this one, the general product form, never had a warehouse-stock input to
+// begin with; only partnerStock.quantity is settable here, and that's
+// intentionally open to any role already).
+const PRICING_SUBROLES = ["ACCOUNTANT", "IT", "DIRECTOR"];
+const canSetPricing = (user, isPartnerProduct) =>
+  isPartnerProduct === true || PRICING_SUBROLES.includes(user?.subRole);
+
+const PRICING_FIELDS = [
+  "btbPrice",
+  "btcPrice",
+  "price3weeksDelivery",
+  "price5weeksDelivery",
+  "discount",
+];
+
+// warehouseStock.onlineStock is nested, so it's handled separately from the
+// flat PRICING_FIELDS list wherever it's stripped/sanitized.
 
 export const createProductController = async (request, response) => {
   try {
@@ -142,6 +306,41 @@ export const createProductController = async (request, response) => {
 
     const userId = request.user._id;
 
+    // Only Accountant/IT/Director may set pricing on the general product
+    // form — anyone else's submitted price values are ignored (product is
+    // created with 0 pricing, which will also force it to DRAFT below) —
+    // UNLESS this product is toggled as a partner/supplier product, in
+    // which case pricing is supplier-driven and any role may set it.
+    const isPartnerProduct = request.body.partnerStock?.enabled === true;
+    const allowPricing = canSetPricing(request.user, isPartnerProduct);
+    const effectiveBtbPrice = allowPricing ? btbPrice || 0 : 0;
+    const effectiveBtcPrice = allowPricing ? btcPrice || 0 : 0;
+    const effectivePrice3weeks = allowPricing ? price3weeksDelivery || 0 : 0;
+    const effectivePrice5weeks = allowPricing ? price5weeksDelivery || 0 : 0;
+    const effectiveDiscount = allowPricing ? discount || 0 : 0;
+
+    // A product with no way for a customer to actually buy it (no online
+    // stock, no partner stock, no matching-type delivery price) must never
+    // be PUBLISHED/PENDING — force it to DRAFT regardless of what was
+    // submitted, so the admin list badge always matches storefront reality.
+    // Category slug is resolved too (not just productType) — see the
+    // comment on buildPurchasableOr for why productType alone isn't
+    // trustworthy enough on its own.
+    const categorySlugForVisibility = await resolveCategorySlug(category);
+    const willDisplay = isProductPurchasable(
+      {
+        productType,
+        btcPrice: effectiveBtcPrice,
+        stock: stock || 0,
+        warehouseStock: { enabled: false }, // not settable from this form; falls back to `stock`
+        partnerStock: request.body.partnerStock,
+        price3weeksDelivery: effectivePrice3weeks,
+        price5weeksDelivery: effectivePrice5weeks,
+      },
+      categorySlugForVisibility,
+    );
+    const effectivePublish = willDisplay ? publish || "PENDING" : "DRAFT";
+
     const product = new ProductModel({
       name,
       image,
@@ -182,11 +381,11 @@ export const createProductController = async (request, response) => {
         productAvailability !== undefined ? productAvailability : true,
       price: price || 0,
       salePrice: salePrice || 0,
-      price3weeksDelivery: price3weeksDelivery || 0,
-      price5weeksDelivery: price5weeksDelivery || 0,
-      btbPrice: btbPrice || 0,
-      btcPrice: btcPrice || 0,
-      discount: discount || 0,
+      price3weeksDelivery: effectivePrice3weeks,
+      price5weeksDelivery: effectivePrice5weeks,
+      btbPrice: effectiveBtbPrice,
+      btcPrice: effectiveBtcPrice,
+      discount: effectiveDiscount,
       sku: generatedSKU,
       description: description || "",
       shortDescription,
@@ -197,7 +396,7 @@ export const createProductController = async (request, response) => {
       seoTitle: seoTitle || name,
       seoDescription:
         seoDescription || (description ? description.substring(0, 160) : ""),
-      publish: publish || "PENDING",
+      publish: effectivePublish,
       relatedProducts: relatedProducts || [],
       slug: generatedSlug,
     });
@@ -254,18 +453,10 @@ export const searchProductController = async (request, response) => {
 
     // Search query — combined with client visibility rules using $and so both
     // $or conditions (visibility + text search) coexist without key collision
+    const visibilityFilter = await buildClientVisibilityFilter();
     const searchQuery = {
-      publish: "PUBLISHED",
+      ...visibilityFilter,
       $and: [
-        // Visibility: must have stock, partner, or delivery price
-        {
-          $or: [
-            { "warehouseStock.onlineStock": { $gt: 0 } },
-            { "partnerStock.enabled": true },
-            { price3weeksDelivery: { $gt: 0 } },
-            { price5weeksDelivery: { $gt: 0 } },
-          ],
-        },
         // Text match
         {
           $or: [
@@ -482,6 +673,7 @@ export const getProductControllerAdmin = async (request, response) => {
       lowStock,
       priceFilter,
       hiddenFromShop,
+      partnerStock,
     } = request.body;
 
     page = parseInt(page) || 1;
@@ -569,24 +761,24 @@ export const getProductControllerAdmin = async (request, response) => {
       );
     }
 
-    // Hidden from shop filter — products that are PUBLISHED but invisible to clients
-    // Hidden = onlineStock=0 AND not partner AND no 3/5-week delivery price
-    if (hiddenFromShop === "true") {
-      andConditions.push({ publish: "PUBLISHED" });
-      andConditions.push({ "warehouseStock.onlineStock": { $lte: 0 } });
+    // Hidden from shop filter — products that are PUBLISHED but invisible to
+    // clients per the canonical purchasability rule (see buildPurchasableOr).
+    if (hiddenFromShop === "true" || hiddenFromShop === "false") {
+      const purchasableOr = await buildPurchasableOr();
+      if (hiddenFromShop === "true") {
+        andConditions.push({ publish: "PUBLISHED" });
+        andConditions.push({ $nor: purchasableOr });
+      } else {
+        andConditions.push({ $or: purchasableOr });
+      }
+    }
+
+    // Partner stock filter — products whose supplier-managed online stock
+    // arrangement is enabled/disabled
+    if (partnerStock === "true") {
+      andConditions.push({ "partnerStock.enabled": true });
+    } else if (partnerStock === "false") {
       andConditions.push({ "partnerStock.enabled": { $ne: true } });
-      andConditions.push({ price3weeksDelivery: { $lte: 0 } });
-      andConditions.push({ price5weeksDelivery: { $lte: 0 } });
-    } else if (hiddenFromShop === "false") {
-      // Visible = matches the CLIENT_VISIBILITY_FILTER
-      andConditions.push({
-        $or: [
-          { "warehouseStock.onlineStock": { $gt: 0 } },
-          { "partnerStock.enabled": true },
-          { price3weeksDelivery: { $gt: 0 } },
-          { price5weeksDelivery: { $gt: 0 } },
-        ],
-      });
     }
 
     if (andConditions.length > 0) {
@@ -669,7 +861,7 @@ export const getProductController = async (request, response) => {
     const query = {};
 
     // CRITICAL: Only show products that are visible to clients
-    const andConditions = [CLIENT_VISIBILITY_FILTER];
+    const andConditions = [await buildClientVisibilityFilter()];
 
     // Search by name/sku using regex (works for partial matches)
     if (search && search.trim()) {
@@ -764,11 +956,15 @@ export const getProductDetails = async (request, response) => {
       });
     }
 
-    // Include CLIENT_VISIBILITY_FILTER so hidden products (no stock, no partner,
-    // no delivery price) return 404 instead of the "Pricing Unavailable" page
+    // Use the lenient PRODUCT_DETAIL_FILTER (not the strict listing filter):
+    // a genuinely unpurchasable product (no stock, no matching delivery
+    // price) 404s here — it should never have been linkable in the first
+    // place — but a product explicitly marked productAvailability=false
+    // (discontinued) still loads, so the storefront can render its
+    // "join the waitlist" screen instead of a dead link.
     const product = await ProductModel.findOne({
       _id: productId,
-      ...CLIENT_VISIBILITY_FILTER,
+      ...(await buildProductDetailFilter()),
     }).populate(
       "category subCategory brand tags attributes compatibleSystem producer createdBy updatedBy relatedProducts",
     );
@@ -1023,6 +1219,57 @@ export const updateProductDetails = async (request, response) => {
     } catch (_err) {
       // Non-fatal — if DirectPricingModel can't be loaded, continue without protection
       console.error("DirectPricing protection check failed:", _err.message);
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
+    // ── PRICING PERMISSION ────────────────────────────────────────────────
+    // Only Accountant/IT/Director may change pricing on the general product
+    // form. Anyone else's submitted price/discount values are dropped here
+    // so the product's existing prices are left untouched — same
+    // non-blocking pattern as the partnerStock sanitization above — UNLESS
+    // this product is (or is being toggled into) a partner/supplier
+    // product, in which case pricing is supplier-driven and any role may
+    // set it.
+    const isPartnerProductForUpdate =
+      (updateData.partnerStock?.enabled ?? existingProduct.partnerStock?.enabled) === true;
+    if (!canSetPricing(request.user, isPartnerProductForUpdate)) {
+      PRICING_FIELDS.forEach((field) => {
+        delete updateData[field];
+      });
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
+    // ── FORCE DRAFT WHEN UNPURCHASABLE ──────────────────────────────────────
+    // Mirrors createProductController: a product with no online stock, no
+    // partner stock, and no matching-type delivery price can never be
+    // bought, so it must never sit as PUBLISHED/PENDING (which would show
+    // "Pricing Unavailable" to customers who land on it directly). Evaluate
+    // against the fully-merged post-update state, not just the submitted
+    // diff. Category slug is resolved too (not just productType) — see the
+    // comment on buildPurchasableOr for why.
+    const mergedForVisibility = {
+      productType: updateData.productType ?? existingProduct.productType,
+      btcPrice: updateData.btcPrice ?? existingProduct.btcPrice,
+      stock: updateData.stock ?? existingProduct.stock,
+      warehouseStock: {
+        enabled:
+          updateData.warehouseStock?.enabled ??
+          existingProduct.warehouseStock?.enabled,
+        onlineStock:
+          updateData.warehouseStock?.onlineStock ??
+          existingProduct.warehouseStock?.onlineStock ??
+          0,
+      },
+      partnerStock: updateData.partnerStock ?? existingProduct.partnerStock,
+      price3weeksDelivery:
+        updateData.price3weeksDelivery ?? existingProduct.price3weeksDelivery,
+      price5weeksDelivery:
+        updateData.price5weeksDelivery ?? existingProduct.price5weeksDelivery,
+    };
+    const effectiveCategoryId = updateData.category ?? existingProduct.category;
+    const categorySlugForVisibility = await resolveCategorySlug(effectiveCategoryId);
+    if (!isProductPurchasable(mergedForVisibility, categorySlugForVisibility)) {
+      updateData.publish = "DRAFT";
     }
     // ────────────────────────────────────────────────────────────────────────
 
@@ -1354,8 +1601,9 @@ export const getProductByCategory = async (request, response) => {
     const pageSize = limit || 12;
     const skip = (pageNumber - 1) * pageSize;
 
+    const visibilityFilter = await buildClientVisibilityFilter();
     const [data, dataCount] = await Promise.all([
-      ProductModel.find({ category: categoryId, ...CLIENT_VISIBILITY_FILTER })
+      ProductModel.find({ category: categoryId, ...visibilityFilter })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(pageSize)
@@ -1364,7 +1612,7 @@ export const getProductByCategory = async (request, response) => {
         ),
       ProductModel.countDocuments({
         category: categoryId,
-        ...CLIENT_VISIBILITY_FILTER,
+        ...visibilityFilter,
       }),
     ]);
 
@@ -1407,7 +1655,7 @@ export const getProductByCategoryAndSubCategory = async (request, response) => {
     const visibilityQuery = {
       category: categoryId,
       subCategory: subCategoryId,
-      ...CLIENT_VISIBILITY_FILTER,
+      ...(await buildClientVisibilityFilter()),
     };
 
     const [data, dataCount] = await Promise.all([
@@ -1770,6 +2018,7 @@ export const searchProduct = async (request, response) => {
     }
 
     const query = [];
+    const visibilityFilter = await buildClientVisibilityFilter();
 
     // Search strategy:
     // - $text (MongoDB full-text) only matches WHOLE words — "caf" won't match "decaffeinato"
@@ -1779,17 +2028,8 @@ export const searchProduct = async (request, response) => {
       const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       query.push({
         $match: {
-          publish: "PUBLISHED",
+          ...visibilityFilter,
           $and: [
-            // Visibility rule (contains its own $or)
-            {
-              $or: [
-                { "warehouseStock.onlineStock": { $gt: 0 } },
-                { "partnerStock.enabled": true },
-                { price3weeksDelivery: { $gt: 0 } },
-                { price5weeksDelivery: { $gt: 0 } },
-              ],
-            },
             // Text search (its own $or)
             {
               $or: [
@@ -1805,7 +2045,7 @@ export const searchProduct = async (request, response) => {
     } else {
       // No search term — return all client-visible products
       query.push({
-        $match: CLIENT_VISIBILITY_FILTER,
+        $match: visibilityFilter,
       });
     }
 
@@ -2083,7 +2323,7 @@ export const getFeaturedProducts = async (request, response) => {
     // ✅ Apply shared client visibility rules (partnerStock + delivery prices + warehouse stock)
     query.push({
       $match: {
-        $and: [{ image: { $exists: true, $ne: [] } }, CLIENT_VISIBILITY_FILTER],
+        $and: [{ image: { $exists: true, $ne: [] } }, await buildClientVisibilityFilter()],
       },
     });
 
@@ -2192,7 +2432,7 @@ export const getLimitedEditionProducts = async (request, response) => {
     // ✅ Apply shared client visibility rules (partnerStock + delivery prices + warehouse stock)
     query.push({
       $match: {
-        $and: [{ image: { $exists: true, $ne: [] } }, CLIENT_VISIBILITY_FILTER],
+        $and: [{ image: { $exists: true, $ne: [] } }, await buildClientVisibilityFilter()],
       },
     });
 
@@ -2307,7 +2547,7 @@ export const getPopularProducts = async (request, response) => {
     // ✅ Apply shared client visibility rules (partnerStock + delivery prices + warehouse stock)
     query.push({
       $match: {
-        $and: [{ image: { $exists: true, $ne: [] } }, CLIENT_VISIBILITY_FILTER],
+        $and: [{ image: { $exists: true, $ne: [] } }, await buildClientVisibilityFilter()],
       },
     });
 

@@ -20,7 +20,7 @@ import { getCountryByCode } from "../config/countries/index.js";
 
 async function getOrderStats(filter) {
   const agg = await OrderModel.aggregate([
-    { $match: { ...filter, paymentStatus: "PAID" } },
+    { $match: { ...filter, payment_status: "PAID" } },
     { $group: { _id: null, totalOrders: { $sum: 1 }, totalRevenue: { $sum: "$totalAmt" } } },
   ]);
   return agg[0] || { totalOrders: 0, totalRevenue: 0 };
@@ -30,7 +30,7 @@ async function getRevenueByMonth(filter) {
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
   return OrderModel.aggregate([
-    { $match: { ...filter, paymentStatus: "PAID", createdAt: { $gte: sixMonthsAgo } } },
+    { $match: { ...filter, payment_status: "PAID", createdAt: { $gte: sixMonthsAgo } } },
     {
       $group: {
         _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" } },
@@ -45,7 +45,7 @@ async function getRevenueByMonth(filter) {
 async function getOrdersByStatus(filter) {
   return OrderModel.aggregate([
     { $match: filter },
-    { $group: { _id: "$orderStatus", count: { $sum: 1 } } },
+    { $group: { _id: "$order_status", count: { $sum: 1 } } },
   ]);
 }
 
@@ -53,7 +53,7 @@ async function getRecentOrders(filter, limit = 10) {
   return OrderModel.find({ ...filter, isParentOrder: true })
     .sort({ createdAt: -1 })
     .limit(limit)
-    .select("orderId totalAmt paymentStatus orderStatus createdAt countryCode userId")
+    .select("orderId totalAmt payment_status order_status createdAt countryCode userId")
     .lean();
 }
 
@@ -85,7 +85,7 @@ export async function getDashboardSummary(req, res) {
       isGlobal
         // GLOBAL: per-country breakdown for the comparison table
         ? OrderModel.aggregate([
-            { $match: { paymentStatus: "PAID" } },
+            { $match: { payment_status: "PAID" } },
             { $group: { _id: "$countryCode", totalOrders: { $sum: 1 }, totalRevenue: { $sum: "$totalAmt" } } },
           ])
         // COUNTRY: single aggregate
@@ -193,7 +193,7 @@ export async function getCountryComparison(req, res) {
     }
 
     const breakdown = await OrderModel.aggregate([
-      { $match: { paymentStatus: "PAID" } },
+      { $match: { payment_status: "PAID" } },
       {
         $group: {
           _id: "$countryCode",
