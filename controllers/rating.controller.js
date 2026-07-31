@@ -42,6 +42,7 @@ export const addRatingController = async (req, res) => {
       product,
       rating,
       review: review || '',
+      countryCode: req.countryCode || 'NG',
     });
     await newRating.save();
 

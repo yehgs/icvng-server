@@ -1070,6 +1070,34 @@ export const updateProductDetails = async (request, response) => {
     const userId = request.user._id;
     let updateData = { ...request.body, updatedBy: userId };
 
+    // HQ Manager (GLOBAL scope) may edit ONLY partnerStock + pricing through
+    // this product modal endpoint — they're not physically at the
+    // warehouse, so warehouseStock (offline/damaged/expired/etc.) stays
+    // with WAREHOUSE/IT/DIRECTOR. Every other submitted field (name,
+    // description, images, category, etc.) is discarded regardless of what
+    // the request body contains. Foreign Manager / any COUNTRY-scoped role
+    // gets no write access here at all — they have no business with stock,
+    // and HQ-set pricing isn't theirs to change either.
+    const HQ_MANAGER_PRICE_FIELDS = [
+      "price", "salePrice", "price3weeksDelivery", "price5weeksDelivery",
+      "btcPrice", "btbPrice", "discount",
+    ];
+    const userSubRole = request.user.subRole;
+    if (userSubRole === "MANAGER") {
+      if (request.countryScope) {
+        // Foreign Manager — no stock or pricing edits via this endpoint.
+        return response.status(403).json({
+          message: "Managers outside HQ cannot edit product stock or pricing.",
+          error: true,
+          success: false,
+        });
+      }
+      updateData = { partnerStock: request.body.partnerStock, updatedBy: userId };
+      for (const field of HQ_MANAGER_PRICE_FIELDS) {
+        if (request.body[field] !== undefined) updateData[field] = request.body[field];
+      }
+    }
+
     // Sanitize ObjectId reference fields — Mongoose throws BSONError if they are ""
     // Convert empty strings to null for all ref fields so Mongoose clears them cleanly
     const objectIdFields = [

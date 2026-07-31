@@ -1,5 +1,14 @@
 import ProductRequestModel from '../models/productRequest.model.js';
 
+// MANAGER (HQ or Foreign) is bound to a single country's product requests —
+// HQ Manager to NG (the HQ market), Foreign Manager to their assignedCountry.
+// IT/DIRECTOR are unrestricted. Returns null when unrestricted, or the
+// country code a MANAGER is limited to.
+function managerCountryLock(request) {
+  if (request.user?.subRole !== 'MANAGER') return null;
+  return request.countryScope || 'NG';
+}
+
 // Create a new product request
 export const createProductRequestController = async (request, response) => {
   try {
@@ -19,6 +28,7 @@ export const createProductRequestController = async (request, response) => {
       product: productId,
       quantity,
       message: message || '',
+      countryCode: request.countryCode || 'NG',
     });
 
     const savedRequest = await newRequest.save();
@@ -49,7 +59,16 @@ export const createProductRequestController = async (request, response) => {
 // Get all product requests (admin)
 export const getAllProductRequestsController = async (request, response) => {
   try {
-    const data = await ProductRequestModel.find()
+    // Country scoping: IT/DIRECTOR see everything. MANAGER (HQ or Foreign)
+    // only sees requests placed on their own country's storefront —
+    // HQ Manager is GLOBAL scope but still bound to NG (the HQ market);
+    // Foreign Manager is bound to their assignedCountry.
+    const query = {};
+    if (request.user?.subRole === 'MANAGER') {
+      query.countryCode = request.countryScope || 'NG';
+    }
+
+    const data = await ProductRequestModel.find(query)
       .populate('user', 'name email mobile avatar')
       .populate('product', 'name image price stock')
       .sort({ createdAt: -1 });
@@ -116,6 +135,28 @@ export const getProductRequestDetailsController = async (request, response) => {
       });
     }
 
+    const isAdmin = request.user?.role === 'ADMIN';
+    if (!isAdmin) {
+      // Customer viewing their own request only.
+      const ownerId = requestDetails.user?._id || requestDetails.user;
+      if (String(ownerId) !== String(request.userId || request.user?._id)) {
+        return response.status(404).json({
+          message: 'Product request not found',
+          error: true,
+          success: false,
+        });
+      }
+    } else {
+      const countryLock = managerCountryLock(request);
+      if (countryLock && requestDetails.countryCode !== countryLock) {
+        return response.status(404).json({
+          message: 'Product request not found',
+          error: true,
+          success: false,
+        });
+      }
+    }
+
     return response.json({
       data: requestDetails,
       error: false,
@@ -153,6 +194,18 @@ export const updateProductRequestStatusController = async (
         error: true,
         success: false,
       });
+    }
+
+    const countryLock = managerCountryLock(request);
+    if (countryLock) {
+      const existing = await ProductRequestModel.findById(requestId).select('countryCode');
+      if (!existing || existing.countryCode !== countryLock) {
+        return response.status(404).json({
+          message: 'Product request not found',
+          error: true,
+          success: false,
+        });
+      }
     }
 
     const updateData = {
@@ -202,6 +255,18 @@ export const deleteProductRequestController = async (request, response) => {
         error: true,
         success: false,
       });
+    }
+
+    const countryLock = managerCountryLock(request);
+    if (countryLock) {
+      const existing = await ProductRequestModel.findById(requestId).select('countryCode');
+      if (!existing || existing.countryCode !== countryLock) {
+        return response.status(404).json({
+          message: 'Product request not found',
+          error: true,
+          success: false,
+        });
+      }
     }
 
     const deletedRequest = await ProductRequestModel.findByIdAndDelete(

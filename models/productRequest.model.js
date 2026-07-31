@@ -1,7 +1,9 @@
 import mongoose from 'mongoose';
+import { countryField } from '../config/countrySchema.js';
 
 const productRequestSchema = new mongoose.Schema(
   {
+    ...countryField,
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',

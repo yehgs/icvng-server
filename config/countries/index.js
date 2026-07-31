@@ -141,24 +141,32 @@ export const DOMAIN_MAP = {
   "italiancoffeeng.vercel.app": "NG",
   "localhost:5173": "NG",
   localhost: "NG",
+  // Nigeria — admin panel
+  "app.i-coffee.ng": "NG",
 
   // Togo
   "i-coffee.tg": "TG",
   "www.i-coffee.tg": "TG",
   "icvng-client-tg.vercel.app": "TG",
   "localhost:5175": "TG",
+  // Togo — admin panel
+  "app.i-coffee.tg": "TG",
 
   // Benin
   "i-coffee.bj": "BJ",
   "www.i-coffee.bj": "BJ",
   "icvng-client-bj.vercel.app": "BJ",
   "localhost:5176": "BJ",
+  // Benin — admin panel
+  "app.i-coffee.bj": "BJ",
 
   // Italy
   "i-coffee.it": "IT",
   "www.i-coffee.it": "IT",
   "icvng-client-it.vercel.app": "IT",
   "localhost:5177": "IT",
+  // Italy — admin panel
+  "app.i-coffee.it": "IT",
 };
 
 /** Default / fallback country when domain cannot be resolved */

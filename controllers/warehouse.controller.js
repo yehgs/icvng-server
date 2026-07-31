@@ -1894,6 +1894,13 @@ export const updateStock = async (request, response) => {
     }
 
     const userRole = request.user.subRole || request.user.role;
+    // Warehouse editing stays with physical WAREHOUSE staff (plus IT/DIRECTOR
+    // for override). HQ Manager is not physically present at the warehouse,
+    // so they get view-only access here — their write access is limited to
+    // partnerStock, edited via the product modal (updateProductDetails), not
+    // this endpoint. Foreign/country-scoped roles never reach this route at
+    // all (blocked at the router level by blockCountryScopedAdmins).
+    const isManagerOnlineStockOnly = false;
     if (!["WAREHOUSE", "IT", "DIRECTOR"].includes(userRole)) {
       return response.status(403).json({
         message: "Only warehouse staff can update stock quantities",
@@ -1947,12 +1954,36 @@ export const updateStock = async (request, response) => {
     }
 
     // Handle supplier - find or create if name provided
+    // (HQ Manager is restricted to onlineStock only — never touches supplier)
     let supplierId = currentProduct.supplier?._id;
-    if (supplierName && supplierName.trim() !== "") {
+    if (!isManagerOnlineStockOnly && supplierName && supplierName.trim() !== "") {
       supplierId = await findOrCreateSupplier(supplierName);
     }
 
     const currentEffectiveStock = await getEffectiveStock(currentProduct);
+
+    // HQ Manager may only change onlineStock — every other incoming field is
+    // discarded in favor of the product's current value, regardless of what
+    // was submitted in the request body.
+    if (isManagerOnlineStockOnly) {
+      parsedData.stockInHouse = currentEffectiveStock.stockInHouse;
+      parsedData.damagedQty = currentEffectiveStock.damagedQty;
+      parsedData.expiredQty = currentEffectiveStock.expiredQty;
+      parsedData.refurbishedQty = currentEffectiveStock.refurbishedQty;
+      parsedData.finalStock = currentEffectiveStock.finalStock;
+      parsedData.offlineStock = currentEffectiveStock.offlineStock;
+      // parsedData.onlineStock stays as submitted.
+    }
+    const effectiveStockOnArrival = isManagerOnlineStockOnly
+      ? currentEffectiveStock.stockOnArrival
+      : parseFloat(stockOnArrival) || 0;
+    const effectiveUnit = isManagerOnlineStockOnly
+      ? currentProduct.unit
+      : unit || currentProduct.unit;
+    const effectivePackaging = isManagerOnlineStockOnly
+      ? currentProduct.packaging
+      : packaging || currentProduct.packaging;
+    const effectiveNotes = isManagerOnlineStockOnly ? notes || "" : notes || "";
 
     // Track changes for activity log
     const changes = {};
@@ -1971,7 +2002,7 @@ export const updateStock = async (request, response) => {
     };
 
     const newStock = {
-      stockOnArrival: parseFloat(stockOnArrival) || 0,
+      stockOnArrival: effectiveStockOnArrival,
       stockInHouse: parsedData.stockInHouse,
       damagedQty: parsedData.damagedQty,
       expiredQty: parsedData.expiredQty,
@@ -1979,9 +2010,9 @@ export const updateStock = async (request, response) => {
       finalStock: parsedData.finalStock,
       onlineStock: parsedData.onlineStock,
       offlineStock: parsedData.offlineStock,
-      unit: unit || currentProduct.unit,
-      packaging: packaging || currentProduct.packaging,
-      supplier: supplierName || oldStock.supplier,
+      unit: effectiveUnit,
+      packaging: effectivePackaging,
+      supplier: isManagerOnlineStockOnly ? oldStock.supplier : supplierName || oldStock.supplier,
     };
 
     Object.keys(newStock).forEach((key) => {
@@ -1994,7 +2025,7 @@ export const updateStock = async (request, response) => {
     const updateData = {
       warehouseStock: {
         enabled: true,
-        stockOnArrival: parseFloat(stockOnArrival) || 0,
+        stockOnArrival: effectiveStockOnArrival,
         stockInHouse: parsedData.stockInHouse,
         damagedQty: parsedData.damagedQty,
         expiredQty: parsedData.expiredQty,
@@ -2002,18 +2033,18 @@ export const updateStock = async (request, response) => {
         finalStock: parsedData.finalStock,
         onlineStock: parsedData.onlineStock,
         offlineStock: parsedData.offlineStock,
-        notes: notes || "",
+        notes: effectiveNotes,
         lastUpdated: new Date(),
         updatedBy: request.user._id,
       },
       stock: parsedData.finalStock,
-      unit: unit || currentProduct.unit,
-      packaging: packaging || currentProduct.packaging,
+      unit: effectiveUnit,
+      packaging: effectivePackaging,
       stockSource: "WAREHOUSE_MANUAL",
       updatedBy: request.user._id,
     };
 
-    if (supplierId) {
+    if (supplierId && !isManagerOnlineStockOnly) {
       updateData.supplier = supplierId;
     }
 

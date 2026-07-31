@@ -1,6 +1,5 @@
 //server
 import mongoose from 'mongoose';
-import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const notificationSchema = new mongoose.Schema(
   {
@@ -11,6 +10,28 @@ const notificationSchema = new mongoose.Schema(
       default: null,
     },
     triggeredByName: { type: String, default: 'System' },
+
+    // Targeting has two independent dimensions that combine:
+    //   1. targetScope   — WHERE (geography): who is even eligible.
+    //   2. targetType/targetRoles/targetUsers — WHICH roles/users within
+    //      that eligible set.
+    //
+    // targetScope:
+    //   'ALL'         → no geography restriction — HQ + every country.
+    //   'HQ_ONLY'     → GLOBAL-scope admins only ("all roles excluding
+    //                   foreign role"). Also what an HQ Manager is locked to.
+    //   'FOREIGN_ONLY'→ COUNTRY-scope admins only, across every country
+    //                   ("all foreign roles"). IT/DIRECTOR only — a Manager
+    //                   is never allowed to broadcast across countries.
+    //   'COUNTRY'     → COUNTRY-scope admins in exactly targetCountry. What
+    //                   a Foreign Manager is locked to (their own country).
+    targetScope: {
+      type: String,
+      enum: ['ALL', 'HQ_ONLY', 'FOREIGN_ONLY', 'COUNTRY'],
+      default: 'ALL',
+    },
+    // Only set (and only meaningful) when targetScope === 'COUNTRY'.
+    targetCountry: { type: String, default: null },
 
     // Targeting — can be 'role', 'specific', or 'all'
     targetType: {
@@ -81,10 +102,7 @@ const notificationSchema = new mongoose.Schema(
 notificationSchema.index({ targetRoles: 1, createdAt: -1 });
 notificationSchema.index({ targetUsers: 1, createdAt: -1 });
 notificationSchema.index({ targetType: 1, createdAt: -1 });
-
-
-// PHASE 3: country dimension + isolation hooks
-notificationSchema.plugin(countryScopedPlugin);
+notificationSchema.index({ targetScope: 1, targetCountry: 1, createdAt: -1 });
 
 const NotificationModel = mongoose.model('Notification', notificationSchema);
 export default NotificationModel;

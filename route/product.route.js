@@ -26,7 +26,7 @@ import { countryScope } from "../middleware/countryScope.js";
 const productRouter = Router();
 
 // Create product
-productRouter.post("/create", auth, admin, createProductController);
+productRouter.post("/create", auth, admin, countryScope, createProductController);
 
 // Get products
 productRouter.get("/search", searchProductController);
@@ -44,7 +44,7 @@ productRouter.post("/get-product-details", getProductDetails);
 productRouter.put("/update-product-details", auth, admin, countryScope, updateProductDetails);
 
 // Delete product
-productRouter.delete("/delete-product", auth, admin, deleteProductDetails);
+productRouter.delete("/delete-product", auth, admin, countryScope, deleteProductDetails);
 
 // Search product
 productRouter.post("/search-product", searchProduct);

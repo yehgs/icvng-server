@@ -25,6 +25,32 @@ export const NOTIFICATION_ROLE_MAP = {
   CUSTOM: [],
 };
 
+// ─── Recipient matching (two independent dimensions: WHERE + WHICH ROLE) ────
+// A notification reaches a user only when BOTH the geography (targetScope)
+// and role (targetType/targetRoles/targetUsers) dimensions match them.
+export function buildRecipientQuery(user, extra = {}) {
+  const scopeOr = [{ targetScope: 'ALL' }];
+  if (user.scope === 'GLOBAL') {
+    scopeOr.push({ targetScope: 'HQ_ONLY' });
+  } else if (user.scope === 'COUNTRY') {
+    scopeOr.push({ targetScope: 'FOREIGN_ONLY' });
+    if (user.assignedCountry) {
+      scopeOr.push({ targetScope: 'COUNTRY', targetCountry: user.assignedCountry });
+    }
+  }
+
+  const roleOr = [
+    { targetType: 'all' },
+    { targetType: 'role', targetRoles: user.subRole },
+    { targetType: 'specific', targetUsers: user._id },
+  ];
+
+  return {
+    ...extra,
+    $and: [{ $or: scopeOr }, { $or: roleOr }],
+  };
+}
+
 // ─── Helper: send notification email to a list of users ─────────────────────
 async function sendNotificationEmails(users, notification) {
   const emailPromises = users.map(async (user) => {
@@ -68,6 +94,8 @@ export async function createNotificationInternal({
   targetType = 'role',
   targetRoles = null,   // pass explicitly or derive from NOTIFICATION_ROLE_MAP
   targetUsers = [],
+  targetScope = 'ALL',      // 'ALL' | 'HQ_ONLY' | 'FOREIGN_ONLY' | 'COUNTRY'
+  targetCountry = null,     // only meaningful when targetScope === 'COUNTRY'
   priority = 'medium',
   sendEmailFlag = true,
 }) {
@@ -80,6 +108,8 @@ export async function createNotificationInternal({
     targetType: roles.length === 0 && targetUsers.length === 0 ? 'all' : targetType,
     targetRoles: roles,
     targetUsers,
+    targetScope,
+    targetCountry: targetScope === 'COUNTRY' ? targetCountry : null,
     type,
     title,
     message,
@@ -93,21 +123,41 @@ export async function createNotificationInternal({
   if (sendEmailFlag) {
     (async () => {
       try {
-        let usersToEmail = [];
+        // Base role-dimension filter (who qualifies by role/user)
+        let roleFilter = null;
         if (notification.targetType === 'all') {
-          usersToEmail = await UserModel.find({ role: 'ADMIN', status: 'Active' }).lean();
+          roleFilter = {};
         } else if (notification.targetType === 'role' && roles.length > 0) {
-          usersToEmail = await UserModel.find({ role: 'ADMIN', subRole: { $in: roles }, status: 'Active' }).lean();
+          roleFilter = { subRole: { $in: roles } };
         } else if (notification.targetType === 'specific' && targetUsers.length > 0) {
-          usersToEmail = await UserModel.find({ _id: { $in: targetUsers }, status: 'Active' }).lean();
+          roleFilter = { _id: { $in: targetUsers } };
         }
 
-        if (usersToEmail.length > 0) {
-          await sendNotificationEmails(usersToEmail, notification);
-          // Mark email sent
-          await NotificationModel.findByIdAndUpdate(notification._id, {
-            $set: { emailSentTo: usersToEmail.map((u) => u._id) },
-          });
+        if (roleFilter) {
+          // Geography-dimension filter (who qualifies by scope/country)
+          let scopeFilter = {};
+          if (notification.targetScope === 'HQ_ONLY') {
+            scopeFilter = { scope: 'GLOBAL' };
+          } else if (notification.targetScope === 'FOREIGN_ONLY') {
+            scopeFilter = { scope: 'COUNTRY' };
+          } else if (notification.targetScope === 'COUNTRY' && notification.targetCountry) {
+            scopeFilter = { scope: 'COUNTRY', assignedCountry: notification.targetCountry };
+          }
+
+          const usersToEmail = await UserModel.find({
+            role: 'ADMIN',
+            status: 'Active',
+            ...roleFilter,
+            ...scopeFilter,
+          }).lean();
+
+          if (usersToEmail.length > 0) {
+            await sendNotificationEmails(usersToEmail, notification);
+            // Mark email sent
+            await NotificationModel.findByIdAndUpdate(notification._id, {
+              $set: { emailSentTo: usersToEmail.map((u) => u._id) },
+            });
+          }
         }
       } catch (err) {
         console.error('Notification email dispatch error:', err.message);
@@ -124,14 +174,7 @@ export async function getNotificationsController(req, res) {
     const user = req.user;
     const { page = 1, limit = 20, unreadOnly = false } = req.query;
 
-    const query = {
-      isActive: true,
-      $or: [
-        { targetType: 'all' },
-        { targetType: 'role', targetRoles: user.subRole },
-        { targetType: 'specific', targetUsers: user._id },
-      ],
-    };
+    const query = buildRecipientQuery(user, { isActive: true });
 
     if (unreadOnly === 'true') {
       query['readBy.user'] = { $ne: user._id };
@@ -190,15 +233,10 @@ export async function markAllNotificationsReadController(req, res) {
   try {
     const user = req.user;
 
-    const query = {
+    const query = buildRecipientQuery(user, {
       isActive: true,
       'readBy.user': { $ne: user._id },
-      $or: [
-        { targetType: 'all' },
-        { targetType: 'role', targetRoles: user.subRole },
-        { targetType: 'specific', targetUsers: user._id },
-      ],
-    };
+    });
 
     const notifications = await NotificationModel.find(query).select('_id');
     const ids = notifications.map((n) => n._id);
@@ -218,6 +256,17 @@ export async function markAllNotificationsReadController(req, res) {
 export async function createNotificationController(req, res) {
   try {
     const user = req.user;
+
+    // Only IT/DIRECTOR (unrestricted) and MANAGER (locked to their own
+    // scope below) may send notifications.
+    const SENDER_ROLES = ['IT', 'DIRECTOR', 'MANAGER'];
+    if (!SENDER_ROLES.includes(user.subRole)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only IT, Director, or Manager can send notifications.',
+      });
+    }
+
     const {
       type,
       title,
@@ -226,11 +275,29 @@ export async function createNotificationController(req, res) {
       targetType = 'role',
       targetRoles,
       targetUsers,
+      targetScope: requestedScope = 'ALL',
       priority,
     } = req.body;
 
     if (!title || !message) {
       return res.status(400).json({ success: false, message: 'Title and message are required' });
+    }
+
+    // Geography lock — a Manager can NEVER choose their own audience scope,
+    // regardless of what the request body says:
+    //   HQ Manager (scope GLOBAL)   → locked to HQ_ONLY.
+    //   Foreign Manager (COUNTRY)   → locked to COUNTRY / their own country.
+    // IT/DIRECTOR keep the free choice of ALL / HQ_ONLY / FOREIGN_ONLY / COUNTRY.
+    let targetScope = requestedScope;
+    let targetCountry = req.body.targetCountry || null;
+    if (user.subRole === 'MANAGER') {
+      if (user.scope === 'COUNTRY' && user.assignedCountry) {
+        targetScope = 'COUNTRY';
+        targetCountry = user.assignedCountry;
+      } else {
+        targetScope = 'HQ_ONLY';
+        targetCountry = null;
+      }
     }
 
     const notification = await createNotificationInternal({
@@ -243,6 +310,8 @@ export async function createNotificationController(req, res) {
       targetType,
       targetRoles,
       targetUsers,
+      targetScope,
+      targetCountry,
       priority,
       sendEmailFlag: true,
     });
@@ -267,15 +336,12 @@ export async function deleteNotificationController(req, res) {
 export async function getUnreadCountController(req, res) {
   try {
     const user = req.user;
-    const count = await NotificationModel.countDocuments({
-      isActive: true,
-      'readBy.user': { $ne: user._id },
-      $or: [
-        { targetType: 'all' },
-        { targetType: 'role', targetRoles: user.subRole },
-        { targetType: 'specific', targetUsers: user._id },
-      ],
-    });
+    const count = await NotificationModel.countDocuments(
+      buildRecipientQuery(user, {
+        isActive: true,
+        'readBy.user': { $ne: user._id },
+      })
+    );
     return res.json({ success: true, unreadCount: count });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });

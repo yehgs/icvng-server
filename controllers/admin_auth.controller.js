@@ -3,6 +3,7 @@ import UserModel from '../models/user.model.js';
 import bcryptjs from 'bcryptjs';
 import generatedAccessToken from '../utils/generatedAccessToken.js';
 import genertedRefreshToken from '../utils/generatedRefreshToken.js';
+import { COUNTRY_CONFIG } from '../config/countries/index.js';
 
 /**
  * POST /api/admin/auth/login
@@ -47,6 +48,27 @@ export async function adminLoginController(request, response) {
     const checkPassword = await bcryptjs.compare(password, user.password);
     if (!checkPassword) {
       return response.status(400).json({ message: 'Invalid credentials', error: true, success: false });
+    }
+
+    // ── Domain-restricted login ────────────────────────────────────────────
+    // IT and DIRECTOR can log in from any country's admin portal (they need
+    // cross-market access). Every other role is bound to a single domain:
+    //   - HQ roles (scope GLOBAL, e.g. Manager, Accountant, Editor, HR,
+    //     Warehouse, Logistics) → only app.i-coffee.ng, the HQ market.
+    //   - Foreign roles (scope COUNTRY) → only their own assignedCountry's
+    //     admin domain (app.i-coffee.tg / .bj / .it).
+    // request.countryCode is resolved by the countryDetect middleware from
+    // the request's Host / x-storefront-host header.
+    if (!['IT', 'DIRECTOR'].includes(user.subRole)) {
+      const requiredCountry = user.scope === 'COUNTRY' ? user.assignedCountry : 'NG';
+      if (request.countryCode !== requiredCountry) {
+        const portal = COUNTRY_CONFIG[requiredCountry]?.adminDomain || `app.i-coffee.${requiredCountry?.toLowerCase()}`;
+        return response.status(403).json({
+          message: `This account can only log in from ${portal}.`,
+          error: true,
+          success: false,
+        });
+      }
     }
 
     const accessToken  = await generatedAccessToken(user._id);
