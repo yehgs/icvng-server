@@ -21,7 +21,7 @@ import {
   getPopularProducts,
 } from "../controllers/product.controller.js";
 import { admin } from "../middleware/Admin.js";
-import { countryScope } from "../middleware/countryScope.js";
+import { countryScope, blockCountryScopedAdmins } from "../middleware/countryScope.js";
 
 const productRouter = Router();
 
@@ -43,8 +43,12 @@ productRouter.post("/get-product-details", getProductDetails);
 // Update product
 productRouter.put("/update-product-details", auth, admin, countryScope, updateProductDetails);
 
-// Delete product
-productRouter.delete("/delete-product", auth, admin, countryScope, deleteProductDetails);
+// Delete product — HQ/GLOBAL only. Product deletion is a catalog-wide
+// decision (the catalog is shared across every market — see
+// PRODUCT_VISIBILITY_RULES.md); a country-scoped/foreign admin must not be
+// able to delete a product other markets are still selling, even by
+// calling this endpoint directly.
+productRouter.delete("/delete-product", auth, admin, countryScope, blockCountryScopedAdmins, deleteProductDetails);
 
 // Search product
 productRouter.post("/search-product", searchProduct);
