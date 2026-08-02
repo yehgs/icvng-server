@@ -1,6 +1,5 @@
 import mongoose from "mongoose";
 import { countryField, addCountryIndex } from "../config/countrySchema.js";
-import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const productSchema = new mongoose.Schema(
   {
@@ -501,8 +500,21 @@ productSchema.index({ "warehouseStock.lastUpdated": -1 });
 // the stock calculations from your existing Stock model.
 
 addCountryIndex(productSchema);
-// PHASE 3: isolation query hooks (field already present via countryField)
-productSchema.plugin(countryScopedPlugin);
+// NOTE: countryScopedPlugin is intentionally NOT applied here.
+//
+// Product is a single shared catalog across every market (same physical
+// products/warehouse across NG/TG/BJ/IT — see PRODUCT_VISIBILITY_RULES.md),
+// not a per-country record like Order/Customer. The `countryCode` field
+// above (from `...countryField`) defaults every product to "NG" on
+// creation, so if the plugin's read hooks were attached, any COUNTRY-scoped
+// (foreign) admin's queries would be force-filtered to `countryCode: "TG"`
+// (etc.) and match almost nothing — which is exactly what was happening:
+// foreign admins saw "0 produits au total" on the Products page and Stock
+// Management, even though the catalog itself was fully populated.
+//
+// Per-country visibility, if ever needed for a specific product, should go
+// through the dedicated `visibleInCountries` field above (empty array =
+// visible everywhere, the default), not blanket country-ownership filtering.
 
 const ProductModel = mongoose.model("Product", productSchema);
 
