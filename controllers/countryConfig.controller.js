@@ -83,6 +83,14 @@ export async function getAllCountries(req, res) {
         code: c.code,
         name: c.name,
         domain: c.domain,
+        // adminDomain is what the admin panel's AdminCountryContext
+        // matches window.location.hostname against (e.g. app.i-coffee.tg).
+        // seo.siteName drives the "I-COFFEE.XX" brand line on the login
+        // screen. Both were missing here, so the admin frontend could
+        // never resolve a non-Nigeria hostname and always fell back to
+        // the NG defaults.
+        adminDomain: c.adminDomain,
+        seo: c.seo,
         currency: c.currency,
         language: c.language,
         flagEmoji: c.flagEmoji,
