@@ -53,6 +53,10 @@ const shippingMethodSchema = new mongoose.Schema(
           freeShipping: {
             enabled: { type: Boolean, default: false },
             minimumOrderAmount: { type: Number, default: 0 },
+            // When true, this zone rate is hidden from checkout entirely
+            // (not just charged normally) for orders under the minimum -
+            // forcing the customer to pick a different shipping method.
+            hideWhenBelowMinimum: { type: Boolean, default: false },
           },
         },
       ],
@@ -80,6 +84,8 @@ const shippingMethodSchema = new mongoose.Schema(
       freeShipping: {
         enabled: { type: Boolean, default: false },
         minimumOrderAmount: { type: Number, default: 0 },
+        // Same idea as above, for the method-wide (non zone-specific) threshold.
+        hideWhenBelowMinimum: { type: Boolean, default: false },
       },
       validFrom: {
         type: Date,
@@ -352,30 +358,67 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
     // FLAT_RATE METHOD
     if (this.type === "flat_rate") {
       let baseCost = config.defaultCost || config.cost || 0;
+      let matchedZoneRate = null;
 
       console.log(`💵 Flat rate base cost: ${baseCost}`);
 
       // Check for zone-specific rate
       if (zone && config.zoneRates?.length > 0) {
-        const zoneRate = config.zoneRates.find(
+        matchedZoneRate = config.zoneRates.find(
           (zr) => zr.zone && zr.zone.toString() === zone.toString(),
         );
-        if (zoneRate) {
-          baseCost = zoneRate.cost;
+        if (matchedZoneRate) {
+          baseCost = matchedZoneRate.cost;
           console.log(`💵 Using zone-specific rate: ${baseCost}`);
         }
       }
 
-      // Check free shipping threshold
-      if (
-        config.freeShipping?.enabled &&
-        orderValue >= config.freeShipping.minimumOrderAmount
-      ) {
-        return {
-          eligible: true,
-          cost: 0,
-          reason: `Free shipping (order over ${config.freeShipping.minimumOrderAmount})`,
-        };
+      // Zone-specific free shipping threshold takes precedence over the
+      // method-wide one when this zone has its own rate configured.
+      const zoneFreeShipping = matchedZoneRate?.freeShipping;
+      if (zoneFreeShipping?.enabled) {
+        const qualifies = orderValue >= zoneFreeShipping.minimumOrderAmount;
+
+        if (qualifies) {
+          return {
+            eligible: true,
+            cost: 0,
+            reason: `Free shipping for this zone (order over ${zoneFreeShipping.minimumOrderAmount})`,
+          };
+        }
+
+        if (zoneFreeShipping.hideWhenBelowMinimum) {
+          // Method is hidden entirely (not charged) until the threshold is met.
+          return {
+            eligible: false,
+            cost: 0,
+            reason: `Only available for orders over ${zoneFreeShipping.minimumOrderAmount} in this zone`,
+          };
+        }
+        // Otherwise fall through: charge the normal zone cost below threshold.
+      }
+
+      // Method-wide free shipping threshold (independent of the zone-specific one above)
+      const globalFreeShipping = config.freeShipping;
+      if (globalFreeShipping?.enabled) {
+        const qualifies = orderValue >= globalFreeShipping.minimumOrderAmount;
+
+        if (qualifies) {
+          return {
+            eligible: true,
+            cost: 0,
+            reason: `Free shipping (order over ${globalFreeShipping.minimumOrderAmount})`,
+          };
+        }
+
+        if (globalFreeShipping.hideWhenBelowMinimum) {
+          return {
+            eligible: false,
+            cost: 0,
+            reason: `Only available for orders over ${globalFreeShipping.minimumOrderAmount}`,
+          };
+        }
+        // Otherwise fall through: charge the normal cost below threshold.
       }
 
       return {

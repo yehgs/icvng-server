@@ -25,6 +25,12 @@ import {
   getShippingDashboardStats,
   getCategoriesForAssignment,
   getProductsForAssignment,
+  exportShippingZonesCSV,
+  importShippingZonesCSV,
+  exportShippingMethodsCSV,
+  importShippingMethodsCSV,
+  exportShippingRatesCSV,
+  importShippingRatesCSV,
 } from "../controllers/shipping.controller.js";
 
 const shippingRouter = Router();
@@ -92,6 +98,21 @@ shippingRouter.delete(
   deleteShippingZone
 );
 
+// Shipping Zones - CSV Export/Import
+shippingRouter.get(
+  "/zones/export/csv",
+  auth,
+  requireRole(logisticsRoles),
+  exportShippingZonesCSV
+);
+
+shippingRouter.post(
+  "/zones/import/csv",
+  auth,
+  requireRole(logisticsRoles),
+  importShippingZonesCSV
+);
+
 // Shipping Methods
 shippingRouter.get(
   "/methods",
@@ -119,6 +140,37 @@ shippingRouter.delete(
   auth,
   requireRole(deleteRoles),
   deleteShippingMethod
+);
+
+// Shipping Methods - CSV Export/Import
+shippingRouter.get(
+  "/methods/export/csv",
+  auth,
+  requireRole(logisticsRoles),
+  exportShippingMethodsCSV
+);
+
+shippingRouter.post(
+  "/methods/import/csv",
+  auth,
+  requireRole(logisticsRoles),
+  importShippingMethodsCSV
+);
+
+// Shipping Rates (flat_rate zone costs / table_shipping weight bands / pickup locations)
+// - one row per rate/location, scoped to methods that already exist
+shippingRouter.get(
+  "/methods/rates/export/csv",
+  auth,
+  requireRole(logisticsRoles),
+  exportShippingRatesCSV
+);
+
+shippingRouter.post(
+  "/methods/rates/import/csv",
+  auth,
+  requireRole(logisticsRoles),
+  importShippingRatesCSV
 );
 
 // Categories and Products for Assignment

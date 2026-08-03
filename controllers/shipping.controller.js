@@ -6,6 +6,8 @@ import OrderModel from "../models/order.model.js";
 import ProductModel from "../models/product.model.js";
 import { nigeriaStatesLgas } from "../data/nigeria-states-lgas.js";
 import mongoose from "mongoose";
+import csv from "csv-parser";
+import { Readable } from "stream";
 
 // Helper function to generate unique zone code
 
@@ -95,6 +97,228 @@ const generateTrackingNumber = async () => {
   throw new Error(
     "Unable to generate unique tracking number after multiple attempts",
   );
+};
+
+// ===== CSV IMPORT/EXPORT HELPERS =====
+// Shared by exportShippingZonesCSV/importShippingZonesCSV and
+// exportShippingMethodsCSV/importShippingMethodsCSV below.
+// Separator convention used across all packed CSV cells:
+//   ;  separates entries in a list (states, zones, locations, weight ranges)
+//   :  separates a key from its value (StateName:coverage, ZoneCode:cost)
+//   [] wraps a nested sub-list attached to a key
+//   |  separates items inside a [ ] sub-list
+//   ^  separates the individual fields of one weight-range / location record
+
+function escapeRegex(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function csvField(value) {
+  const str = value === null || value === undefined ? "" : String(value);
+  return `"${str.replace(/"/g, '""')}"`;
+}
+
+function buildCsv(headers, rows) {
+  const lines = [headers, ...rows].map((row) =>
+    row.map(csvField).join(","),
+  );
+  return "\uFEFF" + lines.join("\r\n"); // BOM for Excel-friendly UTF-8
+}
+
+// ---- Zone "States Coverage" packing/unpacking ----
+// e.g. "Lagos:all;Ogun:specific[Abeokuta North|Ijebu Ode];Oyo:all"
+
+function formatStatesField(states = []) {
+  return (states || [])
+    .map((s) => {
+      if (s.coverage_type === "specific" && s.covered_lgas?.length) {
+        return `${s.name}:specific[${s.covered_lgas.join("|")}]`;
+      }
+      return `${s.name}:all`;
+    })
+    .join(";");
+}
+
+function parseStatesField(value) {
+  if (!value || !value.trim()) return [];
+  return value
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const colonIdx = part.indexOf(":");
+      if (colonIdx === -1) {
+        return { name: part.trim(), coverage_type: "all", covered_lgas: [] };
+      }
+      const name = part.slice(0, colonIdx).trim();
+      const rest = part.slice(colonIdx + 1).trim();
+      const specificMatch = rest.match(/^specific\s*\[(.*)\]$/i);
+      if (specificMatch) {
+        const covered_lgas = specificMatch[1]
+          .split("|")
+          .map((l) => l.trim())
+          .filter(Boolean);
+        return { name, coverage_type: "specific", covered_lgas };
+      }
+      return { name, coverage_type: "all", covered_lgas: [] };
+    });
+}
+
+// ---- Shipping method packed field helpers ----
+
+function parsePipeList(value) {
+  if (!value || !value.trim()) return [];
+  return value
+    .split("|")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function formatCategories(categories = []) {
+  return (categories || [])
+    .filter((c) => c && c.slug)
+    .map((c) => c.slug)
+    .join("|");
+}
+
+function formatProducts(products = []) {
+  return (products || [])
+    .filter((p) => p && p.sku)
+    .map((p) => p.sku)
+    .join("|");
+}
+
+function formatFlatRateZoneRates(zoneRates = []) {
+  return (zoneRates || [])
+    .filter((zr) => zr.zone && zr.zone.code)
+    .map((zr) => `${zr.zone.code}:${zr.cost}`)
+    .join(";");
+}
+
+function parseFlatRateZoneRates(value) {
+  if (!value || !value.trim()) return [];
+  return value
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [zoneCode, cost] = entry.split(":").map((s) => s?.trim());
+      return { zoneCode, cost: Number(cost) };
+    });
+}
+
+function formatTableShippingZoneRates(zoneRates = []) {
+  return (zoneRates || [])
+    .filter((zr) => zr.zone && zr.zone.code)
+    .map((zr) => {
+      const ranges = (zr.weightRanges || [])
+        .map((wr) => `${wr.minWeight}^${wr.maxWeight}^${wr.shippingCost}`)
+        .join("|");
+      return `${zr.zone.code}:[${ranges}]`;
+    })
+    .join(";");
+}
+
+function parseTableShippingZoneRates(value) {
+  if (!value || !value.trim()) return [];
+  return value
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const colonIdx = entry.indexOf(":");
+      const zoneCode = entry.slice(0, colonIdx).trim();
+      const rangesRaw = entry.slice(colonIdx + 1).trim();
+      const match = rangesRaw.match(/^\[(.*)\]$/);
+      const inner = match ? match[1] : rangesRaw;
+      const weightRanges = inner
+        .split("|")
+        .map((r) => r.trim())
+        .filter(Boolean)
+        .map((r) => {
+          const [minWeight, maxWeight, shippingCost] = r
+            .split("^")
+            .map((x) => x?.trim());
+          return {
+            minWeight: Number(minWeight),
+            maxWeight: Number(maxWeight),
+            shippingCost: Number(shippingCost),
+          };
+        });
+      return { zoneCode, weightRanges };
+    });
+}
+
+function formatLocation(loc) {
+  return [
+    loc.name || "",
+    loc.address || "",
+    loc.city || "",
+    loc.state || "",
+    loc.lga || "",
+    loc.phone || "",
+  ].join("^");
+}
+
+function parseLocation(str) {
+  const [name, address, city, state, lga, phone] = str
+    .split("^")
+    .map((s) => (s || "").trim());
+  return { name, address, city, state, lga, phone: phone || "" };
+}
+
+function isValidLocation(loc) {
+  return !!(loc.name && loc.address && loc.city && loc.state && loc.lga);
+}
+
+function formatPickupDefaultLocations(locations = []) {
+  return (locations || []).map(formatLocation).join(";");
+}
+
+function parsePickupDefaultLocations(value) {
+  if (!value || !value.trim()) return [];
+  return value
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map(parseLocation);
+}
+
+function formatPickupZoneLocations(zoneLocations = []) {
+  return (zoneLocations || [])
+    .filter((zl) => zl.zone && zl.zone.code)
+    .map((zl) => {
+      const locs = (zl.locations || []).map(formatLocation).join("|");
+      return `${zl.zone.code}:[${locs}]`;
+    })
+    .join(";");
+}
+
+function parsePickupZoneLocations(value) {
+  if (!value || !value.trim()) return [];
+  return value
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const colonIdx = entry.indexOf(":");
+      const zoneCode = entry.slice(0, colonIdx).trim();
+      const locsRaw = entry.slice(colonIdx + 1).trim();
+      const match = locsRaw.match(/^\[(.*)\]$/);
+      const inner = match ? match[1] : locsRaw;
+      const locations = inner
+        .split("|")
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map(parseLocation);
+      return { zoneCode, locations };
+    });
+}
+
+const METHOD_CONFIG_KEY = {
+  flat_rate: "flatRate",
+  table_shipping: "tableShipping",
+  pickup: "pickup",
 };
 
 // ===== SHIPPING ZONES =====
@@ -3141,6 +3365,1180 @@ export const getShippingDashboardStats = async (request, response) => {
     console.error("Get dashboard stats error:", error);
     return response.status(500).json({
       message: error.message || error,
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// ===== SHIPPING ZONES CSV EXPORT/IMPORT =====
+
+export const exportShippingZonesCSV = async (request, response) => {
+  try {
+    const zones = await ShippingZoneModel.find({}).sort({
+      sortOrder: 1,
+      name: 1,
+    });
+
+    const headers = [
+      "Zone Code",
+      "Zone Name",
+      "Description",
+      "Zone Type",
+      "Priority",
+      "Active",
+      "Sort Order",
+      "Operational Notes",
+      "States Coverage",
+    ];
+
+    const rows = zones.map((zone) => [
+      zone.code || "",
+      zone.name || "",
+      zone.description || "",
+      zone.zone_type || "mixed",
+      zone.priority || "medium",
+      zone.isActive ? "TRUE" : "FALSE",
+      zone.sortOrder ?? 0,
+      zone.operational_notes || "",
+      formatStatesField(zone.states),
+    ]);
+
+    const csvContent = buildCsv(headers, rows);
+    const filename = `shipping_zones_${
+      new Date().toISOString().split("T")[0]
+    }.csv`;
+
+    response.setHeader("Content-Type", "text/csv; charset=utf-8");
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`,
+    );
+    return response.send(csvContent);
+  } catch (error) {
+    console.error("Export shipping zones CSV error:", error);
+    return response.status(500).json({
+      message: error.message || "Failed to export shipping zones",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+export const importShippingZonesCSV = async (request, response) => {
+  try {
+    const userId = request.user._id;
+    const { csvData } = request.body;
+
+    if (!csvData) {
+      return response.status(400).json({
+        message: "CSV data is required",
+        error: true,
+        success: false,
+      });
+    }
+
+    const rows = [];
+    const stream = Readable.from([csvData]);
+    await new Promise((resolve, reject) => {
+      stream
+        .pipe(csv())
+        .on("data", (row) => rows.push(row))
+        .on("end", resolve)
+        .on("error", reject);
+    });
+
+    const results = {
+      created: [],
+      updated: [],
+      failed: [],
+      totalProcessed: 0,
+    };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // header is row 1
+      results.totalProcessed++;
+
+      try {
+        const code = (row["Zone Code"] || "").trim();
+        const name = (row["Zone Name"] || "").trim();
+
+        if (!name) {
+          results.failed.push({ row: rowNum, reason: "Zone Name is required" });
+          continue;
+        }
+
+        const parsedStates = parseStatesField(row["States Coverage"]);
+
+        if (parsedStates.length === 0) {
+          results.failed.push({
+            row: rowNum,
+            zone: name,
+            reason:
+              "At least one state is required in the States Coverage column",
+          });
+          continue;
+        }
+
+        // Validate + expand states against the Nigeria states/LGA reference data
+        const processedStates = [];
+        const seenStates = new Set();
+        let stateError = null;
+
+        for (const st of parsedStates) {
+          if (seenStates.has(st.name.toLowerCase())) {
+            stateError = `Duplicate state in States Coverage: ${st.name}`;
+            break;
+          }
+          seenStates.add(st.name.toLowerCase());
+
+          const nigeriaState = nigeriaStatesLgas.find(
+            (ns) => ns.state.toLowerCase() === st.name.toLowerCase(),
+          );
+
+          if (!nigeriaState) {
+            stateError = `Invalid Nigerian state: ${st.name}`;
+            break;
+          }
+
+          let covered_lgas = [];
+          if (st.coverage_type === "specific") {
+            if (!st.covered_lgas.length) {
+              stateError = `${st.name} is marked "specific" but has no LGAs listed`;
+              break;
+            }
+            const invalidLgas = st.covered_lgas.filter(
+              (lga) => !nigeriaState.lga.includes(lga),
+            );
+            if (invalidLgas.length) {
+              stateError = `Invalid LGA(s) for ${st.name}: ${invalidLgas.join(", ")}`;
+              break;
+            }
+            covered_lgas = st.covered_lgas;
+          }
+
+          processedStates.push({
+            name: nigeriaState.state,
+            code: nigeriaState.state.substring(0, 2).toUpperCase(),
+            coverage_type: st.coverage_type,
+            available_lgas: [...nigeriaState.lga],
+            covered_lgas,
+          });
+        }
+
+        if (stateError) {
+          results.failed.push({ row: rowNum, zone: name, reason: stateError });
+          continue;
+        }
+
+        const zoneTypeRaw = (row["Zone Type"] || "").trim().toLowerCase();
+        const priorityRaw = (row["Priority"] || "").trim().toLowerCase();
+
+        const zonePayload = {
+          name,
+          description: (row["Description"] || "").trim(),
+          states: processedStates,
+          zone_type: ["urban", "rural", "mixed"].includes(zoneTypeRaw)
+            ? zoneTypeRaw
+            : "mixed",
+          priority: ["low", "medium", "high"].includes(priorityRaw)
+            ? priorityRaw
+            : "medium",
+          isActive: String(row["Active"] ?? "").trim().toUpperCase() !== "FALSE",
+          sortOrder: Number(row["Sort Order"]) || 0,
+          operational_notes: (row["Operational Notes"] || "").trim(),
+          updatedBy: userId,
+        };
+
+        // Match existing zone by code first, then by name (case-insensitive)
+        let existingZone = null;
+        if (code) {
+          existingZone = await ShippingZoneModel.findOne({
+            code: code.toUpperCase(),
+          });
+        }
+        if (!existingZone) {
+          existingZone = await ShippingZoneModel.findOne({
+            name: new RegExp(`^${escapeRegex(name)}$`, "i"),
+          });
+        }
+
+        if (existingZone) {
+          if (name.toLowerCase() !== existingZone.name.toLowerCase()) {
+            const nameClash = await ShippingZoneModel.findOne({
+              name: new RegExp(`^${escapeRegex(name)}$`, "i"),
+              _id: { $ne: existingZone._id },
+            });
+            if (nameClash) {
+              results.failed.push({
+                row: rowNum,
+                zone: name,
+                reason: `Another zone already uses the name "${name}"`,
+              });
+              continue;
+            }
+          }
+
+          Object.assign(existingZone, zonePayload);
+          await existingZone.save();
+          results.updated.push({
+            row: rowNum,
+            zone: existingZone.name,
+            code: existingZone.code,
+          });
+        } else {
+          const newCode = await generateZoneCode(name);
+          const newZone = new ShippingZoneModel({
+            ...zonePayload,
+            code: newCode,
+            createdBy: userId,
+          });
+          await newZone.save();
+          results.created.push({
+            row: rowNum,
+            zone: newZone.name,
+            code: newZone.code,
+          });
+        }
+      } catch (rowError) {
+        console.error(`Zone import row ${rowNum} error:`, rowError);
+        results.failed.push({
+          row: rowNum,
+          reason: rowError.message || "Unknown error",
+        });
+      }
+    }
+
+    return response.json({
+      message: `Import complete: ${results.created.length} created, ${results.updated.length} updated, ${results.failed.length} failed`,
+      data: results,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error("Import shipping zones CSV error:", error);
+    return response.status(500).json({
+      message: error.message || "Failed to import shipping zones",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// ===== SHIPPING METHODS CSV EXPORT/IMPORT =====
+
+export const exportShippingMethodsCSV = async (request, response) => {
+  try {
+    const methods = await ShippingMethodModel.find({})
+      .sort({ sortOrder: 1, name: 1 })
+      .populate("flatRate.zoneRates.zone", "code")
+      .populate("tableShipping.zoneRates.zone", "code")
+      .populate("pickup.zoneLocations.zone", "code")
+      .populate({ path: "flatRate.categories", select: "slug", model: "category" })
+      .populate({ path: "tableShipping.categories", select: "slug", model: "category" })
+      .populate({ path: "pickup.categories", select: "slug", model: "category" })
+      .populate("flatRate.products", "sku")
+      .populate("tableShipping.products", "sku")
+      .populate("pickup.products", "sku");
+
+    const headers = [
+      "Method Code",
+      "Method Name",
+      "Description",
+      "Type",
+      "Active",
+      "Sort Order",
+      "Min Delivery Days",
+      "Max Delivery Days",
+      "Assignment",
+      "Categories",
+      "Products",
+      "Flat Rate Default Cost",
+      "Flat Rate Zone Rates",
+      "Free Shipping Enabled",
+      "Free Shipping Min Order",
+      "Table Shipping Zone Rates",
+      "Pickup Cost",
+      "Pickup Default Locations",
+      "Pickup Zone Locations",
+    ];
+
+    const rows = methods.map((method) => {
+      const config = method[METHOD_CONFIG_KEY[method.type]] || {};
+
+      return [
+        method.code || "",
+        method.name || "",
+        method.description || "",
+        method.type || "",
+        method.isActive ? "TRUE" : "FALSE",
+        method.sortOrder ?? 0,
+        method.estimatedDelivery?.minDays ?? 1,
+        method.estimatedDelivery?.maxDays ?? 7,
+        config.assignment || "all_products",
+        formatCategories(config.categories),
+        formatProducts(config.products),
+        method.type === "flat_rate"
+          ? (method.flatRate?.defaultCost ?? method.flatRate?.cost ?? 0)
+          : "",
+        method.type === "flat_rate"
+          ? formatFlatRateZoneRates(method.flatRate?.zoneRates)
+          : "",
+        method.type === "flat_rate"
+          ? method.flatRate?.freeShipping?.enabled
+            ? "TRUE"
+            : "FALSE"
+          : "",
+        method.type === "flat_rate"
+          ? (method.flatRate?.freeShipping?.minimumOrderAmount ?? 0)
+          : "",
+        method.type === "table_shipping"
+          ? formatTableShippingZoneRates(method.tableShipping?.zoneRates)
+          : "",
+        method.type === "pickup" ? (method.pickup?.cost ?? 0) : "",
+        method.type === "pickup"
+          ? formatPickupDefaultLocations(method.pickup?.defaultLocations)
+          : "",
+        method.type === "pickup"
+          ? formatPickupZoneLocations(method.pickup?.zoneLocations)
+          : "",
+      ];
+    });
+
+    const csvContent = buildCsv(headers, rows);
+    const filename = `shipping_methods_${
+      new Date().toISOString().split("T")[0]
+    }.csv`;
+
+    response.setHeader("Content-Type", "text/csv; charset=utf-8");
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`,
+    );
+    return response.send(csvContent);
+  } catch (error) {
+    console.error("Export shipping methods CSV error:", error);
+    return response.status(500).json({
+      message: error.message || "Failed to export shipping methods",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+export const importShippingMethodsCSV = async (request, response) => {
+  try {
+    const userId = request.user._id;
+    const { csvData } = request.body;
+
+    if (!csvData) {
+      return response.status(400).json({
+        message: "CSV data is required",
+        error: true,
+        success: false,
+      });
+    }
+
+    const rows = [];
+    const stream = Readable.from([csvData]);
+    await new Promise((resolve, reject) => {
+      stream
+        .pipe(csv())
+        .on("data", (row) => rows.push(row))
+        .on("end", resolve)
+        .on("error", reject);
+    });
+
+    // Preload lookup tables once (zone code / category slug / product sku)
+    const allZones = await ShippingZoneModel.find({}).select("_id code");
+    const zoneByCode = new Map(
+      allZones.map((z) => [String(z.code).toUpperCase(), z._id]),
+    );
+
+    const CategoryModel = mongoose.model("category");
+    const allCategories = await CategoryModel.find({}).select("_id slug");
+    const categoryBySlug = new Map(
+      allCategories
+        .filter((c) => c.slug)
+        .map((c) => [c.slug.toLowerCase(), c._id]),
+    );
+
+    const allProducts = await ProductModel.find({}).select("_id sku");
+    const productBySku = new Map(
+      allProducts
+        .filter((p) => p.sku)
+        .map((p) => [p.sku.toLowerCase(), p._id]),
+    );
+
+    const results = {
+      created: [],
+      updated: [],
+      failed: [],
+      totalProcessed: 0,
+    };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // header is row 1
+      results.totalProcessed++;
+
+      try {
+        const code = (row["Method Code"] || "").trim();
+        const name = (row["Method Name"] || "").trim();
+        const type = (row["Type"] || "").trim().toLowerCase();
+
+        if (!name) {
+          results.failed.push({
+            row: rowNum,
+            reason: "Method Name is required",
+          });
+          continue;
+        }
+
+        if (!["flat_rate", "table_shipping", "pickup"].includes(type)) {
+          results.failed.push({
+            row: rowNum,
+            method: name,
+            reason: `Type must be flat_rate, table_shipping, or pickup (got "${row["Type"] || ""}")`,
+          });
+          continue;
+        }
+
+        const assignmentRaw = (row["Assignment"] || "").trim();
+        const assignment = [
+          "all_products",
+          "categories",
+          "specific_products",
+        ].includes(assignmentRaw)
+          ? assignmentRaw
+          : "all_products";
+
+        let categories = [];
+        let products = [];
+        let assignmentError = null;
+
+        if (assignment === "categories") {
+          const slugs = parsePipeList(row["Categories"]);
+          if (!slugs.length) {
+            assignmentError =
+              'Assignment is "categories" but the Categories column is empty';
+          } else {
+            const missing = [];
+            categories = slugs
+              .map((slug) => {
+                const id = categoryBySlug.get(slug.toLowerCase());
+                if (!id) missing.push(slug);
+                return id;
+              })
+              .filter(Boolean);
+            if (missing.length) {
+              assignmentError = `Unknown category slug(s) in Categories: ${missing.join(", ")}`;
+            }
+          }
+        } else if (assignment === "specific_products") {
+          const skus = parsePipeList(row["Products"]);
+          if (!skus.length) {
+            assignmentError =
+              'Assignment is "specific_products" but the Products column is empty';
+          } else {
+            const missing = [];
+            products = skus
+              .map((sku) => {
+                const id = productBySku.get(sku.toLowerCase());
+                if (!id) missing.push(sku);
+                return id;
+              })
+              .filter(Boolean);
+            if (missing.length) {
+              assignmentError = `Unknown product SKU(s) in Products: ${missing.join(", ")}`;
+            }
+          }
+        }
+
+        if (assignmentError) {
+          results.failed.push({ row: rowNum, method: name, reason: assignmentError });
+          continue;
+        }
+
+        const basePayload = {
+          name,
+          description: (row["Description"] || "").trim(),
+          type,
+          isActive:
+            String(row["Active"] ?? "").trim().toUpperCase() !== "FALSE",
+          sortOrder: Number(row["Sort Order"]) || 0,
+          estimatedDelivery: {
+            minDays: Number(row["Min Delivery Days"]) || 1,
+            maxDays: Number(row["Max Delivery Days"]) || 7,
+          },
+          updatedBy: userId,
+          // Clear the other two config blocks - only the active type's config is kept
+          flatRate: undefined,
+          tableShipping: undefined,
+          pickup: undefined,
+        };
+
+        let typeError = null;
+
+        if (type === "flat_rate") {
+          const zoneRatesRaw = parseFlatRateZoneRates(
+            row["Flat Rate Zone Rates"],
+          );
+          const zoneRates = [];
+          for (const zr of zoneRatesRaw) {
+            const zoneId = zoneByCode.get((zr.zoneCode || "").toUpperCase());
+            if (!zoneId) {
+              typeError = `Unknown zone code in Flat Rate Zone Rates: "${zr.zoneCode}"`;
+              break;
+            }
+            if (isNaN(zr.cost)) {
+              typeError = `Invalid cost for zone ${zr.zoneCode} in Flat Rate Zone Rates`;
+              break;
+            }
+            zoneRates.push({ zone: zoneId, cost: zr.cost });
+          }
+          if (typeError) {
+            results.failed.push({ row: rowNum, method: name, reason: typeError });
+            continue;
+          }
+
+          const defaultCost = Number(row["Flat Rate Default Cost"]) || 0;
+
+          basePayload.flatRate = {
+            cost: defaultCost,
+            defaultCost,
+            zoneRates,
+            assignment,
+            categories,
+            products,
+            freeShipping: {
+              enabled: isTruthy(row["Free Shipping Enabled"]),
+              minimumOrderAmount: Number(row["Free Shipping Min Order"]) || 0,
+            },
+          };
+        } else if (type === "table_shipping") {
+          const zoneRatesRaw = parseTableShippingZoneRates(
+            row["Table Shipping Zone Rates"],
+          );
+
+          if (!zoneRatesRaw.length) {
+            results.failed.push({
+              row: rowNum,
+              method: name,
+              reason:
+                "At least one zone rate is required in Table Shipping Zone Rates",
+            });
+            continue;
+          }
+
+          const zoneRates = [];
+          for (const zr of zoneRatesRaw) {
+            const zoneId = zoneByCode.get((zr.zoneCode || "").toUpperCase());
+            if (!zoneId) {
+              typeError = `Unknown zone code in Table Shipping Zone Rates: "${zr.zoneCode}"`;
+              break;
+            }
+            if (!zr.weightRanges.length) {
+              typeError = `Zone ${zr.zoneCode} has no weight ranges in Table Shipping Zone Rates`;
+              break;
+            }
+            const invalidRange = zr.weightRanges.find(
+              (wr) =>
+                isNaN(wr.minWeight) ||
+                isNaN(wr.maxWeight) ||
+                isNaN(wr.shippingCost),
+            );
+            if (invalidRange) {
+              typeError = `Invalid weight range for zone ${zr.zoneCode} in Table Shipping Zone Rates`;
+              break;
+            }
+            zoneRates.push({ zone: zoneId, weightRanges: zr.weightRanges });
+          }
+          if (typeError) {
+            results.failed.push({ row: rowNum, method: name, reason: typeError });
+            continue;
+          }
+
+          basePayload.tableShipping = { zoneRates, assignment, categories, products };
+        } else if (type === "pickup") {
+          const defaultLocationsRaw = parsePickupDefaultLocations(
+            row["Pickup Default Locations"],
+          );
+          const zoneLocationsRaw = parsePickupZoneLocations(
+            row["Pickup Zone Locations"],
+          );
+
+          const defaultLocations = defaultLocationsRaw.filter(isValidLocation);
+          const zoneLocations = [];
+
+          for (const zl of zoneLocationsRaw) {
+            const zoneId = zoneByCode.get((zl.zoneCode || "").toUpperCase());
+            if (!zoneId) {
+              typeError = `Unknown zone code in Pickup Zone Locations: "${zl.zoneCode}"`;
+              break;
+            }
+            const validLocs = zl.locations.filter(isValidLocation);
+            if (validLocs.length) {
+              zoneLocations.push({ zone: zoneId, locations: validLocs });
+            }
+          }
+          if (typeError) {
+            results.failed.push({ row: rowNum, method: name, reason: typeError });
+            continue;
+          }
+
+          if (!defaultLocations.length && !zoneLocations.length) {
+            results.failed.push({
+              row: rowNum,
+              method: name,
+              reason:
+                "At least one valid pickup location (name, address, city, state, LGA) is required in Pickup Default Locations or Pickup Zone Locations",
+            });
+            continue;
+          }
+
+          basePayload.pickup = {
+            cost: Number(row["Pickup Cost"]) || 0,
+            defaultLocations,
+            zoneLocations,
+            assignment,
+            categories,
+            products,
+          };
+        }
+
+        // Match existing method by code first, then by name (case-insensitive)
+        let existingMethod = null;
+        if (code) {
+          existingMethod = await ShippingMethodModel.findOne({
+            code: code.toUpperCase(),
+          });
+        }
+        if (!existingMethod) {
+          existingMethod = await ShippingMethodModel.findOne({
+            name: new RegExp(`^${escapeRegex(name)}$`, "i"),
+          });
+        }
+
+        if (existingMethod) {
+          existingMethod.flatRate = undefined;
+          existingMethod.tableShipping = undefined;
+          existingMethod.pickup = undefined;
+          Object.assign(existingMethod, basePayload);
+          await existingMethod.save();
+          results.updated.push({
+            row: rowNum,
+            method: existingMethod.name,
+            code: existingMethod.code,
+          });
+        } else {
+          const newCode = await generateMethodCode(name, type);
+          const newMethod = new ShippingMethodModel({
+            ...basePayload,
+            code: newCode,
+            createdBy: userId,
+          });
+          await newMethod.save();
+          results.created.push({
+            row: rowNum,
+            method: newMethod.name,
+            code: newMethod.code,
+          });
+        }
+      } catch (rowError) {
+        console.error(`Method import row ${rowNum} error:`, rowError);
+        results.failed.push({
+          row: rowNum,
+          reason: rowError.message || "Unknown error",
+        });
+      }
+    }
+
+    return response.json({
+      message: `Import complete: ${results.created.length} created, ${results.updated.length} updated, ${results.failed.length} failed`,
+      data: results,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error("Import shipping methods CSV error:", error);
+    return response.status(500).json({
+      message: error.message || "Failed to import shipping methods",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+// ===== SHIPPING RATES CSV EXPORT/IMPORT =====
+// Unlike exportShippingMethodsCSV (one packed row per method), this is a
+// flat, spreadsheet-friendly view scoped to just the pricing/location
+// tables: one row per zone rate (flat_rate), per zone+weight-band
+// (table_shipping), or per pickup location. Intended for bulk-editing
+// prices/locations on methods that already exist - it never creates a
+// method (use the Methods CSV or the UI for that), and for any method
+// code that appears in the file, ALL of its rows here become the COMPLETE
+// new rate/location table for that method (full replace, not a merge).
+
+export const exportShippingRatesCSV = async (request, response) => {
+  try {
+    const methods = await ShippingMethodModel.find({
+      type: { $in: ["flat_rate", "table_shipping", "pickup"] },
+    })
+      .sort({ sortOrder: 1, name: 1 })
+      .populate("flatRate.zoneRates.zone", "code name")
+      .populate("tableShipping.zoneRates.zone", "code name")
+      .populate("pickup.zoneLocations.zone", "code name");
+
+    const headers = [
+      "Method Code",
+      "Method Name",
+      "Type",
+      "Zone Code",
+      "Zone Name",
+      "Min Weight",
+      "Max Weight",
+      "Cost",
+      "Location Name",
+      "Address",
+      "City",
+      "State",
+      "LGA",
+      "Phone",
+    ];
+
+    const rows = [];
+    const blankLocation = ["", "", "", "", "", ""];
+
+    for (const method of methods) {
+      if (method.type === "flat_rate") {
+        const config = method.flatRate || {};
+
+        // Default/base cost row - Zone Code blank
+        rows.push([
+          method.code,
+          method.name,
+          method.type,
+          "",
+          "",
+          "",
+          "",
+          config.defaultCost ?? config.cost ?? 0,
+          ...blankLocation,
+        ]);
+
+        (config.zoneRates || [])
+          .filter((zr) => zr.zone && zr.zone.code)
+          .forEach((zr) => {
+            rows.push([
+              method.code,
+              method.name,
+              method.type,
+              zr.zone.code,
+              zr.zone.name || "",
+              "",
+              "",
+              zr.cost ?? 0,
+              ...blankLocation,
+            ]);
+          });
+      } else if (method.type === "table_shipping") {
+        const config = method.tableShipping || {};
+
+        (config.zoneRates || [])
+          .filter((zr) => zr.zone && zr.zone.code)
+          .forEach((zr) => {
+            (zr.weightRanges || []).forEach((wr) => {
+              rows.push([
+                method.code,
+                method.name,
+                method.type,
+                zr.zone.code,
+                zr.zone.name || "",
+                wr.minWeight,
+                wr.maxWeight,
+                wr.shippingCost,
+                ...blankLocation,
+              ]);
+            });
+          });
+      } else if (method.type === "pickup") {
+        const config = method.pickup || {};
+
+        (config.defaultLocations || []).forEach((loc) => {
+          rows.push([
+            method.code,
+            method.name,
+            method.type,
+            "",
+            "",
+            "",
+            "",
+            config.cost ?? 0,
+            loc.name || "",
+            loc.address || "",
+            loc.city || "",
+            loc.state || "",
+            loc.lga || "",
+            loc.phone || "",
+          ]);
+        });
+
+        (config.zoneLocations || [])
+          .filter((zl) => zl.zone && zl.zone.code)
+          .forEach((zl) => {
+            (zl.locations || []).forEach((loc) => {
+              rows.push([
+                method.code,
+                method.name,
+                method.type,
+                zl.zone.code,
+                zl.zone.name || "",
+                "",
+                "",
+                config.cost ?? 0,
+                loc.name || "",
+                loc.address || "",
+                loc.city || "",
+                loc.state || "",
+                loc.lga || "",
+                loc.phone || "",
+              ]);
+            });
+          });
+      }
+    }
+
+    const csvContent = buildCsv(headers, rows);
+    const filename = `shipping_rates_${
+      new Date().toISOString().split("T")[0]
+    }.csv`;
+
+    response.setHeader("Content-Type", "text/csv; charset=utf-8");
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`,
+    );
+    return response.send(csvContent);
+  } catch (error) {
+    console.error("Export shipping rates CSV error:", error);
+    return response.status(500).json({
+      message: error.message || "Failed to export shipping rates",
+      error: true,
+      success: false,
+    });
+  }
+};
+
+export const importShippingRatesCSV = async (request, response) => {
+  try {
+    const userId = request.user._id;
+    const { csvData } = request.body;
+
+    if (!csvData) {
+      return response.status(400).json({
+        message: "CSV data is required",
+        error: true,
+        success: false,
+      });
+    }
+
+    const rows = [];
+    const stream = Readable.from([csvData]);
+    await new Promise((resolve, reject) => {
+      stream
+        .pipe(csv())
+        .on("data", (row) => rows.push(row))
+        .on("end", resolve)
+        .on("error", reject);
+    });
+
+    const allZones = await ShippingZoneModel.find({}).select("_id code");
+    const zoneByCode = new Map(
+      allZones.map((z) => [String(z.code).toUpperCase(), z._id]),
+    );
+
+    const results = {
+      updated: [],
+      failed: [],
+      totalProcessed: rows.length,
+    };
+
+    // Group rows by Method Code, tracking original row numbers for errors
+    const groups = new Map(); // code -> [{ rowNum, data }]
+    rows.forEach((row, i) => {
+      const rowNum = i + 2; // header is row 1
+      const code = (row["Method Code"] || "").trim();
+      if (!code) {
+        results.failed.push({
+          row: rowNum,
+          reason:
+            "Method Code is required - this CSV only updates existing methods",
+        });
+        return;
+      }
+      if (!groups.has(code)) groups.set(code, []);
+      groups.get(code).push({ rowNum, data: row });
+    });
+
+    for (const [code, groupRows] of groups.entries()) {
+      const method = await ShippingMethodModel.findOne({
+        code: code.toUpperCase(),
+      });
+
+      if (!method) {
+        groupRows.forEach(({ rowNum }) =>
+          results.failed.push({
+            row: rowNum,
+            method: code,
+            reason: `No shipping method found with code "${code}"`,
+          }),
+        );
+        continue;
+      }
+
+      try {
+        let rowError = null;
+
+        if (method.type === "flat_rate") {
+          const existing = method.flatRate || {};
+          let defaultCost = existing.defaultCost ?? existing.cost ?? 0;
+          const zoneRates = [];
+
+          for (const { rowNum, data } of groupRows) {
+            const costCell = data["Cost"];
+            const cost = Number(costCell);
+            if (costCell === undefined || costCell === "" || isNaN(cost)) {
+              rowError = { rowNum, reason: "Invalid or missing Cost" };
+              break;
+            }
+
+            const zoneCodeCell = (data["Zone Code"] || "").trim();
+            if (!zoneCodeCell) {
+              defaultCost = cost; // base/default row
+              continue;
+            }
+
+            const zoneId = zoneByCode.get(zoneCodeCell.toUpperCase());
+            if (!zoneId) {
+              rowError = {
+                rowNum,
+                reason: `Unknown zone code "${zoneCodeCell}"`,
+              };
+              break;
+            }
+            zoneRates.push({ zone: zoneId, cost });
+          }
+
+          if (rowError) {
+            groupRows.forEach(({ rowNum }) =>
+              results.failed.push({
+                row: rowNum,
+                method: method.name,
+                reason: rowError.reason,
+              }),
+            );
+            continue;
+          }
+
+          method.flatRate = {
+            ...(existing.toObject ? existing.toObject() : existing),
+            cost: defaultCost,
+            defaultCost,
+            zoneRates,
+          };
+        } else if (method.type === "table_shipping") {
+          const zoneRateMap = new Map(); // zoneId string -> { zone, weightRanges }
+
+          for (const { rowNum, data } of groupRows) {
+            const zoneCodeCell = (data["Zone Code"] || "").trim();
+            if (!zoneCodeCell) {
+              rowError = {
+                rowNum,
+                reason: "Zone Code is required for table_shipping rows",
+              };
+              break;
+            }
+            const zoneId = zoneByCode.get(zoneCodeCell.toUpperCase());
+            if (!zoneId) {
+              rowError = {
+                rowNum,
+                reason: `Unknown zone code "${zoneCodeCell}"`,
+              };
+              break;
+            }
+
+            const minWeight = Number(data["Min Weight"]);
+            const maxWeight = Number(data["Max Weight"]);
+            const cost = Number(data["Cost"]);
+            if (isNaN(minWeight) || isNaN(maxWeight) || isNaN(cost)) {
+              rowError = {
+                rowNum,
+                reason:
+                  "Min Weight, Max Weight, and Cost must all be numbers",
+              };
+              break;
+            }
+
+            const key = String(zoneId);
+            if (!zoneRateMap.has(key)) {
+              zoneRateMap.set(key, { zone: zoneId, weightRanges: [] });
+            }
+            zoneRateMap
+              .get(key)
+              .weightRanges.push({ minWeight, maxWeight, shippingCost: cost });
+          }
+
+          if (rowError) {
+            groupRows.forEach(({ rowNum }) =>
+              results.failed.push({
+                row: rowNum,
+                method: method.name,
+                reason: rowError.reason,
+              }),
+            );
+            continue;
+          }
+
+          const zoneRates = Array.from(zoneRateMap.values());
+          if (!zoneRates.length) {
+            groupRows.forEach(({ rowNum }) =>
+              results.failed.push({
+                row: rowNum,
+                method: method.name,
+                reason: "At least one zone rate is required",
+              }),
+            );
+            continue;
+          }
+
+          const existing = method.tableShipping || {};
+          method.tableShipping = {
+            ...(existing.toObject ? existing.toObject() : existing),
+            zoneRates,
+          };
+        } else if (method.type === "pickup") {
+          const existing = method.pickup || {};
+          const defaultLocations = [];
+          const zoneLocationMap = new Map(); // zoneId string -> { zone, locations }
+          let pickupCost = existing.cost ?? 0;
+
+          for (const { rowNum, data } of groupRows) {
+            const loc = {
+              name: (data["Location Name"] || "").trim(),
+              address: (data["Address"] || "").trim(),
+              city: (data["City"] || "").trim(),
+              state: (data["State"] || "").trim(),
+              lga: (data["LGA"] || "").trim(),
+              phone: (data["Phone"] || "").trim(),
+            };
+            if (!isValidLocation(loc)) {
+              rowError = {
+                rowNum,
+                reason:
+                  "Location Name, Address, City, State, and LGA are all required",
+              };
+              break;
+            }
+
+            const costCell = data["Cost"];
+            if (costCell !== undefined && costCell !== "") {
+              const c = Number(costCell);
+              if (!isNaN(c)) pickupCost = c;
+            }
+
+            const zoneCodeCell = (data["Zone Code"] || "").trim();
+            if (!zoneCodeCell) {
+              defaultLocations.push(loc);
+              continue;
+            }
+
+            const zoneId = zoneByCode.get(zoneCodeCell.toUpperCase());
+            if (!zoneId) {
+              rowError = {
+                rowNum,
+                reason: `Unknown zone code "${zoneCodeCell}"`,
+              };
+              break;
+            }
+
+            const key = String(zoneId);
+            if (!zoneLocationMap.has(key)) {
+              zoneLocationMap.set(key, { zone: zoneId, locations: [] });
+            }
+            zoneLocationMap.get(key).locations.push(loc);
+          }
+
+          if (rowError) {
+            groupRows.forEach(({ rowNum }) =>
+              results.failed.push({
+                row: rowNum,
+                method: method.name,
+                reason: rowError.reason,
+              }),
+            );
+            continue;
+          }
+
+          const zoneLocations = Array.from(zoneLocationMap.values());
+          if (!defaultLocations.length && !zoneLocations.length) {
+            groupRows.forEach(({ rowNum }) =>
+              results.failed.push({
+                row: rowNum,
+                method: method.name,
+                reason: "At least one valid pickup location is required",
+              }),
+            );
+            continue;
+          }
+
+          method.pickup = {
+            ...(existing.toObject ? existing.toObject() : existing),
+            cost: pickupCost,
+            defaultLocations,
+            zoneLocations,
+          };
+        } else {
+          groupRows.forEach(({ rowNum }) =>
+            results.failed.push({
+              row: rowNum,
+              method: method.name,
+              reason: `Unsupported method type "${method.type}"`,
+            }),
+          );
+          continue;
+        }
+
+        method.updatedBy = userId;
+        await method.save();
+        results.updated.push({
+          method: method.name,
+          code: method.code,
+          rows: groupRows.length,
+        });
+      } catch (groupError) {
+        console.error(`Rates import group "${code}" error:`, groupError);
+        groupRows.forEach(({ rowNum }) =>
+          results.failed.push({
+            row: rowNum,
+            method: method?.name || code,
+            reason: groupError.message || "Unknown error",
+          }),
+        );
+      }
+    }
+
+    return response.json({
+      message: `Import complete: ${results.updated.length} method(s) updated, ${results.failed.length} row(s) failed`,
+      data: results,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    console.error("Import shipping rates CSV error:", error);
+    return response.status(500).json({
+      message: error.message || "Failed to import shipping rates",
       error: true,
       success: false,
     });
