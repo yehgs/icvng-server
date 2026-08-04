@@ -134,6 +134,12 @@ export const ROLE_DEFINITIONS = {
   },
 
   // ── Finance ────────────────────────────────────────────────────────────────
+  // Item #9: there is only ever ONE Accountant role, and it's always HQ —
+  // no country/"foreign" Accountant accounts. Every Accountant is managed
+  // from HQ, same as Warehouse. hqOnly: true means the user-creation UI
+  // never offers a "Country Admin" toggle for this subRole, and the backend
+  // forces scope to GLOBAL regardless of what's submitted (see
+  // admin_user.controller.js resolveScopeForSubRole).
   ACCOUNTANT: {
     name: "Accountant",
     description: "Finance and pricing — invoices, finance entries, pricing, exchange rates.",
@@ -152,10 +158,11 @@ export const ROLE_DEFINITIONS = {
       "activityLogs.view",
     ],
     isSystem: true,
-    hqOnly: false,
+    hqOnly: true,
   },
 
   // ── Content / marketing ────────────────────────────────────────────────────
+  // Item #9: same as Accountant/Warehouse — always HQ, no foreign Editor.
   EDITOR: {
     name: "Content Editor",
     description: "Content and catalog — products, catalog, blog, banners, sliders, translations.",
@@ -173,7 +180,7 @@ export const ROLE_DEFINITIONS = {
       "notifications.view",
     ],
     isSystem: true,
-    hqOnly: false,
+    hqOnly: true,
   },
 
   GRAPHICS: {
@@ -245,6 +252,41 @@ export const ROLE_DEFINITIONS = {
 
 /** subRoles that represent customers, not staff — no admin role bundle. */
 export const CUSTOMER_SUBROLES = ["BTC", "BTB"];
+
+/**
+ * subRoles that can NEVER be country/"foreign" scoped — always scope
+ * GLOBAL, assignedCountry null, every account managed from HQ.
+ *
+ * Currently: IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR, LOGISTICS.
+ *
+ * Note — LOGISTICS: there is no country-scoped logistics system yet, so it
+ * stays HQ-only for now. Once that's built, LOGISTICS should come out of
+ * this list (drop `hqOnly` from its ROLE_DEFINITIONS entry) so it can be
+ * assigned per-country like MANAGER/SALES/etc.
+ */
+export const HQ_ONLY_SUBROLES = Object.entries(ROLE_DEFINITIONS)
+  .filter(([, def]) => def.hqOnly)
+  .map(([subRole]) => subRole);
+
+/**
+ * resolveScopeForSubRole(subRole, requestedScope, requestedCountry)
+ *
+ * Single source of truth for "what scope should this user end up with",
+ * used by both createUserController and updateUserController so the rule
+ * can never drift between the two. HQ-only subRoles always resolve to
+ * GLOBAL/null no matter what was requested (defense in depth — the admin
+ * UI also hides the toggle for these subRoles, but the backend must not
+ * trust the client).
+ */
+export function resolveScopeForSubRole(subRole, requestedScope, requestedCountry) {
+  if (HQ_ONLY_SUBROLES.includes(subRole)) {
+    return { scope: "GLOBAL", assignedCountry: null };
+  }
+  if (requestedScope === "COUNTRY" && requestedCountry) {
+    return { scope: "COUNTRY", assignedCountry: requestedCountry };
+  }
+  return { scope: "GLOBAL", assignedCountry: null };
+}
 
 /**
  * Resolve the effective permission keys for a user given their subRole plus

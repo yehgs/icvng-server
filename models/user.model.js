@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import mongoosePaginate from "mongoose-paginate-v2";
 import { ALL_COUNTRY_CODES } from "../config/countries/index.js";
+import { HQ_ONLY_SUBROLES } from "../config/roles.js";
 
 // ── Admin sub-roles ────────────────────────────────────────────────────────────
 // FOREIGN_ADMIN removed — it was never a real role, just a data-visibility flag.
@@ -10,8 +11,35 @@ export const ADMIN_SUBROLES = [
   "IT", "WAREHOUSE", "BTC", "BTB",
 ];
 
-// Sub-roles that MUST always have GLOBAL scope (HQ-only)
-export const HQ_ONLY_SUBROLES = ["IT", "DIRECTOR", "LOGISTICS"];
+// Sub-roles that MUST always have GLOBAL scope (HQ-only). Re-exported from
+// config/roles.js (the single source of truth — see HQ_ONLY_SUBROLES there)
+// so this schema-level validator can never drift out of sync with the
+// admin-creation UI and the request-scoping middleware again. This used to
+// be its own hardcoded ["IT", "DIRECTOR", "LOGISTICS"] list here, which is
+// exactly how an Accountant could previously end up saved with a COUNTRY
+// scope — nothing at the DB layer stopped it. Do not redefine this locally.
+export { HQ_ONLY_SUBROLES };
+
+// Sub-roles that CAN be assigned to a country/"foreign" admin account —
+// every ADMIN_SUBROLES entry that isn't HQ-only and isn't a customer
+// subRole. Currently excludes IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR,
+// and LOGISTICS (see HQ_ONLY_SUBROLES) — there is only ever one Accountant/
+// Warehouse/Editor, and they're always HQ. Used by foreignAdmin.controller.js
+// to decide which subRoles show up as "foreign"-assignable.
+// NOTE: this used to be imported from here but was never actually defined,
+// which crashed every foreign-admin create/update call with a TypeError —
+// see foreignAdmin.controller.js's sanitiseForeignSubRoles().
+export const FOREIGN_EXPOSABLE_SUBROLES = ADMIN_SUBROLES.filter(
+  (r) => !HQ_ONLY_SUBROLES.includes(r) && !["BTC", "BTB"].includes(r)
+);
+
+// LOGISTICS is HQ-only today (part of HQ_ONLY_SUBROLES) so it's already
+// excluded from FOREIGN_EXPOSABLE_SUBROLES above — this is kept as an
+// explicit named list so callers that want to double-guard against it by
+// name still can, and so removing LOGISTICS from HQ_ONLY_SUBROLES later
+// (once a country-scoped logistics system exists) doesn't silently also
+// make it foreign-assignable without a deliberate second decision here.
+export const LOGISTICS_SUBROLES = ["LOGISTICS"];
 
 const userSchema = new mongoose.Schema(
   {
@@ -68,7 +96,9 @@ const userSchema = new mongoose.Schema(
     // scope/assignedCountry only controls DATA VISIBILITY.
     //
     // Rules enforced:
-    //   - IT, DIRECTOR, LOGISTICS → must be GLOBAL (enforced by validator)
+    //   - HQ-only subRoles (config/roles.js#HQ_ONLY_SUBROLES — currently
+    //     IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR, LOGISTICS) → must be
+    //     GLOBAL (enforced by validator below)
     //   - scope = "COUNTRY" requires assignedCountry to be set
     //   - scope = "GLOBAL"  requires assignedCountry to be null
     scope: {
@@ -83,7 +113,7 @@ const userSchema = new mongoose.Schema(
           }
           return true;
         },
-        message: "IT, DIRECTOR and LOGISTICS must always have GLOBAL scope",
+        message: "This subRole must always have GLOBAL scope (see config/roles.js#HQ_ONLY_SUBROLES)",
       },
     },
 
@@ -99,6 +129,17 @@ const userSchema = new mongoose.Schema(
         },
         message: "assignedCountry must be set when scope is COUNTRY, and null when GLOBAL",
       },
+    },
+
+    // Legacy "Foreign Admin Management" display field — the account's real
+    // department/access is always `subRole` above (consistent with every
+    // other admin account and how permissions.js resolves permissions).
+    // This is kept only so the Foreign Admin Management page can show
+    // which extra department(s) were selected at creation time; it is NOT
+    // consulted anywhere for access control.
+    foreignSubRoles: {
+      type: [String],
+      default: [],
     },
 
     preferredLanguage: {

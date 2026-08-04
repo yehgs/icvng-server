@@ -1676,6 +1676,9 @@ export const calculateCheckoutShipping = async (request, response) => {
     const { addressId, items, orderValue, totalWeight } = request.body;
 
     console.log("=== CALCULATE CHECKOUT SHIPPING ===");
+    console.log(
+      `[SHIP-DEBUG] ===== NEW REQUEST at ${new Date().toISOString()} =====`,
+    );
     console.log("Request:", {
       addressId,
       itemCount: items?.length,
@@ -1712,56 +1715,128 @@ export const calculateCheckoutShipping = async (request, response) => {
       hasZone: !!address.shipping_zone,
     });
 
-    // Find zone for address if not already assigned
-    let zone = address.shipping_zone;
+    console.log(
+      "[SHIP-DEBUG] Address.shipping_zone (previously cached):",
+      address.shipping_zone
+        ? {
+            id: address.shipping_zone._id?.toString(),
+            name: address.shipping_zone.name,
+            code: address.shipping_zone.code,
+          }
+        : "none",
+    );
 
-    if (!zone) {
-      console.log("Searching for matching zone...");
-      const zones = await ShippingZoneModel.find({ isActive: true });
+    // Always resolve the zone fresh against CURRENT zone definitions rather
+    // than trusting address.shipping_zone. Zones get created/edited over
+    // time (states/LGAs, priority), and a cached pointer set once and never
+    // re-checked can silently go stale - e.g. an address resolved to an
+    // older, broader zone before a more specific zone existed/was updated
+    // to also cover it, permanently hiding that zone's rates/rules.
+    console.log("Searching for matching zone...");
+    const zones = await ShippingZoneModel.find({ isActive: true });
+    console.log(
+      "[SHIP-DEBUG] Active zones to test against:",
+      zones.map((z) => ({
+        id: z._id.toString(),
+        name: z.name,
+        code: z.code,
+        priority: z.priority,
+        sortOrder: z.sortOrder,
+        states: z.states.map((s) => s.name),
+      })),
+    );
 
-      for (const testZone of zones) {
-        const stateMatch = testZone.states.find(
-          (state) =>
-            state.name.toLowerCase().trim() ===
-            address.state.toLowerCase().trim(),
+    const candidateZones = [];
+
+    for (const testZone of zones) {
+      const stateMatch = testZone.states.find(
+        (state) =>
+          state.name.toLowerCase().trim() ===
+          address.state.toLowerCase().trim(),
+      );
+
+      if (!stateMatch) continue;
+
+      console.log(`State match found: ${stateMatch.name} (zone: ${testZone.name})`);
+      console.log(`Coverage type: ${stateMatch.coverage_type}`);
+
+      let lgaCovered = false;
+
+      // FIXED: If coverage_type is 'all' OR no covered_lgas specified, cover all LGAs
+      if (
+        stateMatch.coverage_type === "all" ||
+        !stateMatch.covered_lgas ||
+        stateMatch.covered_lgas.length === 0
+      ) {
+        lgaCovered = true;
+        console.log("✅ Zone covers ALL LGAs in state");
+      } else if (stateMatch.coverage_type === "specific") {
+        // Only check specific LGAs if explicitly set to specific AND has covered_lgas
+        lgaCovered = stateMatch.covered_lgas?.some(
+          (lga) =>
+            lga.toLowerCase().trim() === address.lga.toLowerCase().trim(),
         );
+        console.log(`LGA ${address.lga} covered: ${lgaCovered}`);
+      }
 
-        if (stateMatch) {
-          console.log(`State match found: ${stateMatch.name}`);
-          console.log(`Coverage type: ${stateMatch.coverage_type}`);
+      if (lgaCovered) {
+        candidateZones.push(testZone);
+      }
+    }
 
-          let lgaCovered = false;
+    console.log(
+      "[SHIP-DEBUG] Candidate zones matching this address (before tiebreak):",
+      candidateZones.map((z) => ({
+        id: z._id.toString(),
+        name: z.name,
+        priority: z.priority,
+        sortOrder: z.sortOrder,
+      })),
+    );
 
-          // FIXED: If coverage_type is 'all' OR no covered_lgas specified, cover all LGAs
-          if (
-            stateMatch.coverage_type === "all" ||
-            !stateMatch.covered_lgas ||
-            stateMatch.covered_lgas.length === 0
-          ) {
-            lgaCovered = true;
-            console.log("✅ Zone covers ALL LGAs in state");
-          } else if (stateMatch.coverage_type === "specific") {
-            // Only check specific LGAs if explicitly set to specific AND has covered_lgas
-            lgaCovered = stateMatch.covered_lgas?.some(
-              (lga) =>
-                lga.toLowerCase().trim() === address.lga.toLowerCase().trim(),
-            );
-            console.log(`LGA ${address.lga} covered: ${lgaCovered}`);
-          }
+    // Multiple zones can legitimately overlap the same address (e.g. a
+    // broad "Lagos City" zone and a narrower "Island 2" zone both covering
+    // Ajah). Resolve ties deterministically: higher priority wins, then
+    // lower sortOrder - so admins control the outcome via zone settings
+    // instead of it depending on arbitrary DB ordering.
+    const PRIORITY_WEIGHT = { high: 0, medium: 1, low: 2 };
+    candidateZones.sort((a, b) => {
+      const pa = PRIORITY_WEIGHT[a.priority] ?? 1;
+      const pb = PRIORITY_WEIGHT[b.priority] ?? 1;
+      if (pa !== pb) return pa - pb;
+      return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+    });
 
-          if (lgaCovered) {
-            zone = testZone;
-            console.log(`✅ Zone assigned: ${zone.name}`);
-            await mongoose.model("address").findByIdAndUpdate(addressId, {
-              shipping_zone: zone._id,
-            });
-            break;
-          }
-        }
+    let zone = candidateZones[0] || null;
+
+    if (zone) {
+      console.log(`✅ Zone assigned: ${zone.name}`);
+
+      const previousZoneId = address.shipping_zone?._id?.toString();
+      if (previousZoneId !== zone._id.toString()) {
+        console.log(
+          `[SHIP-DEBUG] Updating cached zone on address from ` +
+            `${address.shipping_zone ? address.shipping_zone.name : "none"} to ${zone.name}`,
+        );
+        await mongoose.model("address").findByIdAndUpdate(addressId, {
+          shipping_zone: zone._id,
+        });
       }
     }
 
     console.log("Zone result:", zone ? `Found: ${zone.name}` : "Not found");
+    console.log(
+      "[SHIP-DEBUG] Final resolved zone:",
+      zone
+        ? {
+            id: zone._id.toString(),
+            name: zone.name,
+            code: zone.code,
+            priority: zone.priority,
+          }
+        : "NONE - no zone matched this address",
+    );
+
 
     // Get product details
     const productIds = items.map((item) => item.productId || item._id);
@@ -1968,6 +2043,25 @@ export const calculateCheckoutShipping = async (request, response) => {
             defaultCost: config.defaultCost,
           });
 
+          console.log(`[SHIP-DEBUG] Method "${method.name}" (${method.code}):`, {
+            resolvedZoneId: zone?._id?.toString() || "none",
+            resolvedZoneName: zone?.name || "none",
+            orderValue: orderValue || 0,
+            configuredZoneRates: (config.zoneRates || []).map((zr) => ({
+              zoneId: zr.zone?.toString(),
+              cost: zr.cost,
+              freeShippingEnabled: zr.freeShipping?.enabled || false,
+              freeShippingMinimum: zr.freeShipping?.minimumOrderAmount ?? 0,
+              hideWhenBelowMinimum: zr.freeShipping?.hideWhenBelowMinimum || false,
+            })),
+            methodWideFreeShipping: {
+              enabled: config.freeShipping?.enabled || false,
+              minimumOrderAmount: config.freeShipping?.minimumOrderAmount ?? 0,
+              hideWhenBelowMinimum:
+                config.freeShipping?.hideWhenBelowMinimum || false,
+            },
+          });
+
           // FIXED: Available if has zone rate OR has default cost OR no zone required
           if (hasZoneRate || hasDefaultCost || !zone) {
             isAvailableForAddress = true;
@@ -1979,6 +2073,11 @@ export const calculateCheckoutShipping = async (request, response) => {
               zone: zone?._id,
               items: items,
             });
+
+            console.log(
+              `[SHIP-DEBUG] calculateShippingCost result for "${method.name}":`,
+              calculationResult,
+            );
           }
         } else if (method.type === "table_shipping") {
           // TABLE_SHIPPING: Must have zone and zone rate
@@ -2019,6 +2118,14 @@ export const calculateCheckoutShipping = async (request, response) => {
           cost: calculationResult?.cost,
           reason: calculationResult?.reason,
         });
+
+        console.log(
+          `[SHIP-DEBUG] Final decision for "${method.name}": ${
+            calculationResult?.eligible
+              ? `INCLUDED at cost ${calculationResult.cost} (${calculationResult.reason})`
+              : `EXCLUDED (${calculationResult?.reason || "not eligible"})`
+          }`,
+        );
 
         if (calculationResult && calculationResult.eligible) {
           const methodData = {
@@ -2076,6 +2183,16 @@ export const calculateCheckoutShipping = async (request, response) => {
     }
 
     console.log(`\n📊 Final: ${availableMethods.length} methods available`);
+    console.log(
+      "[SHIP-DEBUG] ===== FINAL AVAILABLE METHODS =====",
+      availableMethods.map((m) => ({
+        name: m.name,
+        code: m.code,
+        type: m.type,
+        cost: m.cost,
+        reason: m.reason,
+      })),
+    );
 
     // Sort methods: free first, then by price
     availableMethods.sort((a, b) => {
@@ -2148,7 +2265,7 @@ export const calculateManualOrderShipping = async (request, response) => {
 
     // Find zone for state/LGA
     const zones = await ShippingZoneModel.find({ isActive: true });
-    let zone = null;
+    const candidateZones = [];
 
     for (const testZone of zones) {
       const stateMatch = testZone.states.find(
@@ -2175,11 +2292,23 @@ export const calculateManualOrderShipping = async (request, response) => {
         }
 
         if (lgaCovered) {
-          zone = testZone;
-          break;
+          candidateZones.push(testZone);
         }
       }
     }
+
+    // Same deterministic tiebreak as calculateCheckoutShipping: when
+    // multiple zones cover the same address, higher priority wins, then
+    // lower sortOrder.
+    const PRIORITY_WEIGHT = { high: 0, medium: 1, low: 2 };
+    candidateZones.sort((a, b) => {
+      const pa = PRIORITY_WEIGHT[a.priority] ?? 1;
+      const pb = PRIORITY_WEIGHT[b.priority] ?? 1;
+      if (pa !== pb) return pa - pb;
+      return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+    });
+
+    let zone = candidateZones[0] || null;
 
     if (!zone) {
       return response.json({

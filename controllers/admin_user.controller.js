@@ -8,6 +8,7 @@ import passwordResetTemplate from "../utils/passwordResetTemplate.js";
 import passwordRecoveryTemplate from "../utils/passwordRecoveryTemplate.js";
 import generatedOtp from "../utils/generatedOtp.js";
 import { logActivity } from "../utils/activityLogger.js";
+import { HQ_ONLY_SUBROLES, resolveScopeForSubRole } from "../config/roles.js";
 
 export async function getAllUsersController(request, response) {
   try {
@@ -144,16 +145,22 @@ export async function createUserController(request, response) {
     // Previously a COUNTRY-scoped creator (e.g. a country HR) producing an
     // ADMIN account silently produced a GLOBAL-scoped admin. Now:
     //   • COUNTRY-scoped creators can only create ADMIN accounts scoped to
-    //     their own country, and never HQ-only subRoles (IT/DIRECTOR/LOGISTICS).
+    //     their own country, and never HQ-only subRoles (see
+    //     config/roles.js#HQ_ONLY_SUBROLES: IT, DIRECTOR, ACCOUNTANT,
+    //     WAREHOUSE, EDITOR, LOGISTICS).
     //   • Only IT/DIRECTOR may choose scope explicitly.
+    //   • HQ-only subRoles ALWAYS resolve to GLOBAL regardless of what the
+    //     creator (even IT/DIRECTOR) requested — resolveScopeForSubRole is
+    //     the single source of truth for this, so it can never drift from
+    //     the same rule applied on update. This is what previously let an
+    //     IT/DIRECTOR accidentally create a country-scoped Accountant (item #9).
     let resolvedScope;
     let resolvedCountry;
     if (adminUser.scope === "COUNTRY") {
       if (role === "ADMIN") {
-        if (["IT", "DIRECTOR", "LOGISTICS"].includes(subRole)) {
+        if (HQ_ONLY_SUBROLES.includes(subRole)) {
           return response.status(403).json({
-            message:
-              "Country-scoped admins cannot create HQ-only roles (IT, DIRECTOR, LOGISTICS)",
+            message: `Country-scoped admins cannot create HQ-only roles (${HQ_ONLY_SUBROLES.join(", ")})`,
             error: true,
             success: false,
           });
@@ -164,13 +171,15 @@ export async function createUserController(request, response) {
         resolvedScope = "GLOBAL"; // USER (customer) accounts — unchanged
         resolvedCountry = null;
       }
+    } else if (role === "ADMIN" && ["IT", "DIRECTOR"].includes(adminUser.subRole)) {
+      // Only IT/DIRECTOR may choose scope explicitly for the new user, and
+      // even then, HQ-only subRoles are forced back to GLOBAL.
+      const resolved = resolveScopeForSubRole(subRole, scope, assignedCountry);
+      resolvedScope = resolved.scope;
+      resolvedCountry = resolved.assignedCountry;
     } else {
-      resolvedScope =
-        scope === "COUNTRY" && ["IT", "DIRECTOR"].includes(adminUser.subRole)
-          ? "COUNTRY"
-          : "GLOBAL";
-      resolvedCountry =
-        resolvedScope === "COUNTRY" && assignedCountry ? assignedCountry : null;
+      resolvedScope = "GLOBAL";
+      resolvedCountry = null;
     }
 
     // Create user payload
@@ -328,6 +337,22 @@ export async function updateUserController(request, response) {
     if (preferredLanguage !== undefined) {
       updateData.preferredLanguage = preferredLanguage || null;
     }
+
+    // ── HQ-only subRole enforcement (item #9) ───────────────────────────────
+    // Whatever subRole this user ends up with (the updated value if one was
+    // submitted, else the existing one) — if it's HQ-only (IT, DIRECTOR,
+    // ACCOUNTANT, WAREHOUSE, EDITOR, LOGISTICS — see config/roles.js), it
+    // must never carry a COUNTRY scope, regardless of what scope/
+    // assignedCountry were requested above. This also self-heals any
+    // pre-existing bad data (e.g. an Accountant record that was previously
+    // saved as COUNTRY-scoped) the moment IT/DIRECTOR touches that user.
+    const effectiveSubRole =
+      updateData.subRole !== undefined ? updateData.subRole : userToUpdate.subRole;
+    if (HQ_ONLY_SUBROLES.includes(effectiveSubRole)) {
+      updateData.scope = "GLOBAL";
+      updateData.assignedCountry = null;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     // Handle userMode
     if (userMode !== undefined) {

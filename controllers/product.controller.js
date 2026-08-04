@@ -201,9 +201,15 @@ const resolveCategorySlug = async (categoryId) => {
 // this one, the general product form, never had a warehouse-stock input to
 // begin with; only partnerStock.quantity is settable here, and that's
 // intentionally open to any role already).
+// ACCOUNTANT/IT/DIRECTOR always own pricing. MANAGER only owns pricing while
+// GLOBAL-scoped (HQ Manager) — a country/"foreign" Manager holds the same
+// subRole but must NOT get pricing rights, so scope is checked too.
 const PRICING_SUBROLES = ["ACCOUNTANT", "IT", "DIRECTOR"];
+const isPricingOwnerRole = (user) =>
+  PRICING_SUBROLES.includes(user?.subRole) ||
+  (user?.subRole === "MANAGER" && user?.scope !== "COUNTRY");
 const canSetPricing = (user, isPartnerProduct) =>
-  isPartnerProduct === true || PRICING_SUBROLES.includes(user?.subRole);
+  isPartnerProduct === true || isPricingOwnerRole(user);
 
 const PRICING_FIELDS = [
   "btbPrice",
@@ -1219,51 +1225,81 @@ export const updateProductDetails = async (request, response) => {
         parseInt(updateData.limitedEdition.carouselOrder) || 0;
     }
 
-    // ── DIRECT PRICING PROTECTION ────────────────────────────────────────────
-    // If an active DirectPricing record exists for this product, do NOT allow
-    // the ProductForm (general product editor) to overwrite the prices that
-    // DirectPricing manages.  Only the DirectPricing endpoints (which require
-    // ACCOUNTANT / DIRECTOR / IT) may change those three fields.
-    // This prevents an EDITOR saving the product form (where btcPrice renders as
-    // 0 / empty because the form loaded before DirectPricing was applied) from
-    // silently zeroing out the accountant-set prices.
+    // ── PRICING PERMISSION ────────────────────────────────────────────────
+    // Only Accountant/IT/Director/HQ-Manager may change pricing on the
+    // general product form. Anyone else's submitted price/discount values
+    // are dropped here so the product's existing prices are left untouched
+    // — same non-blocking pattern as the partnerStock sanitization above —
+    // UNLESS this product is (or is being toggled into) a partner/supplier
+    // product, in which case pricing is supplier-driven and any role may
+    // set it.
+    const isPartnerProductForUpdate =
+      (updateData.partnerStock?.enabled ?? existingProduct.partnerStock?.enabled) === true;
+    const userCanSetPricing = canSetPricing(request.user, isPartnerProductForUpdate);
+    // "Owns" pricing outright (not merely via the partner-product
+    // exception) — decides whether this edit is also allowed to push
+    // changes into the linked DirectPricing record below.
+    const isPricingOwner = isPricingOwnerRole(request.user);
+    if (!userCanSetPricing) {
+      PRICING_FIELDS.forEach((field) => {
+        delete updateData[field];
+      });
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
+    // ── DIRECT PRICING SYNC / PROTECTION ─────────────────────────────────────
+    // If an active DirectPricing record exists for this product:
+    //   • A pricing owner (Accountant / IT / Director / HQ Manager) editing
+    //     prices from the general product form CAN now change them here —
+    //     no more "only through Direct Pricing". Their submitted values are
+    //     also written into the DirectPricing record itself so the two stay
+    //     in sync; otherwise the next read (which always prefers
+    //     DirectPricing's value when it's > 0) would silently revert the
+    //     edit back to the old DirectPricing price.
+    //   • Anyone else (e.g. an Editor saving the rest of the product form,
+    //     where price fields may render blank/0 before DirectPricing loads)
+    //     must NOT be able to overwrite Direct-Pricing-managed prices — their
+    //     stale/blank submitted values are replaced with the authoritative
+    //     DirectPricing values instead, same protection as before.
     try {
       const { default: DirectPricingModel } =
         await import("../models/direct-pricing.model.js");
       const activeDirectPricing = await DirectPricingModel.findOne({
         product: _id,
         isActive: true,
-      }).lean();
+      });
 
       if (activeDirectPricing) {
-        const dp = activeDirectPricing.directPrices;
-        // Restore Direct-Pricing-managed prices so they are not overwritten
-        if (dp.btcPrice > 0) updateData.btcPrice = dp.btcPrice;
-        if (dp.price3weeksDelivery > 0)
-          updateData.price3weeksDelivery = dp.price3weeksDelivery;
-        if (dp.price5weeksDelivery > 0)
-          updateData.price5weeksDelivery = dp.price5weeksDelivery;
+        if (userCanSetPricing && isPricingOwner) {
+          const syncedPrices = {};
+          ["btcPrice", "price3weeksDelivery", "price5weeksDelivery"].forEach(
+            (field) => {
+              if (updateData[field] !== undefined) {
+                syncedPrices[field] = updateData[field];
+              }
+            },
+          );
+          if (Object.keys(syncedPrices).length > 0) {
+            activeDirectPricing.bulkUpdatePrices(
+              syncedPrices,
+              request.user._id,
+              "Synced from product edit form",
+            );
+            await activeDirectPricing.save();
+          }
+        } else {
+          const dp = activeDirectPricing.directPrices;
+          // Restore Direct-Pricing-managed prices so they are not overwritten
+          if (dp.btcPrice > 0) updateData.btcPrice = dp.btcPrice;
+          if (dp.price3weeksDelivery > 0)
+            updateData.price3weeksDelivery = dp.price3weeksDelivery;
+          if (dp.price5weeksDelivery > 0)
+            updateData.price5weeksDelivery = dp.price5weeksDelivery;
+        }
       }
     } catch (_err) {
       // Non-fatal — if DirectPricingModel can't be loaded, continue without protection
-      console.error("DirectPricing protection check failed:", _err.message);
-    }
-    // ────────────────────────────────────────────────────────────────────────
-
-    // ── PRICING PERMISSION ────────────────────────────────────────────────
-    // Only Accountant/IT/Director may change pricing on the general product
-    // form. Anyone else's submitted price/discount values are dropped here
-    // so the product's existing prices are left untouched — same
-    // non-blocking pattern as the partnerStock sanitization above — UNLESS
-    // this product is (or is being toggled into) a partner/supplier
-    // product, in which case pricing is supplier-driven and any role may
-    // set it.
-    const isPartnerProductForUpdate =
-      (updateData.partnerStock?.enabled ?? existingProduct.partnerStock?.enabled) === true;
-    if (!canSetPricing(request.user, isPartnerProductForUpdate)) {
-      PRICING_FIELDS.forEach((field) => {
-        delete updateData[field];
-      });
+      console.error("DirectPricing sync/protection check failed:", _err.message);
     }
     // ────────────────────────────────────────────────────────────────────────
 

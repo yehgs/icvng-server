@@ -14,6 +14,7 @@
  */
 
 import { setContextScope } from "../core/requestContext.js";
+import { HQ_ONLY_SUBROLES } from "../config/roles.js";
 
 export function countryScope(req, res, next) {
   const user = req.user;
@@ -24,13 +25,25 @@ export function countryScope(req, res, next) {
     return next();
   }
 
-  req.countryScope = (user.scope === "COUNTRY" && user.assignedCountry)
+  // Item #9: HQ-only subRoles (IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR,
+  // LOGISTICS) are NEVER country-scoped — every account is managed from HQ.
+  // This is enforced at write-time (create/update user, login self-heal),
+  // but is checked again here so an already-logged-in session with a stale
+  // COUNTRY scope on the token doesn't get incorrectly data-filtered or
+  // blocked from HQ-only modules (blockCountryScopedAdmins below) until
+  // their next login.
+  const isHqOnlyRole = HQ_ONLY_SUBROLES.includes(user.subRole);
+
+  req.countryScope = (!isHqOnlyRole && user.scope === "COUNTRY" && user.assignedCountry)
     ? user.assignedCountry
     : null;
 
   // PHASE 3: publish the resolved scope into the AsyncLocalStorage context so
   // the countryScoped Mongoose plugin's query hooks can auto-filter.
-  setContextScope({ countryScope: req.countryScope, scope: user.scope });
+  setContextScope({
+    countryScope: req.countryScope,
+    scope: isHqOnlyRole ? "GLOBAL" : user.scope,
+  });
 
   next();
 }

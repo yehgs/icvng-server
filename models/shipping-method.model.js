@@ -361,6 +361,14 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
       let matchedZoneRate = null;
 
       console.log(`💵 Flat rate base cost: ${baseCost}`);
+      console.log(`[SHIP-DEBUG][${this.name}] calculateShippingCost called with:`, {
+        zoneParam: zone ? zone.toString() : "none",
+        orderValue,
+        configuredZoneRateCount: config.zoneRates?.length || 0,
+        configuredZoneIds: (config.zoneRates || []).map((zr) =>
+          zr.zone ? zr.zone.toString() : "MISSING",
+        ),
+      });
 
       // Check for zone-specific rate
       if (zone && config.zoneRates?.length > 0) {
@@ -370,7 +378,26 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
         if (matchedZoneRate) {
           baseCost = matchedZoneRate.cost;
           console.log(`💵 Using zone-specific rate: ${baseCost}`);
+          console.log(
+            `[SHIP-DEBUG][${this.name}] Matched zone rate:`,
+            {
+              zoneId: matchedZoneRate.zone.toString(),
+              cost: matchedZoneRate.cost,
+              freeShipping: matchedZoneRate.freeShipping,
+            },
+          );
+        } else {
+          console.log(
+            `[SHIP-DEBUG][${this.name}] ⚠️ No zone rate matches zone "${zone.toString()}" ` +
+              `- none of the configured zone IDs above matched it. Falling back to baseCost=${baseCost} ` +
+              `and ALL zone-specific free-shipping/hide rules will be skipped.`,
+          );
         }
+      } else if (!zone) {
+        console.log(
+          `[SHIP-DEBUG][${this.name}] ⚠️ No zone was passed in at all - checkout couldn't resolve ` +
+            `a shipping zone for this address, so zone-specific rates/rules never get checked.`,
+        );
       }
 
       // Zone-specific free shipping threshold takes precedence over the
@@ -378,6 +405,16 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
       const zoneFreeShipping = matchedZoneRate?.freeShipping;
       if (zoneFreeShipping?.enabled) {
         const qualifies = orderValue >= zoneFreeShipping.minimumOrderAmount;
+        console.log(
+          `[SHIP-DEBUG][${this.name}] Zone-specific free shipping check:`,
+          {
+            enabled: zoneFreeShipping.enabled,
+            minimumOrderAmount: zoneFreeShipping.minimumOrderAmount,
+            orderValue,
+            qualifies,
+            hideWhenBelowMinimum: zoneFreeShipping.hideWhenBelowMinimum,
+          },
+        );
 
         if (qualifies) {
           return {
@@ -389,6 +426,9 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
 
         if (zoneFreeShipping.hideWhenBelowMinimum) {
           // Method is hidden entirely (not charged) until the threshold is met.
+          console.log(
+            `[SHIP-DEBUG][${this.name}] ✅ Returning eligible:false (zone-specific hide rule)`,
+          );
           return {
             eligible: false,
             cost: 0,
@@ -402,6 +442,16 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
       const globalFreeShipping = config.freeShipping;
       if (globalFreeShipping?.enabled) {
         const qualifies = orderValue >= globalFreeShipping.minimumOrderAmount;
+        console.log(
+          `[SHIP-DEBUG][${this.name}] Method-wide free shipping check:`,
+          {
+            enabled: globalFreeShipping.enabled,
+            minimumOrderAmount: globalFreeShipping.minimumOrderAmount,
+            orderValue,
+            qualifies,
+            hideWhenBelowMinimum: globalFreeShipping.hideWhenBelowMinimum,
+          },
+        );
 
         if (qualifies) {
           return {
@@ -412,6 +462,9 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
         }
 
         if (globalFreeShipping.hideWhenBelowMinimum) {
+          console.log(
+            `[SHIP-DEBUG][${this.name}] ✅ Returning eligible:false (method-wide hide rule)`,
+          );
           return {
             eligible: false,
             cost: 0,
@@ -420,6 +473,11 @@ shippingMethodSchema.methods.calculateShippingCost = function ({
         }
         // Otherwise fall through: charge the normal cost below threshold.
       }
+
+      console.log(
+        `[SHIP-DEBUG][${this.name}] Falling through to base cost: ${baseCost} ` +
+          `(no free-shipping rule matched/qualified)`,
+      );
 
       return {
         eligible: true,

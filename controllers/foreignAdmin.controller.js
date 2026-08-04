@@ -1,15 +1,24 @@
 /**
  * controllers/foreignAdmin.controller.js
  *
- * CRUD for FOREIGN_ADMIN accounts.
+ * CRUD for foreign/country-scoped admin accounts.
+ *
+ * A "foreign admin" is not a distinct subRole — it's any ADMIN account with
+ * scope: "COUNTRY" (see models/user.model.js). Their real department/
+ * permissions come from their normal `subRole`, same as every other admin
+ * account; `foreignSubRoles` here is only a legacy display field for this
+ * page. This used to write a `subRole: "FOREIGN_ADMIN"` sentinel that isn't
+ * (and never was) a valid subRole in the schema — every create/update call
+ * threw a validation error. Fixed as part of item #9.
  *
  * - DIRECTOR and IT can create / manage all foreign admins.
  * - MANAGER (HQ or country/"foreign" scoped) is NOT allowed to create,
  *   update, delete, promote, or assign sub-roles to foreign admins — user
  *   management (foreign or normal) is not exposed to MANAGER. See item #8.
- * - IT can assign additional `foreignSubRoles` to give a foreign admin
- *   access to more sections.
- * - LOGISTICS is never allowed in foreignSubRoles.
+ * - IT/DIRECTOR select the department(s) (foreignSubRoles) a foreign admin
+ *   gets; the first selection becomes the account's real subRole.
+ * - HQ-only subRoles (IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR,
+ *   LOGISTICS — see HQ_ONLY_SUBROLES) are never assignable here.
  */
 
 import UserModel from "../models/user.model.js";
@@ -17,7 +26,7 @@ import bcryptjs from "bcryptjs";
 import sendEmail from "../config/sendEmail.js";
 import { getCountryByCode, ALL_COUNTRY_CODES } from "../config/countries/index.js";
 import { logActivity } from "../utils/activityLogger.js";
-import { FOREIGN_EXPOSABLE_SUBROLES, LOGISTICS_SUBROLES } from "../models/user.model.js";
+import { FOREIGN_EXPOSABLE_SUBROLES, LOGISTICS_SUBROLES, HQ_ONLY_SUBROLES } from "../models/user.model.js";
 
 // Who can create / manage foreign admins — DIRECTOR and IT only.
 // MANAGER intentionally excluded (item #8): user management, whether over
@@ -26,8 +35,18 @@ const ALLOWED_CREATORS = ["DIRECTOR", "IT"];
 // Who can delete
 const ALLOWED_DELETERS = ["DIRECTOR", "IT"];
 
+// A "foreign admin" isn't a distinct subRole — it's any ADMIN account with
+// scope: "COUNTRY" (see the schema comment on `scope` in models/user.model.js:
+// "FOREIGN_ADMIN removed — it was never a real role, just a data-visibility
+// flag"). This filter is what every list/find/delete below uses to identify
+// one.
+const FOREIGN_ADMIN_FILTER = { role: "ADMIN", scope: "COUNTRY" };
+
 /**
- * Sanitise foreignSubRoles — remove any LOGISTICS or invalid entries.
+ * Sanitise foreignSubRoles — remove any HQ-only (IT/DIRECTOR/ACCOUNTANT/
+ * WAREHOUSE/EDITOR/LOGISTICS — see HQ_ONLY_SUBROLES) or invalid entries.
+ * None of those can ever be "foreign" — there is only ever one Accountant,
+ * one Warehouse, one Editor, and they're always HQ (item #9).
  */
 function sanitiseForeignSubRoles(arr = []) {
   return (arr || []).filter(
@@ -87,6 +106,18 @@ export async function createForeignAdmin(req, res) {
 
     const cleanedForeignSubRoles = sanitiseForeignSubRoles(foreignSubRoles);
 
+    // A foreign admin must have at least one real (foreign-eligible)
+    // department — otherwise they'd have no subRole at all and no
+    // permissions anywhere in the app (permissions are resolved entirely
+    // from subRole — see config/roles.js).
+    if (cleanedForeignSubRoles.length === 0) {
+      return res.status(400).json({
+        message: `Select at least one valid department role. Allowed: ${FOREIGN_EXPOSABLE_SUBROLES.join(", ")}`,
+        error: true,
+        success: false,
+      });
+    }
+
     const salt = await bcryptjs.genSalt(10);
     const hashedPassword = await bcryptjs.hash(password, salt);
 
@@ -97,7 +128,12 @@ export async function createForeignAdmin(req, res) {
       email,
       password: hashedPassword,
       role: "ADMIN",
-      subRole: "FOREIGN_ADMIN",
+      // The account's real subRole (and therefore its permissions) is the
+      // primary/first selected department — "FOREIGN_ADMIN" is not a real
+      // subRole (see models/user.model.js). Any additional selected
+      // departments are kept in foreignSubRoles for display only.
+      subRole: cleanedForeignSubRoles[0],
+      scope: "COUNTRY",
       assignedCountry,
       foreignSubRoles: cleanedForeignSubRoles,
       preferredLanguage: preferredLanguage || country.language.default,
@@ -134,7 +170,7 @@ export async function createForeignAdmin(req, res) {
     await logActivity({
       adminId: creator._id,
       action: "CREATE_FOREIGN_ADMIN",
-      details: `Created foreign admin ${email} for ${assignedCountry} with roles [FOREIGN_ADMIN${cleanedForeignSubRoles.length ? ", " + cleanedForeignSubRoles.join(", ") : ""}]`,
+      details: `Created foreign admin ${email} for ${assignedCountry} with roles [${cleanedForeignSubRoles.join(", ")}]`,
     });
 
     return res.status(201).json({
@@ -145,6 +181,7 @@ export async function createForeignAdmin(req, res) {
         _id: newAdmin._id,
         name: newAdmin.name,
         email: newAdmin.email,
+        subRole: newAdmin.subRole,
         assignedCountry: newAdmin.assignedCountry,
         foreignSubRoles: newAdmin.foreignSubRoles,
         preferredLanguage: newAdmin.preferredLanguage,
@@ -178,7 +215,7 @@ export async function listForeignAdmins(req, res) {
     }
 
     const { countryCode, status } = req.query;
-    const filter = { role: "ADMIN", subRole: "FOREIGN_ADMIN" };
+    const filter = { ...FOREIGN_ADMIN_FILTER };
     if (countryCode) filter.assignedCountry = countryCode.toUpperCase();
     if (status) filter.status = status;
 
@@ -222,7 +259,7 @@ export async function updateForeignAdmin(req, res) {
     const { id } = req.params;
     const { assignedCountry, preferredLanguage, status, foreignSubRoles } = req.body;
 
-    const admin = await UserModel.findOne({ _id: id, subRole: "FOREIGN_ADMIN" });
+    const admin = await UserModel.findOne({ _id: id, ...FOREIGN_ADMIN_FILTER });
 
     if (!admin) {
       return res.status(404).json({
@@ -245,9 +282,20 @@ export async function updateForeignAdmin(req, res) {
     if (preferredLanguage) admin.preferredLanguage = preferredLanguage;
     if (status) admin.status = status;
 
-    // Update foreignSubRoles if provided (sanitise to remove LOGISTICS)
+    // Update foreignSubRoles if provided (sanitise to remove HQ-only roles).
+    // The account's real subRole (and therefore its permissions) tracks the
+    // primary/first selection — see createForeignAdmin.
     if (foreignSubRoles !== undefined) {
-      admin.foreignSubRoles = sanitiseForeignSubRoles(foreignSubRoles);
+      const cleaned = sanitiseForeignSubRoles(foreignSubRoles);
+      if (cleaned.length === 0) {
+        return res.status(400).json({
+          message: `Select at least one valid department role. Allowed: ${FOREIGN_EXPOSABLE_SUBROLES.join(", ")}`,
+          error: true,
+          success: false,
+        });
+      }
+      admin.foreignSubRoles = cleaned;
+      admin.subRole = cleaned[0];
     }
 
     await admin.save();
@@ -255,7 +303,7 @@ export async function updateForeignAdmin(req, res) {
     await logActivity({
       adminId: creator._id,
       action: "UPDATE_FOREIGN_ADMIN",
-      details: `Updated foreign admin ${admin.email} — roles: [FOREIGN_ADMIN${admin.foreignSubRoles?.length ? ", " + admin.foreignSubRoles.join(", ") : ""}]`,
+      details: `Updated foreign admin ${admin.email} — roles: [${admin.foreignSubRoles?.join(", ") || admin.subRole}]`,
     });
 
     return res.json({
@@ -266,6 +314,7 @@ export async function updateForeignAdmin(req, res) {
         _id: admin._id,
         name: admin.name,
         email: admin.email,
+        subRole: admin.subRole,
         assignedCountry: admin.assignedCountry,
         foreignSubRoles: admin.foreignSubRoles,
         preferredLanguage: admin.preferredLanguage,
@@ -302,7 +351,7 @@ export async function updateForeignAdminSubRoles(req, res) {
     const { id } = req.params;
     const { foreignSubRoles = [] } = req.body;
 
-    const admin = await UserModel.findOne({ _id: id, subRole: "FOREIGN_ADMIN" });
+    const admin = await UserModel.findOne({ _id: id, ...FOREIGN_ADMIN_FILTER });
     if (!admin) {
       return res.status(404).json({
         message: "Foreign admin not found",
@@ -314,7 +363,16 @@ export async function updateForeignAdminSubRoles(req, res) {
     const cleaned = sanitiseForeignSubRoles(foreignSubRoles);
     const rejected = foreignSubRoles.filter(r => !cleaned.includes(r));
 
+    if (cleaned.length === 0) {
+      return res.status(400).json({
+        message: `Select at least one valid department role. Allowed: ${FOREIGN_EXPOSABLE_SUBROLES.join(", ")}`,
+        error: true,
+        success: false,
+      });
+    }
+
     admin.foreignSubRoles = cleaned;
+    admin.subRole = cleaned[0];
     await admin.save();
 
     await logActivity({
@@ -327,7 +385,7 @@ export async function updateForeignAdminSubRoles(req, res) {
       success: true,
       error: false,
       message: "Sub-roles updated",
-      data: { foreignSubRoles: admin.foreignSubRoles },
+      data: { subRole: admin.subRole, foreignSubRoles: admin.foreignSubRoles },
       ...(rejected.length ? { warning: `Rejected invalid/prohibited roles: ${rejected.join(", ")}` } : {}),
     });
   } catch (err) {
@@ -357,7 +415,7 @@ export async function deleteForeignAdmin(req, res) {
     }
 
     const { id } = req.params;
-    const admin = await UserModel.findOneAndDelete({ _id: id, subRole: "FOREIGN_ADMIN" });
+    const admin = await UserModel.findOneAndDelete({ _id: id, ...FOREIGN_ADMIN_FILTER });
 
     if (!admin) {
       return res.status(404).json({
@@ -390,8 +448,9 @@ export async function deleteForeignAdmin(req, res) {
 
 /**
  * PATCH /api/admin/users/:id/promote-to-foreign
- * IT or DIRECTOR can upgrade an existing admin to FOREIGN_ADMIN
- * (changes their subRole to FOREIGN_ADMIN and assigns a country).
+ * IT or DIRECTOR can upgrade an existing HQ admin to a foreign/country-scoped
+ * admin (sets scope: "COUNTRY", assigns a country, and keeps their subRole —
+ * or the first selected foreignSubRoles entry if provided).
  */
 export async function promoteToForeignAdmin(req, res) {
   try {
@@ -432,10 +491,13 @@ export async function promoteToForeignAdmin(req, res) {
       });
     }
 
-    // Cannot promote DIRECTOR or IT to FOREIGN_ADMIN
-    if (["DIRECTOR", "IT"].includes(user.subRole)) {
+    // Cannot promote an HQ-only subRole (IT, DIRECTOR, ACCOUNTANT,
+    // WAREHOUSE, EDITOR, LOGISTICS — see HQ_ONLY_SUBROLES) to a foreign/
+    // country-scoped admin — there is only ever one Accountant/Warehouse/
+    // Editor and they're always HQ (item #9).
+    if (HQ_ONLY_SUBROLES.includes(user.subRole)) {
       return res.status(400).json({
-        message: "Cannot convert DIRECTOR or IT to FOREIGN_ADMIN",
+        message: `Cannot convert ${user.subRole} to a foreign/country-scoped admin — this role is always HQ.`,
         error: true,
         success: false,
       });
@@ -444,7 +506,16 @@ export async function promoteToForeignAdmin(req, res) {
     const country = getCountryByCode(assignedCountry);
     const cleaned = sanitiseForeignSubRoles(foreignSubRoles);
 
-    user.subRole = "FOREIGN_ADMIN";
+    if (cleaned.length === 0) {
+      return res.status(400).json({
+        message: `Select at least one valid department role. Allowed: ${FOREIGN_EXPOSABLE_SUBROLES.join(", ")}`,
+        error: true,
+        success: false,
+      });
+    }
+
+    user.subRole = cleaned[0];
+    user.scope = "COUNTRY";
     user.assignedCountry = assignedCountry;
     user.preferredLanguage = preferredLanguage || country.language.default;
     user.foreignSubRoles = cleaned;
@@ -454,7 +525,7 @@ export async function promoteToForeignAdmin(req, res) {
     await logActivity({
       adminId: actor._id,
       action: "PROMOTE_TO_FOREIGN_ADMIN",
-      details: `Promoted ${user.email} to FOREIGN_ADMIN for ${assignedCountry}`,
+      details: `Promoted ${user.email} to a foreign admin (${user.subRole}) for ${assignedCountry}`,
     });
 
     return res.json({

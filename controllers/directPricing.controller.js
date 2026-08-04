@@ -4,14 +4,22 @@ import ProductModel from "../models/product.model.js";
 import mongoose from "mongoose";
 import { computeEffectivePrices } from "../utils/mergeDirectPricing.js";
 
+// Accountant/IT/Director always own pricing. MANAGER only owns pricing while
+// GLOBAL-scoped (HQ Manager) — a country/"foreign" Manager holds the same
+// subRole but must NOT get pricing rights. Mirrors product.controller.js's
+// isPricingOwnerRole so the two never drift apart.
+const isPricingOwnerRole = (user) =>
+  ["ACCOUNTANT", "DIRECTOR", "IT"].includes(user?.subRole) ||
+  (user?.subRole === "MANAGER" && user?.scope !== "COUNTRY");
+
 // Create or update direct pricing for a specific product
 export const createOrUpdateDirectPricing = async (request, response) => {
   try {
     const { productId, prices, notes } = request.body;
 
-    if (!["ACCOUNTANT", "DIRECTOR", "IT"].includes(request.user.subRole)) {
+    if (!isPricingOwnerRole(request.user)) {
       return response.status(403).json({
-        message: "Only Accountant, Director, or IT can manage direct pricing",
+        message: "Only Accountant, Director, IT, or an HQ Manager can manage direct pricing",
         error: true,
         success: false,
       });
@@ -222,9 +230,9 @@ export const updateSinglePrice = async (request, response) => {
   try {
     const { productId, priceType, price, notes } = request.body;
 
-    if (!["ACCOUNTANT", "DIRECTOR", "IT"].includes(request.user.subRole)) {
+    if (!isPricingOwnerRole(request.user)) {
       return response.status(403).json({
-        message: "Only Accountant, Director, or IT can update direct pricing",
+        message: "Only Accountant, Director, IT, or an HQ Manager can update direct pricing",
         error: true,
         success: false,
       });

@@ -4,6 +4,7 @@ import bcryptjs from 'bcryptjs';
 import generatedAccessToken from '../utils/generatedAccessToken.js';
 import genertedRefreshToken from '../utils/generatedRefreshToken.js';
 import { COUNTRY_CONFIG } from '../config/countries/index.js';
+import { HQ_ONLY_SUBROLES } from '../config/roles.js';
 
 /**
  * POST /api/admin/auth/login
@@ -48,6 +49,18 @@ export async function adminLoginController(request, response) {
     const checkPassword = await bcryptjs.compare(password, user.password);
     if (!checkPassword) {
       return response.status(400).json({ message: 'Invalid credentials', error: true, success: false });
+    }
+
+    // ── HQ-only subRole self-heal (item #9) ─────────────────────────────────
+    // IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR, and (for now) LOGISTICS
+    // must always be scope GLOBAL — every account is managed from HQ, no
+    // foreign/country-scoped accounts. If this record was ever saved with a
+    // stale COUNTRY scope (e.g. from before this rule existed), correct it
+    // right here on login so the dashboard the user sees this session is
+    // always right, without needing a manual DB fix.
+    if (HQ_ONLY_SUBROLES.includes(user.subRole) && (user.scope !== 'GLOBAL' || user.assignedCountry)) {
+      user.scope = 'GLOBAL';
+      user.assignedCountry = null;
     }
 
     // ── Domain-restricted login ────────────────────────────────────────────

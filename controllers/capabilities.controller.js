@@ -23,6 +23,7 @@
 
 import { getEffectivePermissions } from "../middleware/requirePermission.js";
 import { getCountryByCode, DEFAULT_COUNTRY } from "../config/countries/index.js";
+import { HQ_ONLY_SUBROLES } from "../config/roles.js";
 
 export async function getMyCapabilities(req, res) {
   try {
@@ -36,7 +37,14 @@ export async function getMyCapabilities(req, res) {
     }
 
     const permissions = [...getEffectivePermissions(user)].sort();
-    const isGlobal = user.scope !== "COUNTRY";
+    // Defense in depth (item #9): HQ-only subRoles (IT, DIRECTOR,
+    // ACCOUNTANT, WAREHOUSE, EDITOR, LOGISTICS) are ALWAYS global, even if
+    // the stored record somehow still has a stale COUNTRY scope — this is
+    // also self-healed on login (admin_auth.controller.js) and on any
+    // IT/DIRECTOR-driven update (admin_user.controller.js), but checking it
+    // again here means the dashboard is correct even mid-session, before
+    // the person's next login.
+    const isGlobal = HQ_ONLY_SUBROLES.includes(user.subRole) || user.scope !== "COUNTRY";
     const countryCode = isGlobal ? null : user.assignedCountry;
     const country = countryCode ? getCountryByCode(countryCode) : null;
 
@@ -62,7 +70,7 @@ export async function getMyCapabilities(req, res) {
         name: user.name,
         email: user.email,
         subRole: user.subRole,
-        scope: user.scope || "GLOBAL",
+        scope: isGlobal ? "GLOBAL" : (user.scope || "GLOBAL"),
         country: countryCode,
         countryName: country?.name || null,
         department: user.department || null,
