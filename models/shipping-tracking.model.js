@@ -1,5 +1,17 @@
 // models/shippingTracking.model.js
+//
+// COUNTRY-SCOPED: carries the countryScopedPlugin (see
+// core/countryScopedPlugin.js), same as ShippingZone/ShippingMethod/Order.
+// A COUNTRY-scoped Logistics admin (e.g. assigned to Togo) only ever sees/
+// updates tracking for their own country's orders — independently of
+// every other country's Logistics admin. GLOBAL admins (IT/DIRECTOR) see
+// every country's tracking. countryCode is stamped explicitly at creation
+// from the order's own countryCode (see createShipment in
+// controllers/shipping.controller.js) rather than left to the plugin's
+// context-based auto-stamp, so it's correct even when a GLOBAL admin
+// creates a shipment for a specific country's order.
 import mongoose from "mongoose";
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const shippingTrackingSchema = new mongoose.Schema(
   {
@@ -356,6 +368,8 @@ shippingTrackingSchema.pre("save", function (next) {
   }
   next();
 });
+
+shippingTrackingSchema.plugin(countryScopedPlugin);
 
 const ShippingTrackingModel = mongoose.model(
   "ShippingTracking",

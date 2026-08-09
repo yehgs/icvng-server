@@ -1,5 +1,14 @@
 // models/shippingMethod.model.js - FIXED VERSION with enhanced assignment logic
+//
+// COUNTRY-SCOPED: this model carries the countryScopedPlugin (see
+// core/countryScopedPlugin.js), so every method belongs to exactly one
+// country. A COUNTRY-scoped Logistics admin's queries are auto-filtered to
+// their own assignedCountry — they can create/see/edit only their own
+// country's methods, independently of every other country's Logistics
+// admin. GLOBAL admins (IT/DIRECTOR) see and manage methods across every
+// country.
 import mongoose from "mongoose";
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const shippingMethodSchema = new mongoose.Schema(
   {
@@ -11,9 +20,11 @@ const shippingMethodSchema = new mongoose.Schema(
     code: {
       type: String,
       required: [true, "Shipping method code is required"],
-      unique: true,
       uppercase: true,
       trim: true,
+      // NOT globally unique any more — unique per country (see the
+      // compound index below), so two countries can each have a method
+      // coded e.g. "STD" independently.
     },
     description: {
       type: String,
@@ -127,6 +138,25 @@ const shippingMethodSchema = new mongoose.Schema(
             {
               minWeight: { type: Number, required: true },
               maxWeight: { type: Number, required: true },
+              // Base carrier/handling cost for this weight band, before
+              // markup.
+              baseCost: { type: Number, required: true, default: 0 },
+              // "Store-up" — a stock/inventory markup layered on top of
+              // baseCost for this weight band (e.g. 10 means +10%).
+              // Lets Logistics account for warehousing/handling overhead
+              // per weight tier without hand-computing it into baseCost.
+              stockMarkupPercent: { type: Number, default: 0, min: 0 },
+              // shippingCost is the FINAL customer-facing cost
+              // (baseCost + baseCost * stockMarkupPercent / 100). Kept as
+              // its own stored field — NOT auto-recomputed on save — so
+              // existing callers of calculateShippingCost() (checkout,
+              // manual orders) and existing documents that only ever set
+              // shippingCost directly (baseCost/stockMarkupPercent = 0)
+              // keep working unchanged. Callers that DO want the markup
+              // applied (e.g. the Togo seed script, or a future admin-UI
+              // rate form) must compute
+              // shippingCost = baseCost * (1 + stockMarkupPercent / 100)
+              // themselves before saving.
               shippingCost: { type: Number, required: true },
             },
           ],
@@ -246,10 +276,19 @@ const shippingMethodSchema = new mongoose.Schema(
   },
 );
 
+// Country-scope this model: adds+indexes countryCode, auto-stamps new
+// methods from the request context, and auto-filters every query for
+// COUNTRY-scoped admins. See core/countryScopedPlugin.js.
+shippingMethodSchema.plugin(countryScopedPlugin);
+
 // Indexes
 shippingMethodSchema.index({ type: 1 });
 shippingMethodSchema.index({ isActive: 1 });
 shippingMethodSchema.index({ sortOrder: 1 });
+// Per-country uniqueness (replaces the old globally-unique code) — Togo's
+// Logistics admin and Benin's Logistics admin can each have their own
+// method coded e.g. "STD" without colliding.
+shippingMethodSchema.index({ countryCode: 1, code: 1 }, { unique: true });
 
 // Check if method is currently valid
 shippingMethodSchema.methods.isCurrentlyValid = function () {

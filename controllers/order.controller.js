@@ -4,6 +4,7 @@ import CartProductModel from "../models/cartproduct.model.js";
 import UserModel from "../models/user.model.js";
 import ShippingZoneModel from "../models/shipping-zone.model.js";
 import ShippingMethodModel from "../models/shipping-method.model.js";
+import BankTransferSettingsModel from "../models/bankTransferSettings.model.js";
 import mongoose from "mongoose";
 import Stripe from "../config/stripe.js";
 import { STRIPE_WEBHOOK_SECRET } from "../config/stripe.js";
@@ -111,6 +112,8 @@ async function createOrderFromPaystackTransaction({
       shippingZone = await ShippingZoneModel.findZoneByCity(
         address.city,
         address.state,
+        null,
+        countryCode,
       );
     }
   }
@@ -275,14 +278,6 @@ export async function paystackWebhookController(request, response) {
     if (event === "charge.success") {
       const { reference, metadata } = data;
 
-      // ── Guest order path ──
-      if (metadata?.isGuest === true) {
-        const { processGuestPaystackWebhook } =
-          await import("./guest_order.controller.js");
-        await processGuestPaystackWebhook(metadata, reference);
-        return response.json({ received: true });
-      }
-
       try {
         await createOrderFromPaystackTransaction({
           reference,
@@ -350,22 +345,18 @@ export async function verifyPaystackController(request, response) {
 
     const { metadata, amount, currency } = verifyData.data;
 
-    let orderGroupId;
-    if (metadata?.isGuest === true) {
-      const { processGuestPaystackWebhook } =
-        await import("./guest_order.controller.js");
-      await processGuestPaystackWebhook(metadata, reference);
-      const guestOrder = await OrderModel.findOne({ paymentId: reference });
-      orderGroupId = guestOrder?.orderGroupId;
-    } else {
-      const result = await createOrderFromPaystackTransaction({
-        reference,
-        metadata,
-        countryCode: request.countryCode || "NG",
-        currencyCode: request.country?.currency?.code || "NGN",
-      });
-      orderGroupId = result.orderGroupId;
-    }
+    // No guest checkout path — checkout requires a logged-in account (the
+    // cart drawer's auth modal gates access before checkout is ever
+    // reached), so metadata.isGuest can never actually be true here. The
+    // dead guest-order branch that used to live here (and its
+    // ./guest_order.controller.js import) has been removed.
+    const result = await createOrderFromPaystackTransaction({
+      reference,
+      metadata,
+      countryCode: request.countryCode || "NG",
+      currencyCode: request.country?.currency?.code || "NGN",
+    });
+    const orderGroupId = result.orderGroupId;
 
     return response.json({
       message: "Payment verified and order placed",
@@ -507,15 +498,10 @@ export async function webhookStripe(request, response) {
       const session = event.data.object;
 
       try {
-        // ── Guest Stripe order path ──
-        if (session.metadata?.isGuest === "true") {
-          const { processGuestStripeWebhook } =
-            await import("./guest_order.controller.js");
-          await processGuestStripeWebhook(session);
-          break;
-        }
-
-        // ── Logged-in user Stripe order path ──
+        // No guest checkout path — checkout requires a logged-in account,
+        // so session.metadata.isGuest can never actually be true here.
+        // The dead guest-order branch that used to live here (and its
+        // ./guest_order.controller.js import) has been removed.
         const lineItems = await Stripe.checkout.sessions.listLineItems(
           session.id,
         );
@@ -529,6 +515,12 @@ export async function webhookStripe(request, response) {
           payment_status: "PAID",
           shippingMethodId: session.metadata.shippingMethodId,
           shippingCost: parseFloat(session.metadata.originalShippingNGN || "0"),
+          // Stamped into the session's metadata at checkout-session
+          // creation (see line ~840's read of the same field) — the
+          // webhook itself has no reliable storefront-domain signal
+          // (Stripe calls our API's own host), so this is the only
+          // trustworthy source of which country the order belongs to.
+          countryCode: session.metadata?.countryCode || "NG",
           session,
         });
 
@@ -718,6 +710,7 @@ async function getOrderProductItemsFromStripe({
   payment_status,
   shippingMethodId,
   shippingCost,
+  countryCode,
   session,
 }) {
   const productList = [];
@@ -731,6 +724,8 @@ async function getOrderProductItemsFromStripe({
       shippingZone = await ShippingZoneModel.findZoneByCity(
         address.city,
         address.state,
+        null,
+        countryCode,
       );
     }
   }
@@ -892,12 +887,56 @@ export async function DirectBankTransferOrderController(request, response) {
       bankDetails,
     } = request.body;
 
-    if (currency !== "NGN") {
+    // Country-scoped: which currency THIS request's storefront actually
+    // trades in — resolved from the domain by the global countryDetect
+    // middleware, not the client-submitted `currency`. Bank Transfer used
+    // to hard-block everything except NGN (Direct Bank Transfer is only
+    // available for NGN) which meant Togo/Benin/Italy customers couldn't
+    // use it at all. Now it's allowed in whatever currency the
+    // customer's own storefront trades in, and the client-submitted
+    // `currency` is just a confirmation check (protects against a stale
+    // client cached from a different country's session) rather than the
+    // source of truth.
+    const expectedCurrency = request.country?.currency?.code || "NGN";
+    const orderCurrency = expectedCurrency;
+
+    if (currency !== expectedCurrency) {
       return response.status(400).json({
-        message: "Direct Bank Transfer is only available for NGN",
+        message: `Direct Bank Transfer for this store is only available in ${expectedCurrency}`,
         error: true,
       });
     }
+
+    // "If the country bank transfer is not set, payment option will only
+    // be Stripe by default" — enforced here too (not just hidden in the
+    // checkout UI), so this endpoint can't be hit directly to create a
+    // bank-transfer order for a country IT/DIRECTOR hasn't configured one
+    // for.
+    const bankSetting = await BankTransferSettingsModel.findOne({
+      countryCode: request.countryCode,
+      isActive: true,
+    });
+
+    if (!bankSetting) {
+      return response.status(400).json({
+        message: "Direct Bank Transfer is not available for this store — please use Stripe.",
+        error: true,
+      });
+    }
+
+    // The order's recorded bank_transfer_details are OUR receiving
+    // account (IT/DIRECTOR-configured, per country) — NOT trusted from
+    // the client. `bankDetails.reference` (if the client sent one) is
+    // kept as the customer's own payment reference for staff to
+    // reconcile against, since that's information only the customer has
+    // (which of their own transfers this was).
+    const resolvedBankDetails = {
+      bankName: bankSetting.bankName,
+      accountName: bankSetting.accountName,
+      accountNumber: bankSetting.accountNumber,
+      sortCode: bankSetting.sortCode,
+      reference: bankDetails?.reference || "",
+    };
 
     const cartItems = await CartProductModel.find({ userId }).populate(
       "productId",
@@ -933,6 +972,8 @@ export async function DirectBankTransferOrderController(request, response) {
         shippingZone = await ShippingZoneModel.findZoneByCity(
           address.city,
           address.state,
+          null,
+          request.countryCode,
         );
       }
     }
@@ -1007,7 +1048,7 @@ export async function DirectBankTransferOrderController(request, response) {
         subTotalAmt: itemSubtotal,
         totalAmt: itemTotal,
         shipping_cost: shippingCostPerItem,
-        currency: "NGN",
+        currency: orderCurrency,
         // Item #7: same country-isolation stamping as the Paystack/Stripe
         // paths above — insertMany() skips countryScopedPlugin's pre-save
         // hook, so without this every bank-transfer order defaulted to "NG".
@@ -1020,7 +1061,10 @@ export async function DirectBankTransferOrderController(request, response) {
         paymentId: `BANK-${Date.now()}`,
         payment_status: "PENDING_BANK_TRANSFER",
         payment_method: "BANK_TRANSFER",
-        bank_transfer_details: bankDetails,
+        // Our own receiving-account details (IT/DIRECTOR-configured, per
+        // country) — see resolvedBankDetails above. NOT the raw
+        // client-submitted bankDetails.
+        bank_transfer_details: resolvedBankDetails,
 
         // Delivery (SHARED)
         delivery_address: addressId,
@@ -1035,7 +1079,7 @@ export async function DirectBankTransferOrderController(request, response) {
           : {},
 
         // Notes
-        admin_notes: `Bank Transfer - Reference: ${bankDetails.reference}`,
+        admin_notes: `Bank Transfer - Reference: ${resolvedBankDetails.reference || "(none provided)"}`,
       };
     });
 

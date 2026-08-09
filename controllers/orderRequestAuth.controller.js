@@ -65,6 +65,9 @@ export const registerBTBCustomer = async (req, res) => {
       verify_email: false,
       forgot_password_otp: verificationToken,
       forgot_password_expiry: verificationExpiry,
+      // Country-scoped recognition — same as the BTC signup path in
+      // user.controller.js#registerUserController.
+      countryCode: req.countryCode || null,
     });
 
     await user.save();

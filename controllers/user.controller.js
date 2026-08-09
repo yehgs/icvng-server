@@ -58,6 +58,10 @@ export async function registerUserController(request, response) {
       subRole: 'BTC', // Default subRole for new users
       verify_email: false, // Will be verified via email
       status: 'Active', // Default active status
+      // Country-scoped recognition: stamp which storefront domain this
+      // account was created on (resolved by the global countryDetect
+      // middleware) — see the countryCode field comment on user.model.js.
+      countryCode: request.countryCode || null,
     };
 
     const newUser = new UserModel(payload);

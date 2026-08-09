@@ -22,6 +22,7 @@ foreignAdminRouter.post("/", createForeignAdmin);
 foreignAdminRouter.get("/", listForeignAdmins);
 foreignAdminRouter.patch("/:id", updateForeignAdmin);
 foreignAdminRouter.patch("/:id/subroles", updateForeignAdminSubRoles);
+foreignAdminRouter.patch("/:id/promote", promoteToForeignAdmin);
 foreignAdminRouter.delete("/:id", deleteForeignAdmin);
 
 export default foreignAdminRouter;

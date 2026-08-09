@@ -22,9 +22,12 @@ export { HQ_ONLY_SUBROLES };
 
 // Sub-roles that CAN be assigned to a country/"foreign" admin account —
 // every ADMIN_SUBROLES entry that isn't HQ-only and isn't a customer
-// subRole. Currently excludes IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR,
-// and LOGISTICS (see HQ_ONLY_SUBROLES) — there is only ever one Accountant/
-// Warehouse/Editor, and they're always HQ. Used by foreignAdmin.controller.js
+// subRole. Currently excludes IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR
+// (see HQ_ONLY_SUBROLES) — there is only ever one Accountant/Warehouse/
+// Editor, and they're always HQ. LOGISTICS IS now foreign-assignable: the
+// country-scoped logistics system (ShippingZone/ShippingMethod
+// countryScopedPlugin) is live, so a per-country Logistics admin manages
+// only their own country's zones/methods. Used by foreignAdmin.controller.js
 // to decide which subRoles show up as "foreign"-assignable.
 // NOTE: this used to be imported from here but was never actually defined,
 // which crashed every foreign-admin create/update call with a TypeError —
@@ -33,12 +36,11 @@ export const FOREIGN_EXPOSABLE_SUBROLES = ADMIN_SUBROLES.filter(
   (r) => !HQ_ONLY_SUBROLES.includes(r) && !["BTC", "BTB"].includes(r)
 );
 
-// LOGISTICS is HQ-only today (part of HQ_ONLY_SUBROLES) so it's already
-// excluded from FOREIGN_EXPOSABLE_SUBROLES above — this is kept as an
-// explicit named list so callers that want to double-guard against it by
-// name still can, and so removing LOGISTICS from HQ_ONLY_SUBROLES later
-// (once a country-scoped logistics system exists) doesn't silently also
-// make it foreign-assignable without a deliberate second decision here.
+// Kept as an explicit named list for callers that need to reason about the
+// Logistics subRole specifically (e.g. UI copy explaining a Logistics
+// admin's zones/methods are scoped to their assignedCountry). LOGISTICS is
+// no longer force-excluded from FOREIGN_EXPOSABLE_SUBROLES — it is fully
+// foreign-assignable now that country-scoped logistics exists.
 export const LOGISTICS_SUBROLES = ["LOGISTICS"];
 
 const userSchema = new mongoose.Schema(
@@ -48,6 +50,19 @@ const userSchema = new mongoose.Schema(
     password: { type: String, required: [true, "Provide password"] },
     avatar:   { type: String, default: "" },
     mobile:   { type: Number, default: null },
+    // Customer (role: "USER") home-country recognition — stamped once at
+    // signup from req.countryCode (the storefront domain the person
+    // registered on, resolved by the global countryDetect middleware).
+    // NOT the same thing as scope/assignedCountry below, which is the
+    // ADMIN data-visibility system — this is just "which storefront does
+    // this customer belong to" (used for currency display, country-scoped
+    // marketing/emails, and defaulting their checkout country). Nullable
+    // for ADMIN accounts, which use scope/assignedCountry instead.
+    countryCode: {
+      type: String,
+      enum: [...ALL_COUNTRY_CODES, null],
+      default: null,
+    },
     refresh_token:       { type: String, default: "" },
     verify_email:        { type: Boolean, default: false },
     last_login_date:     { type: Date, default: "" },
@@ -97,7 +112,7 @@ const userSchema = new mongoose.Schema(
     //
     // Rules enforced:
     //   - HQ-only subRoles (config/roles.js#HQ_ONLY_SUBROLES — currently
-    //     IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR, LOGISTICS) → must be
+    //     IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR) → must be
     //     GLOBAL (enforced by validator below)
     //   - scope = "COUNTRY" requires assignedCountry to be set
     //   - scope = "GLOBAL"  requires assignedCountry to be null

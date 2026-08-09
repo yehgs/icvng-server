@@ -42,12 +42,14 @@ import wishlistRouter from "./route/wishlist.route.js";
 import compareRouter from "./route/compare.route.js";
 import adminAuthRouter from "./route/admin-auth.route.js";
 import adminUserRouter from "./route/admin-user.route.js";
+import foreignAdminRouter from "./route/foreign-admin.route.js";
 import colorRouter from "./route/color.route.js";
 import supplierRouter from "./route/supplier.route.js";
 import purchaseOrderRouter from "./route/purchaseOrder.route.js";
 import stockRouter from "./route/stock.route.js";
 import pricingRouter from "./route/price.route.js";
 import exchangeRateRouter from "./route/exchange-rate.route.js";
+import bankTransferSettingsRouter from "./route/bankTransferSettings.route.js";
 import warehouseRouter from "./route/warehouse.route.js";
 import shippingRouter from "./route/shipping.route.js";
 import blogRouter from "./route/blog.route.js";
@@ -258,12 +260,21 @@ app.use("/api/wishlist", wishlistRouter);
 app.use("/api/compare", compareRouter);
 app.use("/api/admin/auth", adminAuthRouter);
 app.use("/api/admin/user", adminUserRouter);
+// Was defined (server/route/foreign-admin.route.js) but never mounted —
+// the entire foreign/country-scoped admin management API (create, list,
+// edit, delete, assign sub-roles, promote an existing HQ admin) was
+// unreachable, and the admin panel's Foreign Admin Management page
+// (admin/src/pages/foreign-admins/ForeignAdminManagement.jsx) has been
+// calling /admin/foreign-admins endpoints that returned 404 the whole
+// time. Path matches what that page calls.
+app.use("/api/admin/foreign-admins", foreignAdminRouter);
 app.use("/api/colors", colorRouter);
 app.use("/api/suppliers", supplierRouter);
 app.use("/api/purchase-orders", purchaseOrderRouter);
 app.use("/api/stock", stockRouter);
 app.use("/api/pricing", pricingRouter);
 app.use("/api/exchange-rates", exchangeRateRouter);
+app.use("/api/bank-transfer-settings", bankTransferSettingsRouter);
 app.use("/api/warehouse", warehouseRouter);
 app.use("/api/shipping", shippingRouter);
 app.use("/api/blog", blogRouter);

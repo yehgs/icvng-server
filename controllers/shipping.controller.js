@@ -4,14 +4,76 @@ import ShippingMethodModel from "../models/shipping-method.model.js";
 import ShippingTrackingModel from "../models/shipping-tracking.model.js";
 import OrderModel from "../models/order.model.js";
 import ProductModel from "../models/product.model.js";
-import { nigeriaStatesLgas } from "../data/nigeria-states-lgas.js";
+import { getDivisionsForCountry } from "../utils/countryGeoData.js";
+import { DEFAULT_COUNTRY, ALL_COUNTRY_CODES, getCountryByCode } from "../config/countries/index.js";
+import { shippingNotificationEmail } from "../utils/countryEmailTemplates.js";
+import { sendCountryEmail } from "../config/emailService.js";
+import { sendOrderNotificationToTeam } from "../utils/emailTemplates.js";
 import mongoose from "mongoose";
 import csv from "csv-parser";
 import { Readable } from "stream";
 
+/**
+ * Send a country-branded shipment/tracking-status email to the customer.
+ *
+ * Replaces the old `sendShippingNotificationEmail` call, which was NEVER
+ * ACTUALLY WORKING — it referenced a function that was defined in
+ * utils/emailTemplates.js but never imported into this file, so every
+ * call threw a ReferenceError that got silently swallowed by the
+ * surrounding try/catch (console.error only — no email was ever sent for
+ * any shipment, on any order, in any country). This one:
+ *   1. Actually sends (using the already-built country-aware
+ *      shippingNotificationEmail template + sendCountryEmail).
+ *   2. Is country-scoped — branded/localized for the ORDER's own country
+ *      (order.countryCode), not the requesting admin's country. A GLOBAL
+ *      admin (IT/DIRECTOR) updating a Togo order's tracking must still
+ *      send the customer a Togo-branded email, not an NG one.
+ */
+async function sendCountryScopedShippingEmail({ user, order, tracking, latestEvent }) {
+  if (!user?.email && !tracking?.recipientInfo?.email) return;
+
+  const country = getCountryByCode(order?.countryCode || DEFAULT_COUNTRY);
+  const html = shippingNotificationEmail({ order, tracking, user, country });
+
+  await sendCountryEmail({
+    countryCode: country.code,
+    sendTo: user?.email || tracking.recipientInfo.email,
+    subject: `Shipping Update: ${String(tracking.status || "").replace(/_/g, " ")} — ${order?.orderId || ""} | ${country.seo?.siteName || "I-Coffee"}`,
+    html,
+  });
+}
+
+/**
+ * Resolve which country a zone/method create-or-update request targets.
+ *
+ * - COUNTRY-scoped admin (e.g. Togo Logistics): always their own
+ *   assignedCountry — request.countryScope. Any body.countryCode they send
+ *   is ignored (assertCountryAccess on the route already 403s a mismatch;
+ *   this is belt-and-suspenders).
+ * - GLOBAL admin (IT/DIRECTOR, or a GLOBAL-scoped Logistics lead): must
+ *   explicitly pick a country via body.countryCode. Falls back to
+ *   DEFAULT_COUNTRY (Nigeria) only for backward compatibility with older
+ *   clients that never sent one.
+ *
+ * Throws on an invalid explicit country code so callers can 400 cleanly.
+ */
+function resolveTargetCountry(request) {
+  if (request.countryScope) return request.countryScope;
+
+  const requested = (request.body?.countryCode || "").toUpperCase();
+  if (!requested) return DEFAULT_COUNTRY;
+
+  if (!ALL_COUNTRY_CODES.includes(requested)) {
+    const err = new Error(`Invalid countryCode: ${requested}`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return requested;
+}
+
 // Helper function to generate unique zone code
 
-async function generateZoneCode(name) {
+async function generateZoneCode(name, countryCode) {
   const words = name.trim().split(/\s+/);
 
   let baseCode;
@@ -31,7 +93,13 @@ async function generateZoneCode(name) {
   let code = baseCode;
   let counter = 1;
 
-  while (await ShippingZoneModel.findOne({ code })) {
+  // Explicit countryCode filter (not just relying on the plugin's
+  // context-based auto-filter) because a GLOBAL admin targeting a specific
+  // country via body.countryCode has no countryScope in context — without
+  // this, code uniqueness would incorrectly be checked across ALL
+  // countries for that admin, blocking e.g. Togo and Nigeria from both
+  // having a zone coded "LOM".
+  while (await ShippingZoneModel.findOne({ code, countryCode })) {
     code = `${baseCode}${counter}`;
     counter++;
 
@@ -44,7 +112,7 @@ async function generateZoneCode(name) {
 }
 
 // Helper function to generate unique method code
-const generateMethodCode = async (name, type) => {
+const generateMethodCode = async (name, type, countryCode) => {
   const typePrefix = {
     flat_rate: "FR",
     table_shipping: "TS",
@@ -56,7 +124,11 @@ const generateMethodCode = async (name, type) => {
   let code = baseCode;
   let counter = 1;
 
-  while (await ShippingMethodModel.findOne({ code })) {
+  // Explicit countryCode filter for the same reason as generateZoneCode
+  // above — a GLOBAL admin creating this for a specific country has no
+  // countryScope in context, so without this two countries couldn't both
+  // have a method coded e.g. "TS-ST".
+  while (await ShippingMethodModel.findOne({ code, countryCode })) {
     code = baseCode + counter.toString().padStart(2, "0");
     counter++;
   }
@@ -357,24 +429,48 @@ export const createShippingZone = async (request, response) => {
       });
     }
 
-    // Check for duplicate zone name
+    // Which country this zone belongs to: the requester's own
+    // assignedCountry if they're COUNTRY-scoped, otherwise an explicit
+    // body.countryCode (GLOBAL admins only — IT/DIRECTOR, or a
+    // GLOBAL-scoped Logistics lead).
+    let countryCode;
+    try {
+      countryCode = resolveTargetCountry(request);
+    } catch (err) {
+      return response.status(err.statusCode || 400).json({
+        message: err.message,
+        error: true,
+        success: false,
+      });
+    }
+    const divisions = getDivisionsForCountry(countryCode);
+
+    console.log("=== CREATE SHIPPING ZONE ===");
+    console.log("Country:", countryCode);
+    console.log("Request body:", JSON.stringify(request.body, null, 2));
+
+    // Check for duplicate zone name — scoped to this country only, so
+    // Togo and Benin (etc.) can each independently have a zone named the
+    // same thing.
     const existingZone = await ShippingZoneModel.findOne({
       name: name.trim(),
+      countryCode,
     });
 
     if (existingZone) {
       return response.status(400).json({
-        message: "Shipping zone with this name already exists",
+        message: "Shipping zone with this name already exists for this country",
         error: true,
         success: false,
       });
     }
 
-    // Auto-generate unique code
-    const code = await generateZoneCode(name);
+    // Auto-generate unique code (scoped to this country)
+    const code = await generateZoneCode(name, countryCode);
     console.log("Generated zone code:", code);
 
-    // Process and validate states
+    // Process and validate states against THIS country's own
+    // state/region + LGA/prefecture/commune data — not hardcoded Nigeria.
     const processedStates = [];
     const seenStates = new Set();
 
@@ -391,14 +487,14 @@ export const createShippingZone = async (request, response) => {
       }
       seenStates.add(state.name.toLowerCase());
 
-      // Validate against Nigeria data
-      const nigeriaState = nigeriaStatesLgas.find(
+      // Validate against this country's division data
+      const division = divisions.find(
         (s) => s.state.toLowerCase() === state.name.toLowerCase(),
       );
 
-      if (!nigeriaState) {
+      if (!division) {
         return response.status(400).json({
-          message: `Invalid Nigerian state: ${state.name}`,
+          message: `Invalid state/region: ${state.name} is not a valid division of ${countryCode}`,
           error: true,
           success: false,
         });
@@ -428,7 +524,7 @@ export const createShippingZone = async (request, response) => {
 
         // Validate all covered LGAs exist
         const invalidLgas = processedCoveredLgas.filter(
-          (lgaName) => !nigeriaState.lga.includes(lgaName),
+          (lgaName) => !division.lga.includes(lgaName),
         );
 
         if (invalidLgas.length > 0) {
@@ -443,10 +539,10 @@ export const createShippingZone = async (request, response) => {
       }
 
       processedStates.push({
-        name: nigeriaState.state,
-        code: state.code || nigeriaState.state.substring(0, 2).toUpperCase(),
+        name: division.state,
+        code: state.code || division.state.substring(0, 2).toUpperCase(),
         coverage_type: state.coverage_type || "all",
-        available_lgas: [...nigeriaState.lga],
+        available_lgas: [...division.lga],
         covered_lgas:
           state.coverage_type === "specific" ? processedCoveredLgas : [],
       });
@@ -458,6 +554,7 @@ export const createShippingZone = async (request, response) => {
     const newZone = new ShippingZoneModel({
       name: name.trim(),
       code,
+      countryCode,
       description: description?.trim() || "",
       states: processedStates,
       zone_type: zone_type || "mixed",
@@ -523,16 +620,19 @@ export const updateShippingZone = async (request, response) => {
     if (name) {
       updateData.name = name.trim();
 
-      // Check for duplicate name (excluding current zone)
+      // Check for duplicate name (excluding current zone), scoped to this
+      // zone's own country — a Togo zone renamed to "Zone A" shouldn't be
+      // blocked by a Benin zone already named "Zone A".
       if (name.trim() !== zone.name) {
         const existingZone = await ShippingZoneModel.findOne({
           _id: { $ne: zoneId },
           name: name.trim(),
+          countryCode: zone.countryCode,
         });
 
         if (existingZone) {
           return response.status(400).json({
-            message: "A zone with this name already exists",
+            message: "A zone with this name already exists for this country",
             error: true,
             success: false,
           });
@@ -549,17 +649,19 @@ export const updateShippingZone = async (request, response) => {
     if (operational_notes !== undefined)
       updateData.operational_notes = operational_notes?.trim() || "";
 
-    // Process states if provided
+    // Process states if provided — validated against THIS zone's own
+    // country, not hardcoded Nigeria.
     if (states && Array.isArray(states)) {
       const processedStates = [];
+      const zoneDivisions = getDivisionsForCountry(zone.countryCode);
 
       for (const state of states) {
-        const nigeriaState = nigeriaStatesLgas.find(
+        const division = zoneDivisions.find(
           (s) => s.state.toLowerCase() === state.name.toLowerCase(),
         );
 
-        if (!nigeriaState) {
-          throw new Error(`Invalid state: ${state.name}`);
+        if (!division) {
+          throw new Error(`Invalid state/region: ${state.name} is not a valid division of ${zone.countryCode}`);
         }
 
         // Process covered LGAs
@@ -585,7 +687,7 @@ export const updateShippingZone = async (request, response) => {
 
           // Validate all covered LGAs exist
           const invalidLgas = processedCoveredLgas.filter(
-            (lgaName) => !nigeriaState.lga.includes(lgaName),
+            (lgaName) => !division.lga.includes(lgaName),
           );
 
           if (invalidLgas.length > 0) {
@@ -596,10 +698,10 @@ export const updateShippingZone = async (request, response) => {
         }
 
         processedStates.push({
-          name: nigeriaState.state,
-          code: state.code || nigeriaState.state.substring(0, 2).toUpperCase(),
+          name: division.state,
+          code: state.code || division.state.substring(0, 2).toUpperCase(),
           coverage_type: state.coverage_type || "all",
-          available_lgas: [...nigeriaState.lga],
+          available_lgas: [...division.lga],
           covered_lgas:
             state.coverage_type === "specific" ? processedCoveredLgas : [],
         });
@@ -815,17 +917,33 @@ export const createShippingMethod = async (request, response) => {
       });
     }
 
-    // ALWAYS auto-generate unique code
-    const code = await generateMethodCode(methodData.name, methodData.type);
+    // Which country this method belongs to — same rule as
+    // createShippingZone: the requester's own assignedCountry if
+    // COUNTRY-scoped, otherwise an explicit body.countryCode (GLOBAL
+    // admins only).
+    let methodCountryCode;
+    try {
+      methodCountryCode = resolveTargetCountry(request);
+    } catch (err) {
+      return response.status(err.statusCode || 400).json({
+        message: err.message,
+        error: true,
+        success: false,
+      });
+    }
+
+    // ALWAYS auto-generate unique code (scoped to this country)
+    const code = await generateMethodCode(methodData.name, methodData.type, methodCountryCode);
     console.log("Generated code:", code);
 
     const existingMethod = await ShippingMethodModel.findOne({
       code: code.toUpperCase(),
+      countryCode: methodCountryCode,
     });
 
     if (existingMethod) {
       return response.status(400).json({
-        message: "Shipping method with this code already exists",
+        message: "Shipping method with this code already exists for this country",
         error: true,
         success: false,
       });
@@ -835,6 +953,7 @@ export const createShippingMethod = async (request, response) => {
     const processedMethodData = {
       name: methodData.name,
       code: code,
+      countryCode: methodCountryCode,
       description: methodData.description || "",
       type: methodData.type,
       isActive: methodData.isActive !== undefined ? methodData.isActive : true,
@@ -1119,6 +1238,30 @@ export const createShippingMethod = async (request, response) => {
       hasTableShipping: !!processedMethodData.tableShipping,
       keys: Object.keys(processedMethodData),
     });
+
+    // Guard against a method referencing another country's zone (e.g. a
+    // stale zone dropdown, or a hand-crafted request) — every zone a
+    // method's flatRate/tableShipping/pickup config points at must belong
+    // to this method's own country.
+    const referencedZoneIds = [
+      ...(processedMethodData.flatRate?.zoneRates || []).map((zr) => zr.zone),
+      ...(processedMethodData.tableShipping?.zoneRates || []).map((zr) => zr.zone),
+      ...(processedMethodData.pickup?.zoneLocations || []).map((zl) => zl.zone),
+    ].filter(Boolean);
+
+    if (referencedZoneIds.length > 0) {
+      const validZoneCount = await ShippingZoneModel.countDocuments({
+        _id: { $in: referencedZoneIds },
+        countryCode: methodCountryCode,
+      });
+      if (validZoneCount !== new Set(referencedZoneIds.map(String)).size) {
+        return response.status(400).json({
+          message: `One or more referenced zones do not belong to ${methodCountryCode}`,
+          error: true,
+          success: false,
+        });
+      }
+    }
 
     // Create and save the shipping method
     const newMethod = new ShippingMethodModel(processedMethodData);
@@ -1469,6 +1612,30 @@ export const updateShippingMethod = async (request, response) => {
       unsetFields.flatRate = "";
     }
 
+    // Guard against a method referencing another country's zone — same
+    // reasoning as createShippingMethod. method.countryCode is immutable
+    // on update (updateData never sets it), so this is always the
+    // method's own country.
+    const referencedZoneIds = [
+      ...(finalUpdateData.flatRate?.zoneRates || []).map((zr) => zr.zone),
+      ...(finalUpdateData.tableShipping?.zoneRates || []).map((zr) => zr.zone),
+      ...(finalUpdateData.pickup?.zoneLocations || []).map((zl) => zl.zone),
+    ].filter(Boolean);
+
+    if (referencedZoneIds.length > 0) {
+      const validZoneCount = await ShippingZoneModel.countDocuments({
+        _id: { $in: referencedZoneIds },
+        countryCode: method.countryCode,
+      });
+      if (validZoneCount !== new Set(referencedZoneIds.map(String)).size) {
+        return response.status(400).json({
+          message: `One or more referenced zones do not belong to ${method.countryCode}`,
+          error: true,
+          success: false,
+        });
+      }
+    }
+
     const updatedMethod = await ShippingMethodModel.findByIdAndUpdate(
       methodId,
       {
@@ -1732,8 +1899,16 @@ export const calculateCheckoutShipping = async (request, response) => {
     // re-checked can silently go stale - e.g. an address resolved to an
     // older, broader zone before a more specific zone existed/was updated
     // to also cover it, permanently hiding that zone's rates/rules.
+    //
+    // Scoped to req.countryCode (resolved from the storefront domain by
+    // the global countryDetect middleware) — without this, two countries
+    // sharing a state/region name (e.g. Nigeria's "Plateau State" and
+    // Benin's "Plateau" department) could cross-match a customer's
+    // address to the wrong country's zone and pricing entirely.
     console.log("Searching for matching zone...");
-    const zones = await ShippingZoneModel.find({ isActive: true });
+    const zoneQuery = { isActive: true };
+    if (request.countryCode) zoneQuery.countryCode = request.countryCode;
+    const zones = await ShippingZoneModel.find(zoneQuery);
     console.log(
       "[SHIP-DEBUG] Active zones to test against:",
       zones.map((z) => ({
@@ -1881,10 +2056,13 @@ export const calculateCheckoutShipping = async (request, response) => {
 
     console.log(`Total weight: ${calculatedWeight}kg`);
 
-    // Get ALL active shipping methods
-    const shippingMethods = await ShippingMethodModel.find({
-      isActive: true,
-    }).sort({ sortOrder: 1 });
+    // Get ALL active shipping methods FOR THIS COUNTRY — same reasoning
+    // as the zone lookup above: without the countryCode filter, a
+    // Nigeria-only table_shipping method could be offered (and priced in
+    // NGN) to a Togo customer, or vice versa.
+    const methodQuery = { isActive: true };
+    if (request.countryCode) methodQuery.countryCode = request.countryCode;
+    const shippingMethods = await ShippingMethodModel.find(methodQuery).sort({ sortOrder: 1 });
 
     console.log(`Found ${shippingMethods.length} active shipping methods`);
 
@@ -2263,8 +2441,12 @@ export const calculateManualOrderShipping = async (request, response) => {
       });
     }
 
-    // Find zone for state/LGA
-    const zones = await ShippingZoneModel.find({ isActive: true });
+    // Find zone for state/LGA — scoped to req.countryCode (see
+    // calculateCheckoutShipping for the same fix and reasoning: without
+    // this, two countries sharing a state/region name could cross-match).
+    const zoneQuery = { isActive: true };
+    if (request.countryCode) zoneQuery.countryCode = request.countryCode;
+    const zones = await ShippingZoneModel.find(zoneQuery);
     const candidateZones = [];
 
     for (const testZone of zones) {
@@ -2347,10 +2529,11 @@ export const calculateManualOrderShipping = async (request, response) => {
       }
     }
 
-    // Get shipping methods
-    const shippingMethods = await ShippingMethodModel.find({
-      isActive: true,
-    }).sort({ sortOrder: 1 });
+    // Get shipping methods — scoped to req.countryCode, same reasoning
+    // as calculateCheckoutShipping.
+    const methodQuery = { isActive: true };
+    if (request.countryCode) methodQuery.countryCode = request.countryCode;
+    const shippingMethods = await ShippingMethodModel.find(methodQuery).sort({ sortOrder: 1 });
 
     const availableMethods = [];
 
@@ -2646,6 +2829,11 @@ export const createShipment = async (request, response) => {
         trackingNumber: finalTrackingNumber, // Same tracking number for all
         carrier,
         shippingMethod: orderItem.shippingMethod?._id,
+        // Explicit stamp (not left to the plugin's context-based
+        // auto-stamp) — correct even when a GLOBAL admin (IT/DIRECTOR)
+        // creates a shipment for a specific country's order, where
+        // ctx.countryScope is null.
+        countryCode: orderItem.countryCode,
         estimatedDelivery,
         packageInfo: {
           weight: packageInfo?.weight || totalWeight,
@@ -2673,7 +2861,16 @@ export const createShipment = async (request, response) => {
               city: orderItem.delivery_address.city,
               state: orderItem.delivery_address.state,
               postalCode: orderItem.delivery_address.pincode,
-              country: orderItem.delivery_address.country || "Nigeria",
+              // The Address model's own `country` field is currently
+              // hardcoded to "Nigeria" for every address regardless of
+              // actual country (a pre-existing, separate gap — see
+              // models/address.model.js), so it can't be trusted here.
+              // orderItem.countryCode (stamped at order creation from the
+              // storefront domain) is the reliable source instead.
+              country:
+                getCountryByCode(orderItem.countryCode)?.name ||
+                orderItem.delivery_address.country ||
+                "Nigeria",
             }
           : {},
         recipientInfo: {
@@ -2710,10 +2907,13 @@ export const createShipment = async (request, response) => {
                     : ""
                 }`,
           location: {
-            facility: "I-Coffee Shop",
-            city: "Lagos",
-            state: "Lagos",
-            country: "Nigeria",
+            // Was hardcoded to "I-Coffee Shop, Lagos, Lagos, Nigeria" for
+            // every shipment regardless of actual country — now reflects
+            // the order's own country (orderItem.countryCode).
+            facility: `${getCountryByCode(orderItem.countryCode)?.name || "I-Coffee"} Fulfillment Center`,
+            city: "",
+            state: "",
+            country: getCountryByCode(orderItem.countryCode)?.name || "Nigeria",
           },
         },
         userId,
@@ -2730,7 +2930,7 @@ export const createShipment = async (request, response) => {
     // Send notification emails
     try {
       if (customer) {
-        await sendShippingNotificationEmail({
+        await sendCountryScopedShippingEmail({
           user: customer,
           order: order,
           tracking: trackingRecords[0],
@@ -2738,8 +2938,6 @@ export const createShipment = async (request, response) => {
             trackingRecords[0].trackingEvents[
               trackingRecords[0].trackingEvents.length - 1
             ],
-          isGroupShipment: ordersToTrack.length > 1,
-          groupItemCount: ordersToTrack.length,
         });
       }
 
@@ -2885,14 +3083,12 @@ export const updateTracking = async (request, response) => {
         try {
           const customer =
             tracking.orderId.userId || tracking.orderId.customerId;
-          await sendShippingNotificationEmail({
+          await sendCountryScopedShippingEmail({
             user: customer,
             order: tracking.orderId,
             tracking: tracking,
             latestEvent:
               tracking.trackingEvents[tracking.trackingEvents.length - 1],
-            isGroupShipment: trackingsToUpdate.length > 1,
-            groupItemCount: trackingsToUpdate.length,
           });
         } catch (emailError) {
           console.error(
@@ -2982,7 +3178,16 @@ export const getTrackingByNumber = async (request, response) => {
 
 export const getTrackingStats = async (request, response) => {
   try {
+    // Aggregation pipelines bypass Mongoose query middleware entirely —
+    // the countryScopedPlugin's auto-filtering (which the .find()/
+    // .countDocuments() calls below get automatically) does NOT apply to
+    // .aggregate(). Without this explicit $match, a COUNTRY-scoped
+    // Logistics admin's stats would silently include every country's
+    // tracking data mixed together.
+    const countryMatch = request.countryScope ? { countryCode: request.countryScope } : {};
+
     const stats = await ShippingTrackingModel.aggregate([
+      { $match: countryMatch },
       {
         $group: {
           _id: "$status",
@@ -2992,6 +3197,7 @@ export const getTrackingStats = async (request, response) => {
     ]);
 
     const overdue = await ShippingTrackingModel.countDocuments({
+      ...countryMatch,
       estimatedDelivery: { $lt: new Date() },
       status: { $nin: ["DELIVERED", "RETURNED", "LOST", "CANCELLED"] },
     });
@@ -3001,11 +3207,12 @@ export const getTrackingStats = async (request, response) => {
     const endOfDay = new Date(today.setHours(23, 59, 59, 999));
 
     const todayDeliveries = await ShippingTrackingModel.countDocuments({
+      ...countryMatch,
       actualDelivery: { $gte: startOfDay, $lte: endOfDay },
     });
 
     const avgDeliveryTime = await ShippingTrackingModel.aggregate([
-      { $match: { status: "DELIVERED", actualDelivery: { $exists: true } } },
+      { $match: { ...countryMatch, status: "DELIVERED", actualDelivery: { $exists: true } } },
       {
         $addFields: {
           deliveryDays: {
@@ -3060,9 +3267,19 @@ export const getPublicShippingMethods = async (request, response) => {
       });
     }
 
-    const zone = await ShippingZoneModel.findZoneByCity(city, state);
+    // Storefront requests carry req.countryCode (resolved from the
+    // request's domain by the global countryDetect middleware) — without
+    // it, two countries sharing a state/region name would cross-match,
+    // and this list would mix every country's shipping methods together
+    // for a public/anonymous customer.
+    const countryCode = request.countryCode;
 
-    const methods = await ShippingMethodModel.find({ isActive: true })
+    const zone = await ShippingZoneModel.findZoneByCity(city, state, null, countryCode);
+
+    const methods = await ShippingMethodModel.find({
+      isActive: true,
+      ...(countryCode ? { countryCode } : {}),
+    })
       .select("name code type description estimatedDelivery")
       .sort({ sortOrder: 1 });
 
@@ -3567,6 +3784,21 @@ export const importShippingZonesCSV = async (request, response) => {
       });
     }
 
+    // The whole CSV import targets ONE country — a COUNTRY-scoped
+    // Logistics admin's own assignedCountry, or an explicit
+    // body.countryCode for a GLOBAL admin (IT/DIRECTOR).
+    let countryCode;
+    try {
+      countryCode = resolveTargetCountry(request);
+    } catch (err) {
+      return response.status(err.statusCode || 400).json({
+        message: err.message,
+        error: true,
+        success: false,
+      });
+    }
+    const importDivisions = getDivisionsForCountry(countryCode);
+
     const rows = [];
     const stream = Readable.from([csvData]);
     await new Promise((resolve, reject) => {
@@ -3610,7 +3842,8 @@ export const importShippingZonesCSV = async (request, response) => {
           continue;
         }
 
-        // Validate + expand states against the Nigeria states/LGA reference data
+        // Validate + expand states against THIS import's target country's
+        // own state/region + LGA/prefecture/commune reference data.
         const processedStates = [];
         const seenStates = new Set();
         let stateError = null;
@@ -3622,12 +3855,12 @@ export const importShippingZonesCSV = async (request, response) => {
           }
           seenStates.add(st.name.toLowerCase());
 
-          const nigeriaState = nigeriaStatesLgas.find(
+          const division = importDivisions.find(
             (ns) => ns.state.toLowerCase() === st.name.toLowerCase(),
           );
 
-          if (!nigeriaState) {
-            stateError = `Invalid Nigerian state: ${st.name}`;
+          if (!division) {
+            stateError = `Invalid state/region for ${countryCode}: ${st.name}`;
             break;
           }
 
@@ -3638,7 +3871,7 @@ export const importShippingZonesCSV = async (request, response) => {
               break;
             }
             const invalidLgas = st.covered_lgas.filter(
-              (lga) => !nigeriaState.lga.includes(lga),
+              (lga) => !division.lga.includes(lga),
             );
             if (invalidLgas.length) {
               stateError = `Invalid LGA(s) for ${st.name}: ${invalidLgas.join(", ")}`;
@@ -3648,10 +3881,10 @@ export const importShippingZonesCSV = async (request, response) => {
           }
 
           processedStates.push({
-            name: nigeriaState.state,
-            code: nigeriaState.state.substring(0, 2).toUpperCase(),
+            name: division.state,
+            code: division.state.substring(0, 2).toUpperCase(),
             coverage_type: st.coverage_type,
-            available_lgas: [...nigeriaState.lga],
+            available_lgas: [...division.lga],
             covered_lgas,
           });
         }
@@ -3666,6 +3899,7 @@ export const importShippingZonesCSV = async (request, response) => {
 
         const zonePayload = {
           name,
+          countryCode,
           description: (row["Description"] || "").trim(),
           states: processedStates,
           zone_type: ["urban", "rural", "mixed"].includes(zoneTypeRaw)
@@ -3681,15 +3915,19 @@ export const importShippingZonesCSV = async (request, response) => {
         };
 
         // Match existing zone by code first, then by name (case-insensitive)
+        // — always scoped to this import's target country, so importing a
+        // Togo CSV can never match/overwrite a same-named/coded Nigeria zone.
         let existingZone = null;
         if (code) {
           existingZone = await ShippingZoneModel.findOne({
             code: code.toUpperCase(),
+            countryCode,
           });
         }
         if (!existingZone) {
           existingZone = await ShippingZoneModel.findOne({
             name: new RegExp(`^${escapeRegex(name)}$`, "i"),
+            countryCode,
           });
         }
 
@@ -3697,13 +3935,14 @@ export const importShippingZonesCSV = async (request, response) => {
           if (name.toLowerCase() !== existingZone.name.toLowerCase()) {
             const nameClash = await ShippingZoneModel.findOne({
               name: new RegExp(`^${escapeRegex(name)}$`, "i"),
+              countryCode,
               _id: { $ne: existingZone._id },
             });
             if (nameClash) {
               results.failed.push({
                 row: rowNum,
                 zone: name,
-                reason: `Another zone already uses the name "${name}"`,
+                reason: `Another zone already uses the name "${name}" for ${countryCode}`,
               });
               continue;
             }
@@ -3717,7 +3956,7 @@ export const importShippingZonesCSV = async (request, response) => {
             code: existingZone.code,
           });
         } else {
-          const newCode = await generateZoneCode(name);
+          const newCode = await generateZoneCode(name, countryCode);
           const newZone = new ShippingZoneModel({
             ...zonePayload,
             code: newCode,
@@ -3869,6 +4108,22 @@ export const importShippingMethodsCSV = async (request, response) => {
       });
     }
 
+    // This import targets ONE country — same rule as
+    // importShippingZonesCSV/importShippingRatesCSV. Without this, zone
+    // codes (now unique only PER country) could collide across countries
+    // in the zoneByCode lookup below, and method codes could collide when
+    // matching an "existing" method to update.
+    let methodsCountryCode;
+    try {
+      methodsCountryCode = resolveTargetCountry(request);
+    } catch (err) {
+      return response.status(err.statusCode || 400).json({
+        message: err.message,
+        error: true,
+        success: false,
+      });
+    }
+
     const rows = [];
     const stream = Readable.from([csvData]);
     await new Promise((resolve, reject) => {
@@ -3880,7 +4135,7 @@ export const importShippingMethodsCSV = async (request, response) => {
     });
 
     // Preload lookup tables once (zone code / category slug / product sku)
-    const allZones = await ShippingZoneModel.find({}).select("_id code");
+    const allZones = await ShippingZoneModel.find({ countryCode: methodsCountryCode }).select("_id code");
     const zoneByCode = new Map(
       allZones.map((z) => [String(z.code).toUpperCase(), z._id]),
     );
@@ -3992,6 +4247,7 @@ export const importShippingMethodsCSV = async (request, response) => {
 
         const basePayload = {
           name,
+          countryCode: methodsCountryCode,
           description: (row["Description"] || "").trim(),
           type,
           isActive:
@@ -4137,16 +4393,20 @@ export const importShippingMethodsCSV = async (request, response) => {
           };
         }
 
-        // Match existing method by code first, then by name (case-insensitive)
+        // Match existing method by code first, then by name
+        // (case-insensitive) — always scoped to this import's target
+        // country.
         let existingMethod = null;
         if (code) {
           existingMethod = await ShippingMethodModel.findOne({
             code: code.toUpperCase(),
+            countryCode: methodsCountryCode,
           });
         }
         if (!existingMethod) {
           existingMethod = await ShippingMethodModel.findOne({
             name: new RegExp(`^${escapeRegex(name)}$`, "i"),
+            countryCode: methodsCountryCode,
           });
         }
 
@@ -4162,7 +4422,7 @@ export const importShippingMethodsCSV = async (request, response) => {
             code: existingMethod.code,
           });
         } else {
-          const newCode = await generateMethodCode(name, type);
+          const newCode = await generateMethodCode(name, type, methodsCountryCode);
           const newMethod = new ShippingMethodModel({
             ...basePayload,
             code: newCode,
@@ -4373,6 +4633,22 @@ export const importShippingRatesCSV = async (request, response) => {
       });
     }
 
+    // This import targets ONE country — a COUNTRY-scoped Logistics
+    // admin's own assignedCountry, or an explicit body.countryCode for a
+    // GLOBAL admin. Without this, zone/method codes (now unique only
+    // PER country, not globally) could collide across countries and
+    // silently attach a rate to the wrong country's zone.
+    let ratesCountryCode;
+    try {
+      ratesCountryCode = resolveTargetCountry(request);
+    } catch (err) {
+      return response.status(err.statusCode || 400).json({
+        message: err.message,
+        error: true,
+        success: false,
+      });
+    }
+
     const rows = [];
     const stream = Readable.from([csvData]);
     await new Promise((resolve, reject) => {
@@ -4383,7 +4659,7 @@ export const importShippingRatesCSV = async (request, response) => {
         .on("error", reject);
     });
 
-    const allZones = await ShippingZoneModel.find({}).select("_id code");
+    const allZones = await ShippingZoneModel.find({ countryCode: ratesCountryCode }).select("_id code");
     const zoneByCode = new Map(
       allZones.map((z) => [String(z.code).toUpperCase(), z._id]),
     );
@@ -4414,6 +4690,7 @@ export const importShippingRatesCSV = async (request, response) => {
     for (const [code, groupRows] of groups.entries()) {
       const method = await ShippingMethodModel.findOne({
         code: code.toUpperCase(),
+        countryCode: ratesCountryCode,
       });
 
       if (!method) {
@@ -4421,7 +4698,7 @@ export const importShippingRatesCSV = async (request, response) => {
           results.failed.push({
             row: rowNum,
             method: code,
-            reason: `No shipping method found with code "${code}"`,
+            reason: `No shipping method found with code "${code}" for ${ratesCountryCode}`,
           }),
         );
         continue;

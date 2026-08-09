@@ -1,6 +1,7 @@
 // routes/shipping.route.js - COMPLETE WITH FIX
 import { Router } from "express";
 import auth from "../middleware/auth.js";
+import { countryScope, assertCountryAccess } from "../middleware/countryScope.js";
 import { requireRole } from "../middleware/roleAuth.js";
 import {
   createShippingZone,
@@ -46,11 +47,21 @@ shippingRouter.post("/calculate-checkout", calculateCheckoutShipping);
 shippingRouter.post("/calculate-manual-order", calculateManualOrderShipping);
 
 // ===== ADMIN ROUTES =====
+// `countryScope` (after `auth`, before `requireRole`) is what activates
+// each model's countryScopedPlugin auto-filtering for this request — a
+// COUNTRY-scoped Logistics admin (e.g. assigned to Togo) then only ever
+// sees/creates/edits their own country's zones and methods; IT/DIRECTOR
+// (always GLOBAL — see HQ_ONLY_SUBROLES) see and manage every country's.
+// `assertCountryAccess('body.countryCode')` on the write routes is
+// belt-and-suspenders: it 403s outright if a COUNTRY-scoped admin sends a
+// body.countryCode that isn't their own, rather than silently letting the
+// model-layer stamping override it.
 
 // Dashboard
 shippingRouter.get(
   "/dashboard/stats",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   getShippingDashboardStats
 );
@@ -59,6 +70,7 @@ shippingRouter.get(
 shippingRouter.get(
   "/zones/all",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   getAllShippingZones
 );
@@ -66,6 +78,7 @@ shippingRouter.get(
 shippingRouter.get(
   "/zones",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   getShippingZones
 );
@@ -73,20 +86,25 @@ shippingRouter.get(
 shippingRouter.post(
   "/zones",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
+  assertCountryAccess("body.countryCode"),
   createShippingZone
 );
 
 shippingRouter.put(
   "/zones/:zoneId",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
+  assertCountryAccess("body.countryCode"),
   updateShippingZone
 );
 
 shippingRouter.get(
   "/zones/:zoneId/dependencies",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   getZoneDependencies
 );
@@ -94,6 +112,7 @@ shippingRouter.get(
 shippingRouter.delete(
   "/zones/:zoneId",
   auth,
+  countryScope,
   requireRole(deleteRoles),
   deleteShippingZone
 );
@@ -102,6 +121,7 @@ shippingRouter.delete(
 shippingRouter.get(
   "/zones/export/csv",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   exportShippingZonesCSV
 );
@@ -109,7 +129,9 @@ shippingRouter.get(
 shippingRouter.post(
   "/zones/import/csv",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
+  assertCountryAccess("body.countryCode"),
   importShippingZonesCSV
 );
 
@@ -117,6 +139,7 @@ shippingRouter.post(
 shippingRouter.get(
   "/methods",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   getShippingMethods
 );
@@ -124,20 +147,25 @@ shippingRouter.get(
 shippingRouter.post(
   "/methods",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
+  assertCountryAccess("body.countryCode"),
   createShippingMethod
 );
 
 shippingRouter.put(
   "/methods/:methodId",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
+  assertCountryAccess("body.countryCode"),
   updateShippingMethod
 );
 
 shippingRouter.delete(
   "/methods/:methodId",
   auth,
+  countryScope,
   requireRole(deleteRoles),
   deleteShippingMethod
 );
@@ -146,6 +174,7 @@ shippingRouter.delete(
 shippingRouter.get(
   "/methods/export/csv",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   exportShippingMethodsCSV
 );
@@ -153,7 +182,9 @@ shippingRouter.get(
 shippingRouter.post(
   "/methods/import/csv",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
+  assertCountryAccess("body.countryCode"),
   importShippingMethodsCSV
 );
 
@@ -162,6 +193,7 @@ shippingRouter.post(
 shippingRouter.get(
   "/methods/rates/export/csv",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   exportShippingRatesCSV
 );
@@ -169,7 +201,9 @@ shippingRouter.get(
 shippingRouter.post(
   "/methods/rates/import/csv",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
+  assertCountryAccess("body.countryCode"),
   importShippingRatesCSV
 );
 
@@ -177,6 +211,7 @@ shippingRouter.post(
 shippingRouter.get(
   "/categories/for-assignment",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   getCategoriesForAssignment
 );
@@ -184,6 +219,7 @@ shippingRouter.get(
 shippingRouter.get(
   "/products/for-assignment",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   getProductsForAssignment
 );
@@ -192,6 +228,7 @@ shippingRouter.get(
 shippingRouter.get(
   "/orders/ready-for-shipping",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   getOrdersReadyForShipping
 );
@@ -200,14 +237,21 @@ shippingRouter.get(
 shippingRouter.post(
   "/shipments",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   createShipment
 );
 
 // Tracking Management
+// NOTE: ShippingTrackingModel does not carry the countryScopedPlugin yet
+// (tracking country-scoping is a separate, not-yet-built phase) — these
+// routes still get `countryScope` for context consistency and to be ready
+// for that phase, but a COUNTRY-scoped Logistics admin currently sees all
+// trackings, same as before this change.
 shippingRouter.get(
   "/trackings",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   getAllTrackings
 );
@@ -215,6 +259,7 @@ shippingRouter.get(
 shippingRouter.put(
   "/trackings/:trackingId",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   updateTracking
 );
@@ -222,6 +267,7 @@ shippingRouter.put(
 shippingRouter.get(
   "/trackings/stats",
   auth,
+  countryScope,
   requireRole(logisticsRoles),
   getTrackingStats
 );

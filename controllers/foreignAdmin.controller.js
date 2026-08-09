@@ -17,8 +17,10 @@
  *   management (foreign or normal) is not exposed to MANAGER. See item #8.
  * - IT/DIRECTOR select the department(s) (foreignSubRoles) a foreign admin
  *   gets; the first selection becomes the account's real subRole.
- * - HQ-only subRoles (IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR,
- *   LOGISTICS — see HQ_ONLY_SUBROLES) are never assignable here.
+ * - HQ-only subRoles (IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR — see
+ *   HQ_ONLY_SUBROLES) are never assignable here. LOGISTICS IS assignable
+ *   here now (country-scoped logistics system): a foreign LOGISTICS admin
+ *   manages only their assignedCountry's shipping zones/methods.
  */
 
 import UserModel from "../models/user.model.js";
@@ -26,7 +28,7 @@ import bcryptjs from "bcryptjs";
 import sendEmail from "../config/sendEmail.js";
 import { getCountryByCode, ALL_COUNTRY_CODES } from "../config/countries/index.js";
 import { logActivity } from "../utils/activityLogger.js";
-import { FOREIGN_EXPOSABLE_SUBROLES, LOGISTICS_SUBROLES, HQ_ONLY_SUBROLES } from "../models/user.model.js";
+import { FOREIGN_EXPOSABLE_SUBROLES, HQ_ONLY_SUBROLES } from "../models/user.model.js";
 
 // Who can create / manage foreign admins — DIRECTOR and IT only.
 // MANAGER intentionally excluded (item #8): user management, whether over
@@ -44,14 +46,15 @@ const FOREIGN_ADMIN_FILTER = { role: "ADMIN", scope: "COUNTRY" };
 
 /**
  * Sanitise foreignSubRoles — remove any HQ-only (IT/DIRECTOR/ACCOUNTANT/
- * WAREHOUSE/EDITOR/LOGISTICS — see HQ_ONLY_SUBROLES) or invalid entries.
- * None of those can ever be "foreign" — there is only ever one Accountant,
- * one Warehouse, one Editor, and they're always HQ (item #9).
+ * WAREHOUSE/EDITOR — see HQ_ONLY_SUBROLES) or invalid entries. None of
+ * those can ever be "foreign" — there is only ever one Accountant, one
+ * Warehouse, one Editor, and they're always HQ (item #9). LOGISTICS is
+ * allowed through: the country-scoped logistics system means a foreign
+ * Logistics admin only ever touches their own assignedCountry's zones and
+ * shipping methods.
  */
 function sanitiseForeignSubRoles(arr = []) {
-  return (arr || []).filter(
-    (r) => FOREIGN_EXPOSABLE_SUBROLES.includes(r) && !LOGISTICS_SUBROLES.includes(r)
-  );
+  return (arr || []).filter((r) => FOREIGN_EXPOSABLE_SUBROLES.includes(r));
 }
 
 /**
@@ -492,9 +495,10 @@ export async function promoteToForeignAdmin(req, res) {
     }
 
     // Cannot promote an HQ-only subRole (IT, DIRECTOR, ACCOUNTANT,
-    // WAREHOUSE, EDITOR, LOGISTICS — see HQ_ONLY_SUBROLES) to a foreign/
-    // country-scoped admin — there is only ever one Accountant/Warehouse/
-    // Editor and they're always HQ (item #9).
+    // WAREHOUSE, EDITOR — see HQ_ONLY_SUBROLES) to a foreign/country-scoped
+    // admin — there is only ever one Accountant/Warehouse/Editor and
+    // they're always HQ (item #9). LOGISTICS is no longer in this list, so
+    // a Logistics admin CAN be converted/created as country-scoped.
     if (HQ_ONLY_SUBROLES.includes(user.subRole)) {
       return res.status(400).json({
         message: `Cannot convert ${user.subRole} to a foreign/country-scoped admin — this role is always HQ.`,

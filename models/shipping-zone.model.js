@@ -1,5 +1,14 @@
 // models/shipping-zone.model.js - FIXED VERSION
+//
+// COUNTRY-SCOPED: this model carries the countryScopedPlugin (see
+// core/countryScopedPlugin.js), so every zone belongs to exactly one
+// country (countryCode, added by the plugin). A COUNTRY-scoped Logistics
+// admin's queries are auto-filtered to their own assignedCountry — they
+// can create/see/edit only their own country's zones, independently of
+// every other country's Logistics admin. GLOBAL admins (IT/DIRECTOR) see
+// and manage zones across every country.
 import mongoose from "mongoose";
+import countryScopedPlugin from "../core/countryScopedPlugin.js";
 
 const shippingZoneSchema = new mongoose.Schema(
   {
@@ -7,14 +16,16 @@ const shippingZoneSchema = new mongoose.Schema(
       type: String,
       required: [true, "Zone name is required"],
       trim: true,
-      unique: true,
+      // NOT globally unique any more — two different countries' Logistics
+      // teams must be able to both create a zone named e.g. "Zone A"
+      // independently. Uniqueness is enforced per-country below.
     },
     code: {
       type: String,
       required: [true, "Zone code is required"],
-      unique: true,
       uppercase: true,
       trim: true,
+      // Same reasoning as `name` — unique per country, not globally.
     },
     description: {
       type: String,
@@ -78,17 +89,37 @@ const shippingZoneSchema = new mongoose.Schema(
   },
 );
 
+// Country-scope this model: adds+indexes countryCode, auto-stamps new
+// zones from the request context, and auto-filters every query for
+// COUNTRY-scoped admins. See core/countryScopedPlugin.js.
+shippingZoneSchema.plugin(countryScopedPlugin);
+
 // Indexes
 shippingZoneSchema.index({ isActive: 1 });
 shippingZoneSchema.index({ "states.name": 1 });
+// Per-country uniqueness (replaces the old globally-unique name/code) —
+// Togo's Logistics admin and Benin's Logistics admin can each have their
+// own "Zone A" / code "ZOA" without colliding.
+shippingZoneSchema.index({ countryCode: 1, name: 1 }, { unique: true });
+shippingZoneSchema.index({ countryCode: 1, code: 1 }, { unique: true });
 
-// Static method to find zone by state and LGA
+// Static method to find zone by state and LGA. `countryCode` is now
+// REQUIRED (not optional) — without it, two countries sharing a
+// state/region name (e.g. Nigeria's "Plateau State" and Benin's "Plateau"
+// department) would silently cross-match a customer's address to the
+// wrong country's zone, at the wrong currency/cost. Every caller
+// (checkout, bank-transfer, manual order shipping) now passes
+// request.countryCode, resolved by the countryDetect middleware from the
+// storefront domain.
 shippingZoneSchema.statics.findZoneByCity = async function (
   city,
   state,
   lga = null,
+  countryCode = null,
 ) {
-  const zones = await this.find({ isActive: true });
+  const query = { isActive: true };
+  if (countryCode) query.countryCode = countryCode;
+  const zones = await this.find(query);
 
   for (const zone of zones) {
     const stateMatch = zone.states.find(
@@ -135,20 +166,27 @@ shippingZoneSchema.methods.isLocationCovered = function (state, lga) {
   return false;
 };
 
-// Pre-save validation
+// Pre-save validation — validated against THIS zone's own country, not
+// hardcoded to Nigeria. Previously this always checked `state.name`
+// against nigeria-states-lgas.js directly, which meant saving a Togo,
+// Benin, or Italy zone always failed with "Must be a valid Nigerian
+// state" even when every other layer (route, controller) was otherwise
+// happy to create it for that country.
 shippingZoneSchema.pre("save", async function (next) {
   try {
-    const { nigeriaStatesLgas } =
-      await import("../data/nigeria-states-lgas.js");
+    const { getDivisionsForCountry } = await import(
+      "../utils/countryGeoData.js"
+    );
+    const divisions = getDivisionsForCountry(this.countryCode);
 
     for (const state of this.states) {
-      const nigeriaState = nigeriaStatesLgas.find(
-        (ns) => ns.state.toLowerCase() === state.name.toLowerCase(),
+      const match = divisions.find(
+        (d) => d.state.toLowerCase() === state.name.toLowerCase(),
       );
 
-      if (!nigeriaState) {
+      if (!match) {
         throw new Error(
-          `Invalid state: ${state.name}. Must be a valid Nigerian state.`,
+          `Invalid state/region: ${state.name}. Must be a valid division of ${this.countryCode}.`,
         );
       }
 
@@ -158,19 +196,19 @@ shippingZoneSchema.pre("save", async function (next) {
         state.covered_lgas?.length > 0
       ) {
         for (const lga of state.covered_lgas) {
-          const lgaExists = nigeriaState.lga.some(
+          const lgaExists = match.lga.some(
             (nl) => nl.toLowerCase() === lga.toLowerCase(),
           );
 
           if (!lgaExists) {
-            throw new Error(`Invalid LGA: ${lga} for state: ${state.name}`);
+            throw new Error(`Invalid LGA/prefecture: ${lga} for state: ${state.name}`);
           }
         }
       }
 
       // Ensure available_lgas is populated
       if (!state.available_lgas || state.available_lgas.length === 0) {
-        state.available_lgas = [...nigeriaState.lga];
+        state.available_lgas = [...match.lga];
       }
     }
 

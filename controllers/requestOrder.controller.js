@@ -15,6 +15,44 @@ import {
   sendOrderAssignmentNotification,
   sendOrderCancellationNotification,
 } from "../utils/order-request-emails.js";
+import { orderConfirmationEmail } from "../utils/countryEmailTemplates.js";
+import { sendCountryEmail } from "../config/emailService.js";
+import { getCountryByCode, DEFAULT_COUNTRY } from "../config/countries/index.js";
+
+/**
+ * Send the customer-facing order-request confirmation email.
+ *
+ * This was previously a bare call to `sendOrderConfirmationToCustomer(...)`
+ * — a function that was never defined or imported ANYWHERE in this
+ * codebase. Unlike the shipping-notification bug elsewhere (silently
+ * swallowed by a try/catch), this one had no try/catch around it: the
+ * resulting ReferenceError was caught by createOrderRequest's own outer
+ * catch block, which returned a 500 "Failed to create order request" to
+ * the customer on EVERY call — even though the order had already been
+ * successfully created and saved to the database just above. Every B2B
+ * order request has been hard-failing at the last step.
+ *
+ * Fixed properly (using the same country-aware template + sender as the
+ * rest of the app, not just patched to stop crashing) AND moved into its
+ * own try/catch so an email-sending failure can never again fail an
+ * order that was already successfully created.
+ */
+async function sendOrderConfirmationToCustomer(order, user, countryCode) {
+  if (!user?.email) return;
+  const country = getCountryByCode(countryCode || DEFAULT_COUNTRY);
+  const html = orderConfirmationEmail({
+    order,
+    user,
+    items: order.items || [],
+    country,
+  });
+  await sendCountryEmail({
+    countryCode: country.code,
+    sendTo: user.email,
+    subject: `Order Confirmed — ${order._id} | ${country.seo?.siteName || "I-Coffee"}`,
+    html,
+  });
+}
 
 /**
  * Create Order Request (Customer) - WITH SHIPPING
@@ -364,11 +402,24 @@ export const createOrderRequest = async (req, res) => {
       .populate("shippingZone", "name code")
       .populate("shippingMethod", "name code type estimatedDelivery");
 
-    // Send notification to sales team
-    await sendOrderNotificationToSales(populatedOrder);
+    // Send notification to sales team — wrapped for the same reason as
+    // the customer confirmation below: an email failure must never turn
+    // an order that was already successfully created into a 500 error.
+    try {
+      await sendOrderNotificationToSales(populatedOrder);
+    } catch (emailError) {
+      console.error("Failed to send order request sales notification:", emailError);
+    }
 
-    // Send confirmation to customer
-    await sendOrderConfirmationToCustomer(populatedOrder, user);
+    // Send confirmation to customer — wrapped separately so a failure
+    // here (e.g. SMTP hiccup) can never turn an order that was ALREADY
+    // successfully created and saved above into a 500 error for the
+    // customer (see the function's own comment for the bug this fixes).
+    try {
+      await sendOrderConfirmationToCustomer(populatedOrder, user, req.countryCode);
+    } catch (emailError) {
+      console.error("Failed to send order request confirmation email:", emailError);
+    }
 
     res.status(201).json({
       message: "Order request created successfully",
@@ -774,9 +825,15 @@ export const cancelOrderRequest = async (req, res) => {
 
     await order.save();
 
-    // Notify sales team
+    // Notify sales team — wrapped so an email failure can't turn an
+    // already-saved cancellation into a 500 error for the customer (same
+    // fix as createOrderRequest's confirmation email above).
     if (order.assignedTo) {
-      await sendOrderCancellationNotification(order);
+      try {
+        await sendOrderCancellationNotification(order);
+      } catch (emailError) {
+        console.error("Failed to send order cancellation notification:", emailError);
+      }
     }
 
     res.status(200).json({
@@ -992,8 +1049,13 @@ export const assignOrderRequest = async (req, res) => {
 
     await order.save();
 
-    // Send notification to assigned user
-    await sendOrderAssignmentNotification(order, assignedUser);
+    // Send notification to assigned user — wrapped so an email failure
+    // can't turn an already-saved assignment into a 500 error.
+    try {
+      await sendOrderAssignmentNotification(order, assignedUser);
+    } catch (emailError) {
+      console.error("Failed to send order assignment notification:", emailError);
+    }
 
     res.status(200).json({
       message: "Order assigned successfully",
@@ -1077,8 +1139,13 @@ export const updateOrderStatus = async (req, res) => {
 
     await order.save();
 
-    // Send status update notification to customer
-    await sendOrderStatusUpdateNotification(order);
+    // Send status update notification to customer — wrapped so an email
+    // failure can't turn an already-saved status update into a 500 error.
+    try {
+      await sendOrderStatusUpdateNotification(order);
+    } catch (emailError) {
+      console.error("Failed to send order status update notification:", emailError);
+    }
 
     res.status(200).json({
       message: "Order status updated successfully",

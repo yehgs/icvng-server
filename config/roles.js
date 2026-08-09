@@ -215,10 +215,20 @@ export const ROLE_DEFINITIONS = {
     hqOnly: false,
   },
 
-  // ── Supply chain (HQ) ──────────────────────────────────────────────────────
+  // ── Supply chain (country-scoped) ───────────────────────────────────────────
+  // COUNTRY-SCOPE LOGISTICS: as of the country-scoped logistics rollout, a
+  // LOGISTICS admin assigned to a country (scope: "COUNTRY", assignedCountry:
+  // "TG") manages ONLY that country's shipping zones/methods — the
+  // countryScopedPlugin on ShippingZone/ShippingMethod enforces this at the
+  // query level, independent of every other country's LOGISTICS admin. A
+  // LOGISTICS admin can also be created at HQ with scope GLOBAL (e.g. a
+  // Nigeria-based/head office logistics lead) — GLOBAL scope is optional for
+  // this role, not forced either way. Only IT and DIRECTOR (both permanently
+  // GLOBAL — see HQ_ONLY_SUBROLES) can see/manage every country's zones and
+  // methods at once.
   LOGISTICS: {
     name: "Logistics",
-    description: "HQ logistics — shipping, tracking, logistics operations.",
+    description: "Shipping, tracking, logistics operations — scoped to one country unless created at HQ.",
     permissions: [
       "dashboard.view",
       "logistics.view", "logistics.manage",
@@ -229,7 +239,7 @@ export const ROLE_DEFINITIONS = {
       "notifications.view",
     ],
     isSystem: true,
-    hqOnly: true,
+    hqOnly: false,
   },
 
   WAREHOUSE: {
@@ -257,12 +267,12 @@ export const CUSTOMER_SUBROLES = ["BTC", "BTB"];
  * subRoles that can NEVER be country/"foreign" scoped — always scope
  * GLOBAL, assignedCountry null, every account managed from HQ.
  *
- * Currently: IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR, LOGISTICS.
+ * Currently: IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR.
  *
- * Note — LOGISTICS: there is no country-scoped logistics system yet, so it
- * stays HQ-only for now. Once that's built, LOGISTICS should come out of
- * this list (drop `hqOnly` from its ROLE_DEFINITIONS entry) so it can be
- * assigned per-country like MANAGER/SALES/etc.
+ * Note — LOGISTICS came OUT of this list once the country-scoped logistics
+ * system (ShippingZone/ShippingMethod countryScopedPlugin) shipped. It can
+ * now be assigned per-country like MANAGER/SALES/etc, or left GLOBAL for an
+ * HQ-based logistics lead — see the ROLE_DEFINITIONS.LOGISTICS comment.
  */
 export const HQ_ONLY_SUBROLES = Object.entries(ROLE_DEFINITIONS)
   .filter(([, def]) => def.hqOnly)

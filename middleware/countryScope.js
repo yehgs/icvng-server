@@ -25,8 +25,9 @@ export function countryScope(req, res, next) {
     return next();
   }
 
-  // Item #9: HQ-only subRoles (IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR,
-  // LOGISTICS) are NEVER country-scoped — every account is managed from HQ.
+  // Item #9: HQ-only subRoles (IT, DIRECTOR, ACCOUNTANT, WAREHOUSE, EDITOR)
+  // are NEVER country-scoped — every account is managed from HQ. LOGISTICS
+  // is no longer in this list (country-scoped logistics system is live).
   // This is enforced at write-time (create/update user, login self-heal),
   // but is checked again here so an already-logged-in session with a stale
   // COUNTRY scope on the token doesn't get incorrectly data-filtered or
@@ -110,13 +111,16 @@ export function assertCountryAccess(countryCodePath = "body.countryCode") {
 /**
  * blockCountryScopedAdmins
  *
- * Hard-blocks COUNTRY-scoped admins from HQ-only modules:
- * Logistics, Pricing, Inventory config, System Settings, etc.
+ * Hard-blocks COUNTRY-scoped admins from HQ-only modules: Pricing,
+ * Inventory config, System Settings, etc. NOT used on the Logistics/
+ * shipping routes any more — those are country-scoped now via
+ * countryScopedPlugin on ShippingZone/ShippingMethod instead of a
+ * hard block.
  *
  * Apply at route-group level for those modules.
  *
  * Usage:
- *   logisticsRouter.use(auth, countryScope, blockCountryScopedAdmins);
+ *   pricingRouter.use(auth, countryScope, blockCountryScopedAdmins);
  */
 export function blockCountryScopedAdmins(req, res, next) {
   if (req.countryScope) {
