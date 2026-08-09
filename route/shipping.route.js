@@ -36,8 +36,15 @@ import {
 
 const shippingRouter = Router();
 
-// Logistics roles that can manage shipping
-const logisticsRoles = ["IT", "DIRECTOR", "LOGISTICS"];
+// Logistics roles that can manage shipping. MANAGER already holds
+// logistics.view/logistics.manage/shipping.view/shipping.manage in
+// config/roles.js's permission set (both HQ and country-scoped MANAGER),
+// but this hardcoded subRole allowlist never included it — so every
+// country-scoped MANAGER got a 403 on the whole Logistics/Tracking
+// module regardless of their actual permissions. Delete stays
+// IT/DIRECTOR/LOGISTICS only (a deliberate, narrower list — MANAGER can
+// view/manage but not permanently delete zones/methods).
+const logisticsRoles = ["IT", "DIRECTOR", "LOGISTICS", "MANAGER"];
 const deleteRoles = ["IT", "DIRECTOR", "LOGISTICS"];
 
 // ===== PUBLIC ROUTES =====

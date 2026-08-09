@@ -31,6 +31,20 @@ import "../models/notification.model.js";
 import "../models/finance-entry.model.js";
 import "../models/support-ticket.model.js";
 import "../models/rating.model.js";
+// HOTFIX (2026-08-09): added when the country-scoped LOGISTICS system
+// shipped — ShippingZone/ShippingMethod/ShippingTracking only got the
+// countryScopedPlugin applied then, so they were missing from this
+// script entirely. That's the actual root cause of live checkout
+// returning 0 zones/0 methods: a flat { countryCode: "NG" } filter
+// matched none of the 27 real, pre-existing zones because they were
+// never in this backfill's scope. (A code-level fallback in
+// core/countryScopedPlugin.js#withLegacyFallback already restores
+// checkout immediately without this script — but run this anyway so
+// every row has a real, explicit countryCode rather than relying on
+// that fallback indefinitely.)
+import "../models/shipping-zone.model.js";
+import "../models/shipping-method.model.js";
+import "../models/shipping-tracking.model.js";
 
 dotenv.config();
 
@@ -48,6 +62,9 @@ const MODEL_NAMES = [
   "Notification",
   "SupportTicket",
   "Rating",
+  "ShippingZone",
+  "ShippingMethod",
+  "ShippingTracking",
 ];
 
 async function backfill() {

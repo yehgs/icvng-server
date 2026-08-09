@@ -9,6 +9,7 @@ import { DEFAULT_COUNTRY, ALL_COUNTRY_CODES, getCountryByCode } from "../config/
 import { shippingNotificationEmail } from "../utils/countryEmailTemplates.js";
 import { sendCountryEmail } from "../config/emailService.js";
 import { sendOrderNotificationToTeam } from "../utils/emailTemplates.js";
+import { withLegacyFallback } from "../core/countryScopedPlugin.js";
 import mongoose from "mongoose";
 import csv from "csv-parser";
 import { Readable } from "stream";
@@ -71,6 +72,29 @@ function resolveTargetCountry(request) {
   return requested;
 }
 
+/**
+ * Country switcher for GLOBAL admins (IT/DIRECTOR) on LIST/read
+ * endpoints — lets them filter the Logistics/Tracking modules down to
+ * one specific country at a time (via ?countryCode=TG), or leave it off
+ * entirely to keep seeing every country's data at once (the existing,
+ * unfiltered GLOBAL-admin default). "IT and Director are only exposed
+ * to HQ logistics pages and data" — this is the fix: give them the same
+ * ability to view/manage one country's logistics in isolation that a
+ * country-scoped Logistics/Manager admin has for their own country,
+ * without permanently losing the all-countries view.
+ *
+ * A COUNTRY-scoped admin's ?countryCode is ALWAYS ignored — their data
+ * is already correctly locked to their own assignedCountry via the
+ * countryScopedPlugin/context, and letting them override it via a query
+ * param would defeat the whole point of country scoping.
+ */
+function applyGlobalCountryFilter(request, query = {}) {
+  if (request.countryScope) return query; // COUNTRY-scoped — plugin already handles it
+  const requested = (request.query?.countryCode || "").toUpperCase();
+  if (!requested || !ALL_COUNTRY_CODES.includes(requested)) return query;
+  return { ...query, countryCode: requested };
+}
+
 // Helper function to generate unique zone code
 
 async function generateZoneCode(name, countryCode) {
@@ -98,8 +122,10 @@ async function generateZoneCode(name, countryCode) {
   // country via body.countryCode has no countryScope in context — without
   // this, code uniqueness would incorrectly be checked across ALL
   // countries for that admin, blocking e.g. Togo and Nigeria from both
-  // having a zone coded "LOM".
-  while (await ShippingZoneModel.findOne({ code, countryCode })) {
+  // having a zone coded "LOM". withLegacyFallback also catches
+  // pre-existing zones that predate the countryCode field, so a new code
+  // can't collide with one of those either.
+  while (await ShippingZoneModel.findOne({ code, ...withLegacyFallback(countryCode) })) {
     code = `${baseCode}${counter}`;
     counter++;
 
@@ -127,8 +153,9 @@ const generateMethodCode = async (name, type, countryCode) => {
   // Explicit countryCode filter for the same reason as generateZoneCode
   // above — a GLOBAL admin creating this for a specific country has no
   // countryScope in context, so without this two countries couldn't both
-  // have a method coded e.g. "TS-ST".
-  while (await ShippingMethodModel.findOne({ code, countryCode })) {
+  // have a method coded e.g. "TS-ST". withLegacyFallback also catches
+  // pre-existing methods that predate the countryCode field.
+  while (await ShippingMethodModel.findOne({ code, ...withLegacyFallback(countryCode) })) {
     code = baseCode + counter.toString().padStart(2, "0");
     counter++;
   }
@@ -1906,8 +1933,7 @@ export const calculateCheckoutShipping = async (request, response) => {
     // Benin's "Plateau" department) could cross-match a customer's
     // address to the wrong country's zone and pricing entirely.
     console.log("Searching for matching zone...");
-    const zoneQuery = { isActive: true };
-    if (request.countryCode) zoneQuery.countryCode = request.countryCode;
+    const zoneQuery = { isActive: true, ...(request.countryCode ? withLegacyFallback(request.countryCode) : {}) };
     const zones = await ShippingZoneModel.find(zoneQuery);
     console.log(
       "[SHIP-DEBUG] Active zones to test against:",
@@ -2060,8 +2086,7 @@ export const calculateCheckoutShipping = async (request, response) => {
     // as the zone lookup above: without the countryCode filter, a
     // Nigeria-only table_shipping method could be offered (and priced in
     // NGN) to a Togo customer, or vice versa.
-    const methodQuery = { isActive: true };
-    if (request.countryCode) methodQuery.countryCode = request.countryCode;
+    const methodQuery = { isActive: true, ...(request.countryCode ? withLegacyFallback(request.countryCode) : {}) };
     const shippingMethods = await ShippingMethodModel.find(methodQuery).sort({ sortOrder: 1 });
 
     console.log(`Found ${shippingMethods.length} active shipping methods`);
@@ -2444,8 +2469,7 @@ export const calculateManualOrderShipping = async (request, response) => {
     // Find zone for state/LGA — scoped to req.countryCode (see
     // calculateCheckoutShipping for the same fix and reasoning: without
     // this, two countries sharing a state/region name could cross-match).
-    const zoneQuery = { isActive: true };
-    if (request.countryCode) zoneQuery.countryCode = request.countryCode;
+    const zoneQuery = { isActive: true, ...(request.countryCode ? withLegacyFallback(request.countryCode) : {}) };
     const zones = await ShippingZoneModel.find(zoneQuery);
     const candidateZones = [];
 
@@ -2531,8 +2555,7 @@ export const calculateManualOrderShipping = async (request, response) => {
 
     // Get shipping methods — scoped to req.countryCode, same reasoning
     // as calculateCheckoutShipping.
-    const methodQuery = { isActive: true };
-    if (request.countryCode) methodQuery.countryCode = request.countryCode;
+    const methodQuery = { isActive: true, ...(request.countryCode ? withLegacyFallback(request.countryCode) : {}) };
     const shippingMethods = await ShippingMethodModel.find(methodQuery).sort({ sortOrder: 1 });
 
     const availableMethods = [];
@@ -3183,8 +3206,13 @@ export const getTrackingStats = async (request, response) => {
     // .countDocuments() calls below get automatically) does NOT apply to
     // .aggregate(). Without this explicit $match, a COUNTRY-scoped
     // Logistics admin's stats would silently include every country's
-    // tracking data mixed together.
-    const countryMatch = request.countryScope ? { countryCode: request.countryScope } : {};
+    // tracking data mixed together. For a GLOBAL admin (IT/DIRECTOR),
+    // ?countryCode=TG lets them switch these stats to one country too
+    // (applyGlobalCountryFilter no-ops for COUNTRY-scoped admins, so
+    // request.countryScope always wins over the query param for them).
+    const countryMatch = request.countryScope
+      ? { countryCode: request.countryScope }
+      : applyGlobalCountryFilter(request, {});
 
     const stats = await ShippingTrackingModel.aggregate([
       { $match: countryMatch },
@@ -3278,7 +3306,7 @@ export const getPublicShippingMethods = async (request, response) => {
 
     const methods = await ShippingMethodModel.find({
       isActive: true,
-      ...(countryCode ? { countryCode } : {}),
+      ...(countryCode ? withLegacyFallback(countryCode) : {}),
     })
       .select("name code type description estimatedDelivery")
       .sort({ sortOrder: 1 });
@@ -3336,20 +3364,24 @@ export const getShippingMethods = async (request, response) => {
       query.isActive = isActive === "true";
     }
 
+    // GLOBAL admins (IT/DIRECTOR) can filter down to one country via
+    // ?countryCode=TG — see applyGlobalCountryFilter's own comment.
+    const scopedQuery = applyGlobalCountryFilter(request, query);
+
     // Convert to integers and set max limit
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(50, Math.max(1, parseInt(limit))); // Max 50 per page
     const skip = (pageNum - 1) * limitNum;
 
     const [methods, totalCount] = await Promise.all([
-      ShippingMethodModel.find(query)
+      ShippingMethodModel.find(scopedQuery)
         .populate("createdBy", "name email")
         .populate("updatedBy", "name email")
         .sort({ sortOrder: 1, name: 1 })
         .skip(skip)
         .limit(limitNum)
         .lean(),
-      ShippingMethodModel.countDocuments(query),
+      ShippingMethodModel.countDocuments(scopedQuery),
     ]);
 
     return response.json({
@@ -3403,20 +3435,24 @@ export const getAllTrackings = async (request, response) => {
       ];
     }
 
+    // GLOBAL admins (IT/DIRECTOR) can filter down to one country via
+    // ?countryCode=TG — see applyGlobalCountryFilter's own comment.
+    const scopedQuery = applyGlobalCountryFilter(request, query);
+
     // Convert to integers and set max limit
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(50, Math.max(1, parseInt(limit))); // Max 50 per page
     const skip = (pageNum - 1) * limitNum;
 
     const [trackings, totalCount] = await Promise.all([
-      ShippingTrackingModel.find(query)
+      ShippingTrackingModel.find(scopedQuery)
         .populate("orderId", "orderId payment_status totalAmt")
         .populate("shippingMethod", "name type")
         .populate("createdBy", "name email")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNum),
-      ShippingTrackingModel.countDocuments(query),
+      ShippingTrackingModel.countDocuments(scopedQuery),
     ]);
 
     return response.json({
@@ -3517,8 +3553,12 @@ export const getAllShippingZones = async (request, response) => {
       ];
     }
 
+    // GLOBAL admins (IT/DIRECTOR) can filter down to one country via
+    // ?countryCode=TG — see applyGlobalCountryFilter's own comment.
+    const scopedQuery = applyGlobalCountryFilter(request, query);
+
     // Fetch ALL zones without pagination
-    const zones = await ShippingZoneModel.find(query)
+    const zones = await ShippingZoneModel.find(scopedQuery)
       .populate("createdBy", "name email")
       .populate("updatedBy", "name email")
       .sort({ sortOrder: 1, name: 1 })
@@ -3578,20 +3618,25 @@ export const getShippingZones = async (request, response) => {
       query.isActive = isActive === "true";
     }
 
+    // GLOBAL admins (IT/DIRECTOR) can filter down to one country via
+    // ?countryCode=TG — a no-op for COUNTRY-scoped admins, who are
+    // already locked to their own country by the plugin.
+    const scopedQuery = applyGlobalCountryFilter(request, query);
+
     // Convert to integers and set max limit
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
     const [zones, totalCount] = await Promise.all([
-      ShippingZoneModel.find(query)
+      ShippingZoneModel.find(scopedQuery)
         .populate("createdBy", "name email")
         .populate("updatedBy", "name email")
         .sort({ sortOrder: 1, name: 1 })
         .skip(skip)
         .limit(limitNum)
         .lean(),
-      ShippingZoneModel.countDocuments(query),
+      ShippingZoneModel.countDocuments(scopedQuery),
     ]);
 
     // Calculate total LGAs covered for each zone
@@ -3645,6 +3690,13 @@ export const getShippingDashboardStats = async (request, response) => {
     const startOfDay = new Date(today.setHours(0, 0, 0, 0));
     const endOfDay = new Date(today.setHours(23, 59, 59, 999));
 
+    // For a GLOBAL admin (IT/DIRECTOR), ?countryCode=TG filters this
+    // dashboard to one country — see applyGlobalCountryFilter's comment.
+    // COUNTRY-scoped admins are already filtered by the plugin on every
+    // one of these .countDocuments() calls, so this only ever adds
+    // anything for GLOBAL admins.
+    const cf = (extra = {}) => applyGlobalCountryFilter(request, extra);
+
     const [
       readyForShipping,
       inTransit,
@@ -3657,30 +3709,30 @@ export const getShippingDashboardStats = async (request, response) => {
       totalMethods,
       activeMethods,
     ] = await Promise.all([
-      OrderModel.countDocuments({
+      OrderModel.countDocuments(cf({
         payment_status: "PAID",
         order_status: { $in: ["CONFIRMED", "PROCESSING"] },
-      }),
-      ShippingTrackingModel.countDocuments({
+      })),
+      ShippingTrackingModel.countDocuments(cf({
         status: { $in: ["PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY"] },
-      }),
-      ShippingTrackingModel.countDocuments({
+      })),
+      ShippingTrackingModel.countDocuments(cf({
         status: "DELIVERED",
-      }),
-      ShippingTrackingModel.countDocuments({
+      })),
+      ShippingTrackingModel.countDocuments(cf({
         estimatedDelivery: { $lt: new Date() },
         status: { $nin: ["DELIVERED", "RETURNED", "LOST", "CANCELLED"] },
-      }),
-      ShippingTrackingModel.countDocuments({
+      })),
+      ShippingTrackingModel.countDocuments(cf({
         createdAt: { $gte: startOfDay, $lte: endOfDay },
-      }),
-      ShippingTrackingModel.countDocuments({
+      })),
+      ShippingTrackingModel.countDocuments(cf({
         actualDelivery: { $gte: startOfDay, $lte: endOfDay },
-      }),
-      ShippingZoneModel.countDocuments({}), // Total zones
-      ShippingZoneModel.countDocuments({ isActive: true }), // Active zones only
-      ShippingMethodModel.countDocuments({}), // Total methods
-      ShippingMethodModel.countDocuments({ isActive: true }), // Active methods only
+      })),
+      ShippingZoneModel.countDocuments(cf({})), // Total zones
+      ShippingZoneModel.countDocuments(cf({ isActive: true })), // Active zones only
+      ShippingMethodModel.countDocuments(cf({})), // Total methods
+      ShippingMethodModel.countDocuments(cf({ isActive: true })), // Active methods only
     ]);
 
     console.log("📊 Dashboard Stats:", {

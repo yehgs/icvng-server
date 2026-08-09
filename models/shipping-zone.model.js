@@ -8,7 +8,7 @@
 // every other country's Logistics admin. GLOBAL admins (IT/DIRECTOR) see
 // and manage zones across every country.
 import mongoose from "mongoose";
-import countryScopedPlugin from "../core/countryScopedPlugin.js";
+import countryScopedPlugin, { withLegacyFallback } from "../core/countryScopedPlugin.js";
 
 const shippingZoneSchema = new mongoose.Schema(
   {
@@ -117,8 +117,12 @@ shippingZoneSchema.statics.findZoneByCity = async function (
   lga = null,
   countryCode = null,
 ) {
-  const query = { isActive: true };
-  if (countryCode) query.countryCode = countryCode;
+  // HOTFIX (2026-08-09): withLegacyFallback matches both the given
+  // countryCode AND documents that predate the countryCode field
+  // entirely (a flat { countryCode } filter matched zero pre-existing
+  // zones and broke checkout completely — see
+  // core/countryScopedPlugin.js's own comment for the full story).
+  const query = { isActive: true, ...(countryCode ? withLegacyFallback(countryCode) : {}) };
   const zones = await this.find(query);
 
   for (const zone of zones) {

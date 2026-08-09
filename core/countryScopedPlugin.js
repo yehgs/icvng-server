@@ -26,6 +26,29 @@ import { ALL_COUNTRY_CODES, DEFAULT_COUNTRY } from "../config/countries/index.js
 const READ_HOOKS = ["find", "findOne", "countDocuments", "count", "findOneAndUpdate", "findOneAndDelete"];
 const WRITE_UPDATE_HOOKS = ["updateOne", "updateMany", "deleteOne", "deleteMany"];
 
+/**
+ * HOTFIX (2026-08-09): every document created BEFORE this plugin was
+ * applied to a given model has NO countryCode field stored at all —
+ * Mongoose schema defaults only apply to documents created going
+ * forward, they are never retroactively written to existing rows. A
+ * flat `{ countryCode: "NG" }` filter therefore matches ZERO of those
+ * pre-existing documents (broke checkout entirely: 27 real shipping
+ * zones existed, but `{countryCode:"NG"}` matched none of them since
+ * they were created before countryCode existed on the schema).
+ *
+ * This treats "missing the field entirely" as compatible with whatever
+ * scope is being filtered for — i.e. legacy, not-yet-backfilled rows are
+ * visible/writable under ANY country scope until
+ * scripts/backfillCountryCode.js is run to stamp them for real. Once
+ * that script has run, every row has an explicit countryCode and the
+ * `$exists: false` branch simply never matches anything again — this is
+ * a safe, permanent no-op after backfill, not just a temporary patch
+ * that needs removing later.
+ */
+export function withLegacyFallback(scope) {
+  return { $or: [{ countryCode: scope }, { countryCode: { $exists: false } }] };
+}
+
 export function countryScopedPlugin(schema, opts = {}) {
   const required = opts.required !== false; // default required after backfill
 
@@ -60,7 +83,8 @@ export function countryScopedPlugin(schema, opts = {}) {
     return ctx.countryScope;
   }
 
-  // 3a. Read/query hooks — inject countryCode into the filter.
+  // 3a. Read/query hooks — inject countryCode into the filter (with the
+  // legacy-fallback above, so pre-backfill rows stay visible).
   for (const hook of READ_HOOKS) {
     schema.pre(hook, function (next) {
       const scope = scopeFilter();
@@ -69,7 +93,8 @@ export function countryScopedPlugin(schema, opts = {}) {
         // Respect an explicit countryCode already on the query only if it
         // matches the scope; otherwise force the scope (prevents override).
         if (!q.countryCode || q.countryCode !== scope) {
-          this.setQuery({ ...q, countryCode: scope });
+          const { countryCode, ...rest } = q;
+          this.setQuery({ ...rest, ...withLegacyFallback(scope) });
         }
       }
       next();
@@ -77,27 +102,28 @@ export function countryScopedPlugin(schema, opts = {}) {
   }
 
   // 3b. Update/delete hooks — same injection so scoped admins can't mutate
-  // another country's rows.
+  // another country's rows (also legacy-fallback, so a scoped admin can
+  // still edit/delete a pre-backfill row that's rightfully theirs).
   for (const hook of WRITE_UPDATE_HOOKS) {
     schema.pre(hook, function (next) {
       const scope = scopeFilter();
       if (scope) {
         const q = this.getQuery();
         if (!q.countryCode || q.countryCode !== scope) {
-          this.setQuery({ ...q, countryCode: scope });
+          const { countryCode, ...rest } = q;
+          this.setQuery({ ...rest, ...withLegacyFallback(scope) });
         }
       }
       next();
     });
   }
 
-  // 3c. Aggregate hook — prepend a $match on countryCode.
+  // 3c. Aggregate hook — prepend a $match on countryCode (legacy-fallback).
   schema.pre("aggregate", function (next) {
     const scope = scopeFilter();
     if (scope) {
       const pipeline = this.pipeline();
-      // Only prepend if the first stage isn't already an equivalent match.
-      pipeline.unshift({ $match: { countryCode: scope } });
+      pipeline.unshift({ $match: withLegacyFallback(scope) });
     }
     next();
   });
