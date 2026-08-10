@@ -9,6 +9,8 @@ import UserModel from "../models/user.model.js";
 import sendEmail from "../config/sendEmail.js";
 import { createNotificationInternal } from "./notification.controller.js";
 import { buildCountryFilter } from "../middleware/countryScope.js";
+import csv from "csv-parser";
+import { Readable } from "stream";
 
 const CRM_ROLES = [
   "SALES",
@@ -693,6 +695,209 @@ export async function getCrmStatsController(req, res) {
         sourceBreakdown,
         userMetrics, // null for roles without access
       },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+// ── CSV import / export / template ──────────────────────────────────────────
+//
+// "Update the CRM to allow only IT and the Manager to manage and to be
+// exposed to all countries' CRM but manager and other roles are
+// country-scoped" — already the case for reads/writes (buildCountryFilter,
+// assertLeadCountryAccess above: GLOBAL admins — IT/DIRECTOR, and an
+// HQ-scoped Manager — see/manage every country; a COUNTRY-scoped Manager or
+// any other CRM role sees/manages only their own). Export follows the exact
+// same rule via the same buildCountryFilter helper: GLOBAL admins export
+// everything, everyone else's export is silently scoped to their own
+// country — same as every other list endpoint in this controller, so
+// there's nothing a scoped export could leak that a scoped list view
+// doesn't already correctly hide.
+
+function csvField(value) {
+  const str = value === null || value === undefined ? "" : String(value);
+  return `"${str.replace(/"/g, '""')}"`;
+}
+
+function buildCsv(headers, rows) {
+  const lines = [headers, ...rows].map((row) => row.map(csvField).join(","));
+  return "\uFEFF" + lines.join("\r\n"); // BOM for Excel-friendly UTF-8
+}
+
+// Column order shared by the template, export, and import — keeping one
+// source of truth means the downloaded template always matches exactly
+// what import expects and export produces.
+const LEAD_CSV_COLUMNS = [
+  "Company Name", "Contact Name", "Job Title", "Email", "Phone", "Website",
+  "Address", "City", "Country", "Industry", "Company Size",
+  "LinkedIn URL", "Facebook URL", "Instagram URL", "Twitter URL",
+  "Stage", "Source", "Deal Value", "Currency", "Probability %",
+  "Expected Close Date",
+];
+
+/**
+ * GET /admin/crm/leads/template/csv — downloadable CSV template with the
+ * exact headers bulkImportLeadsCsvController expects, plus one example row
+ * showing valid Stage/Source values (both are closed enums on the model —
+ * anything else gets rejected/defaulted on import) and date format.
+ */
+export async function downloadLeadsTemplateCSV(req, res) {
+  try {
+    if (!crmAccess(req.user, res)) return;
+
+    const exampleRow = [
+      "Acme Coffee Roasters", "Jane Doe", "Procurement Manager",
+      "jane@acmecoffee.example", "+234 800 000 0000", "https://acmecoffee.example",
+      "12 Example Street", "Lagos", "Nigeria", "Food & Beverage", "11-50",
+      "", "", "", "",
+      "New", "Manual Entry", "500000", "NGN", "20",
+      "2026-12-31",
+    ];
+    const notesRow = [
+      `Stage must be one of: ${CRM_STAGES.join(" | ")}`,
+      `Source must be one of: ${LEAD_SOURCES.join(" | ")}`,
+      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+    ];
+
+    const csvContent = buildCsv(LEAD_CSV_COLUMNS, [exampleRow, notesRow]);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="crm_leads_import_template.csv"');
+    return res.send(csvContent);
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+/**
+ * GET /admin/crm/leads/export/csv — country-scoped per the rule above.
+ * Optional query filters (stage, source, search) mirror getLeadsController
+ * so "export what I'm currently looking at" is possible from the same
+ * filter state the list view already has.
+ */
+export async function exportLeadsCSV(req, res) {
+  try {
+    if (!crmAccess(req.user, res)) return;
+
+    const { stage, source, search } = req.query;
+    const query = { isArchived: false, ...buildCountryFilter(req) };
+    if (stage) query.stage = stage;
+    if (source) query.source = source;
+    if (search) {
+      query.$or = [
+        { companyName: { $regex: search, $options: "i" } },
+        { contactName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const leads = await CrmLeadModel.find(query).sort({ createdAt: -1 });
+
+    const rows = leads.map((l) => [
+      l.companyName, l.contactName, l.jobTitle, l.email, l.phone, l.website,
+      l.address, l.city, l.country, l.industry, l.companySize,
+      l.linkedinUrl, l.facebookUrl, l.instagramUrl, l.twitterUrl,
+      l.stage, l.source, l.dealValue, l.currency, l.probability,
+      l.expectedCloseDate ? l.expectedCloseDate.toISOString().split("T")[0] : "",
+    ]);
+
+    const csvContent = buildCsv(LEAD_CSV_COLUMNS, rows);
+    const filename = `crm_leads_${new Date().toISOString().split("T")[0]}.csv`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(csvContent);
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+}
+
+/**
+ * POST /admin/crm/leads/import/csv — body: { csvData }. Country-scoped the
+ * same way createLeadController is: a COUNTRY-scoped admin's import is
+ * always stamped to their own country regardless of anything in the file;
+ * a GLOBAL admin (IT/DIRECTOR/HQ Manager) can target a specific country via
+ * body.countryCode, defaulting to NG if omitted.
+ */
+export async function bulkImportLeadsCsvController(req, res) {
+  try {
+    if (!crmAccess(req.user, res)) return;
+
+    const { csvData, countryCode: requestedCountryCode } = req.body;
+    if (!csvData) {
+      return res.status(400).json({ success: false, message: "CSV data is required" });
+    }
+
+    const ownerCountryCode =
+      req.countryScope || (requestedCountryCode || "").toUpperCase() || "NG";
+
+    const rows = [];
+    const stream = Readable.from([csvData]);
+    await new Promise((resolve, reject) => {
+      stream.pipe(csv()).on("data", (row) => rows.push(row)).on("end", resolve).on("error", reject);
+    });
+
+    const results = { created: [], failed: [], totalProcessed: rows.length };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // header is row 1
+      const companyName = (row["Company Name"] || "").trim();
+      const contactName = (row["Contact Name"] || "").trim();
+
+      if (!companyName && !contactName) {
+        results.failed.push({ row: rowNum, reason: "Company Name or Contact Name is required" });
+        continue;
+      }
+
+      const stageRaw = (row["Stage"] || "New").trim();
+      const sourceRaw = (row["Source"] || "Manual Entry").trim();
+
+      try {
+        const lead = new CrmLeadModel({
+          companyName,
+          contactName,
+          jobTitle: row["Job Title"] || "",
+          email: row["Email"] || "",
+          phone: row["Phone"] || "",
+          website: row["Website"] || "",
+          address: row["Address"] || "",
+          city: row["City"] || "",
+          country: row["Country"] || "Nigeria",
+          industry: LEAD_INDUSTRIES.includes(row["Industry"]) ? row["Industry"] : "Other",
+          companySize: row["Company Size"] || "",
+          linkedinUrl: row["LinkedIn URL"] || "",
+          facebookUrl: row["Facebook URL"] || "",
+          instagramUrl: row["Instagram URL"] || "",
+          twitterUrl: row["Twitter URL"] || "",
+          stage: CRM_STAGES.includes(stageRaw) ? stageRaw : "New",
+          source: LEAD_SOURCES.includes(sourceRaw) ? sourceRaw : "Manual Entry",
+          dealValue: Number(row["Deal Value"]) || 0,
+          currency: row["Currency"] || "NGN",
+          probability: Math.min(100, Math.max(0, Number(row["Probability %"]) || 0)),
+          expectedCloseDate: row["Expected Close Date"] ? new Date(row["Expected Close Date"]) : null,
+          countryCode: ownerCountryCode,
+          createdBy: req.user._id,
+          createdByName: req.user.name,
+          activities: [
+            {
+              type: "system",
+              content: `Imported via CSV by ${req.user.name}`,
+              performedBy: req.user._id,
+              performedByName: req.user.name,
+            },
+          ],
+        });
+        await lead.save();
+        results.created.push({ row: rowNum, company: lead.companyName || lead.contactName });
+      } catch (err) {
+        results.failed.push({ row: rowNum, reason: err.message });
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `${results.created.length} of ${results.totalProcessed} lead(s) imported`,
+      data: results,
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });

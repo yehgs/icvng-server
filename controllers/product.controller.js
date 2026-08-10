@@ -1076,32 +1076,29 @@ export const updateProductDetails = async (request, response) => {
     const userId = request.user._id;
     let updateData = { ...request.body, updatedBy: userId };
 
-    // HQ Manager (GLOBAL scope) may edit ONLY partnerStock + pricing through
-    // this product modal endpoint — they're not physically at the
-    // warehouse, so warehouseStock (offline/damaged/expired/etc.) stays
-    // with WAREHOUSE/IT/DIRECTOR. Every other submitted field (name,
-    // description, images, category, etc.) is discarded regardless of what
-    // the request body contains. Foreign Manager / any COUNTRY-scoped role
-    // gets no write access here at all — they have no business with stock,
-    // and HQ-set pricing isn't theirs to change either.
-    const HQ_MANAGER_PRICE_FIELDS = [
-      "price", "salePrice", "price3weeksDelivery", "price5weeksDelivery",
-      "btcPrice", "btbPrice", "discount",
-    ];
+    // MANAGER holds full products.edit in config/roles.js (both HQ and
+    // country-scoped), so they should be able to genuinely edit general
+    // product content (name, description, images, category, attributes,
+    // tags, etc.) — same as any other products.edit holder. This replaces
+    // the old behavior, which for an HQ Manager silently discarded EVERY
+    // field except partnerStock/price (so editing a product's name/
+    // description reported "updated successfully" while actually changing
+    // nothing), and for a foreign Manager returned a flat 403 blocking
+    // even unrelated content edits entirely.
+    //
+    // Pricing is NOT handled here — see the PRICING PERMISSION block
+    // further below (canSetPricing/isPricingOwnerRole), which already
+    // correctly distinguishes HQ vs. foreign Manager AND the
+    // partner-product exception (pricing is supplier-driven and any role
+    // may set it there). Duplicating that logic here would only risk
+    // drifting out of sync with it.
     const userSubRole = request.user.subRole;
     if (userSubRole === "MANAGER") {
-      if (request.countryScope) {
-        // Foreign Manager — no stock or pricing edits via this endpoint.
-        return response.status(403).json({
-          message: "Managers outside HQ cannot edit product stock or pricing.",
-          error: true,
-          success: false,
-        });
-      }
-      updateData = { partnerStock: request.body.partnerStock, updatedBy: userId };
-      for (const field of HQ_MANAGER_PRICE_FIELDS) {
-        if (request.body[field] !== undefined) updateData[field] = request.body[field];
-      }
+      // Not physically at the warehouse — offline/damaged/expired stock
+      // custody stays with WAREHOUSE/IT/DIRECTOR, for HQ and foreign
+      // Managers alike. (partnerStock is separately restricted to
+      // NG/GLOBAL admins by canManagePartnerStock below.)
+      delete updateData.warehouseStock;
     }
 
     // Sanitize ObjectId reference fields — Mongoose throws BSONError if they are ""

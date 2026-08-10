@@ -16,6 +16,9 @@ import {
   addActivityController,
   bulkImportLeadsController,
   getCrmStatsController,
+  downloadLeadsTemplateCSV,
+  exportLeadsCSV,
+  bulkImportLeadsCsvController,
 } from "../controllers/crm-lead.controller.js";
 
 const crmRouter = Router();
@@ -26,9 +29,12 @@ crmRouter.use(countryScope); // populates req.countryScope — required for lead
 crmRouter.get("/meta", getCrmMetaController);
 crmRouter.get("/stats", getCrmStatsController);
 crmRouter.get("/leads", getLeadsController);
+crmRouter.get("/leads/template/csv", downloadLeadsTemplateCSV);
+crmRouter.get("/leads/export/csv", exportLeadsCSV);
 crmRouter.get("/delete-requests", getDeleteRequestsController);
 crmRouter.post("/leads", createLeadController);
 crmRouter.post("/leads/bulk-import", bulkImportLeadsController);
+crmRouter.post("/leads/import/csv", bulkImportLeadsCsvController);
 crmRouter.put("/leads/:id", updateLeadController);
 crmRouter.put("/leads/:id/stage", moveLeadStageController);
 crmRouter.delete("/leads/:id", deleteLeadController); // body: { reason } for non-IT/Director
