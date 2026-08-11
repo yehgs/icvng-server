@@ -3283,6 +3283,42 @@ export const getTrackingStats = async (request, response) => {
   }
 };
 
+/**
+ * GET /shipping/geo-divisions?countryCode=TG — returns the
+ * state/region + LGA/prefecture/commune divisions for one country (see
+ * utils/countryGeoData.js). Admin-facing: this is what the zone-creation
+ * modal should be calling instead of hardcoding Nigeria's states/LGAs on
+ * the client — that's exactly the bug where creating a Togo zone still
+ * showed Nigerian states like "North East (6 states)" regardless of the
+ * zone's actual country.
+ */
+export const getGeoDivisions = async (request, response) => {
+  try {
+    const countryCode = (request.query.countryCode || DEFAULT_COUNTRY).toUpperCase();
+    if (!ALL_COUNTRY_CODES.includes(countryCode)) {
+      return response.status(400).json({
+        message: `Invalid countryCode: ${countryCode}`,
+        error: true,
+        success: false,
+      });
+    }
+    const divisions = getDivisionsForCountry(countryCode);
+    return response.json({
+      message: "Divisions retrieved successfully",
+      data: divisions,
+      countryCode,
+      error: false,
+      success: true,
+    });
+  } catch (error) {
+    return response.status(500).json({
+      message: error.message || "Failed to fetch divisions",
+      error: true,
+      success: false,
+    });
+  }
+};
+
 export const getPublicShippingMethods = async (request, response) => {
   try {
     const { city, state } = request.query;

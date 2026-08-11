@@ -17,6 +17,7 @@ import {
   calculateCheckoutShipping,
   calculateManualOrderShipping, // NEW: Calculate shipping for manual orders
   getPublicShippingMethods,
+  getGeoDivisions,
   createShipment,
   updateTracking,
   getTrackingByNumber,
@@ -71,6 +72,18 @@ shippingRouter.get(
   countryScope,
   requireRole(logisticsRoles),
   getShippingDashboardStats
+);
+
+// Geo divisions (state/region + LGA/prefecture/commune) for one country —
+// used by the zone-creation/edit modal to show the RIGHT country's states
+// instead of hardcoding Nigeria's. Any logistics-accessible admin can call
+// this for any country — it's reference geo data, not a data leak.
+shippingRouter.get(
+  "/geo-divisions",
+  auth,
+  countryScope,
+  requireRole(logisticsRoles),
+  getGeoDivisions
 );
 
 // Shipping Zones
