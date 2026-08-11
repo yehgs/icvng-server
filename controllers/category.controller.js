@@ -8,6 +8,14 @@ export const AddCategoryController = async (request, response) => {
   try {
     const { name, image, slug } = request.body;
 
+    if (request.user?.subRole === "GRAPHICS") {
+      return response.status(403).json({
+        message: "Graphics/Designer accounts cannot create categories — image updates to existing categories only.",
+        error: true,
+        success: false,
+      });
+    }
+
     if (!name) {
       return response.status(400).json({
         message: "Category name is required",
@@ -120,6 +128,13 @@ export const updateCategoryController = async (request, response) => {
       ...(slug && { slug: generateSlug(slug) }),
     };
 
+    // GRAPHICS: image-only (see brand.controller.js's
+    // updateBrandController for the same pattern).
+    if (request.user?.subRole === "GRAPHICS") {
+      if (updateData.name) delete updateData.name;
+      if (updateData.slug) delete updateData.slug;
+    }
+
     // Check for existing slug to ensure uniqueness if a new slug is being set
     if (updateData.slug) {
       const existingCategory = await CategoryModel.findOne({
@@ -168,6 +183,14 @@ export const updateCategoryController = async (request, response) => {
 export const deleteCategoryController = async (request, response) => {
   try {
     const { _id } = request.body;
+
+    if (request.user?.subRole === "GRAPHICS") {
+      return response.status(403).json({
+        message: "Graphics/Designer accounts cannot delete categories.",
+        error: true,
+        success: false,
+      });
+    }
 
     const checkSubCategory = await SubCategoryModel.find({
       category: {

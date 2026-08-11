@@ -7,6 +7,16 @@ export const AddBrandController = async (request, response) => {
   try {
     const { name, image, slug, compatibleSystem } = request.body;
 
+    // GRAPHICS is image updates to EXISTING records only — no creating
+    // new brands (needs a name/slug, which they can't set).
+    if (request.user?.subRole === "GRAPHICS") {
+      return response.status(403).json({
+        message: "Graphics/Designer accounts cannot create brands — image updates to existing brands only.",
+        error: true,
+        success: false,
+      });
+    }
+
     if (!name || !image) {
       return response.status(400).json({
         message: "Enter required fields",
@@ -109,6 +119,15 @@ export const updateBrandController = async (request, response) => {
       ...(compatibleSystem !== undefined && { compatibleSystem }),
     };
 
+    // GRAPHICS holds catalog.manage for image-only updates — strip
+    // everything except image (same pattern as product.controller.js's
+    // updateProductDetails).
+    if (request.user?.subRole === "GRAPHICS") {
+      if (updateData.name) delete updateData.name;
+      if (updateData.slug) delete updateData.slug;
+      if (updateData.compatibleSystem !== undefined) delete updateData.compatibleSystem;
+    }
+
     if (updateData.slug) {
       const existingBrand = await BrandModel.findOne({
         slug: updateData.slug,
@@ -144,6 +163,14 @@ export const updateBrandController = async (request, response) => {
 export const deleteBrandController = async (request, response) => {
   try {
     const { _id } = request.body;
+
+    if (request.user?.subRole === "GRAPHICS") {
+      return response.status(403).json({
+        message: "Graphics/Designer accounts cannot delete brands.",
+        error: true,
+        success: false,
+      });
+    }
 
     const checkProduct = await ProductModel.find({
       brand: {

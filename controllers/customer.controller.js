@@ -221,6 +221,7 @@ export const updateCustomerController = async (request, response) => {
       'MANAGER',
       'SALES',
       'ACCOUNTANT',
+      'GRAPHICS', // image-only — see the field-stripping below
     ];
     if (user.role !== 'ADMIN' || !allowedRoles.includes(user.subRole)) {
       return response.status(403).json({
@@ -241,7 +242,7 @@ export const updateCustomerController = async (request, response) => {
     }
 
     // Permission check
-    if (['DIRECTOR', 'IT', 'MANAGER'].includes(user.subRole)) {
+    if (['DIRECTOR', 'IT', 'MANAGER', 'GRAPHICS'].includes(user.subRole)) {
       // Can update any customer
     } else {
       // Can only update customers they created or are assigned to
@@ -260,6 +261,14 @@ export const updateCustomerController = async (request, response) => {
     }
 
     const updateData = request.body;
+
+    // GRAPHICS: image-only, regardless of what else is in the body — same
+    // pattern as product/brand/category/subCategory controllers.
+    if (user.subRole === 'GRAPHICS') {
+      const image = updateData.image;
+      Object.keys(updateData).forEach((key) => delete updateData[key]);
+      if (image !== undefined) updateData.image = image;
+    }
 
     // Remove fields that shouldn't be updated by regular users
     if (!['DIRECTOR', 'IT', 'MANAGER'].includes(user.subRole)) {

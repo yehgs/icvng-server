@@ -6,6 +6,14 @@ export const AddSubCategoryController = async (request, response) => {
   try {
     const { name, image, slug, category } = request.body;
 
+    if (request.user?.subRole === "GRAPHICS") {
+      return response.status(403).json({
+        message: "Graphics/Designer accounts cannot create subcategories — image updates to existing subcategories only.",
+        error: true,
+        success: false,
+      });
+    }
+
     if (!name && !image && !category[0]) {
       return response.status(400).json({
         message: "Provide name, image, category",
@@ -103,7 +111,11 @@ export const updateSubCategoryController = async (request, response) => {
       ...(category && { category }),
     };
 
-    if (name) {
+    // GRAPHICS: image-only.
+    if (request.user?.subRole === "GRAPHICS") {
+      if (updateData.name) delete updateData.name;
+      if (updateData.category) delete updateData.category;
+    } else if (name) {
       updateData.slug = generateSlug(name);
     }
 
@@ -156,6 +168,15 @@ export const updateSubCategoryController = async (request, response) => {
 export const deleteSubCategoryController = async (request, response) => {
   try {
     const { _id } = request.body;
+
+    if (request.user?.subRole === "GRAPHICS") {
+      return response.status(403).json({
+        message: "Graphics/Designer accounts cannot delete subcategories.",
+        error: true,
+        success: false,
+      });
+    }
+
     console.log("Id", _id);
     const deleteSub = await SubCategoryModel.findByIdAndDelete(_id);
 
