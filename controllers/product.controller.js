@@ -1109,11 +1109,15 @@ export const updateProductDetails = async (request, response) => {
     // may set it there). Duplicating that logic here would only risk
     // drifting out of sync with it.
     const userSubRole = request.user.subRole;
-    if (userSubRole === "MANAGER") {
-      // Not physically at the warehouse — offline/damaged/expired stock
-      // custody stays with WAREHOUSE/IT/DIRECTOR, for HQ and foreign
-      // Managers alike. (partnerStock is separately restricted to
-      // NG/GLOBAL admins by canManagePartnerStock below.)
+    if (userSubRole === "MANAGER" && request.countryScope) {
+      // "Let HQ Manager do all that Editor can do" — Editor has zero
+      // restrictions anywhere in this file, including warehouseStock, so
+      // an HQ (GLOBAL-scope) Manager now matches that exactly. This
+      // restriction stays for a COUNTRY-scoped ("foreign") Manager only —
+      // they're genuinely not physically at the (HQ, Nigeria) warehouse,
+      // so offline/damaged/expired stock custody stays with
+      // WAREHOUSE/IT/DIRECTOR/HQ-Manager. (partnerStock is separately
+      // restricted to NG/GLOBAL admins by canManagePartnerStock below.)
       delete updateData.warehouseStock;
     }
 
