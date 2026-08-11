@@ -63,6 +63,11 @@ const sitePageSchema = new mongoose.Schema(
     seo: {
       title: { type: String, default: "" },
       description: { type: String, default: "" },
+      // Only meaningfully used by the "site-index" slug (the whole site's
+      // default <head> tags — see client/src/components/SiteMeta.jsx) but
+      // available on any page for consistency.
+      keywords: { type: String, default: "" },
+      ogImage: { type: String, default: "" },
     },
 
     isPublished: { type: Boolean, default: true },

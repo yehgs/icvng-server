@@ -185,11 +185,11 @@ export const ROLE_DEFINITIONS = {
 
   GRAPHICS: {
     name: "Graphics / Designer",
-    description: "Visual content — banners, sliders, and marketing imagery.",
+    description: "Visual content only — product images, banners, sliders, and marketing imagery. No access to any other admin module (pricing, stock, orders, CRM, etc.) — see GRAPHICS_IMAGE_ONLY_ROLES in controllers/product.controller.js for the image-only enforcement on products specifically.",
     permissions: [
-      "dashboard.view",
-      "content.view", "content.manage",
-      "blog.view",
+      "dashboard.view", // their OWN custom dashboard — see admin/src/pages/graphics/GraphicsDashboard.jsx
+      "products.view", "products.edit", // edit restricted server-side to the image field only
+      "content.view", "content.manage", // banners/sliders/FOMO/home-content — all image-bearing
       "notifications.view",
     ],
     isSystem: true,

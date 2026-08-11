@@ -47,31 +47,31 @@ blogRouter.get('/public/posts/:id/related', getRelatedBlogPostsController);
 blogRouter.post(
   '/admin/categories',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   createBlogCategoryController
 );
 blogRouter.get(
   '/admin/categories',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   getBlogCategoriesController
 );
 blogRouter.get(
   '/admin/categories/:id',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   getBlogCategoryController
 );
 blogRouter.put(
   '/admin/categories/:id',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   updateBlogCategoryController
 );
 blogRouter.delete(
   '/admin/categories/:id',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   deleteBlogCategoryController
 );
 
@@ -79,31 +79,31 @@ blogRouter.delete(
 blogRouter.post(
   '/admin/tags',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   createBlogTagController
 );
 blogRouter.get(
   '/admin/tags',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   getBlogTagsController
 );
 blogRouter.get(
   '/admin/tags/:id',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   getBlogTagController
 );
 blogRouter.put(
   '/admin/tags/:id',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   updateBlogTagController
 );
 blogRouter.delete(
   '/admin/tags/:id',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   deleteBlogTagController
 );
 
@@ -114,42 +114,42 @@ blogRouter.delete(
 blogRouter.post(
   '/admin/posts',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   countryScope,
   createBlogPostController
 );
 blogRouter.get(
   '/admin/posts',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   countryScope,
   getBlogPostsController
 );
 blogRouter.get(
   '/admin/posts/:id',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   countryScope,
   getBlogPostController
 );
 blogRouter.put(
   '/admin/posts/:id',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   countryScope,
   updateBlogPostController
 );
 blogRouter.patch(
   '/admin/posts/:id/toggle-featured',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   countryScope,
   toggleFeaturedBlogPostController
 );
 blogRouter.delete(
   '/admin/posts/:id',
   auth,
-  blogAuth(['EDITOR', 'IT', 'DIRECTOR']),
+  blogAuth(['EDITOR', 'IT', 'DIRECTOR', 'MANAGER']),
   countryScope,
   deleteBlogPostController
 );

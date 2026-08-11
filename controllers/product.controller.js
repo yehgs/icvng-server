@@ -269,6 +269,22 @@ export const createProductController = async (request, response) => {
       slug,
     } = request.body;
 
+    // GRAPHICS holds products.edit for image-only updates to EXISTING
+    // products (see the GRAPHICS block in updateProductDetails below) —
+    // they have no legitimate reason to create a brand-new product (which
+    // needs name/pricing/category/etc., none of which they can set). The
+    // admin UI already never shows them a "create" path (ProductForm.jsx
+    // renders a minimal image-only view for GRAPHICS), but that's a UI
+    // convenience, not a security boundary — this blocks the endpoint
+    // itself regardless of how it's called.
+    if (request.user?.subRole === "GRAPHICS") {
+      return response.status(403).json({
+        message: "Graphics/Designer accounts cannot create products — image updates to existing products only.",
+        error: true,
+        success: false,
+      });
+    }
+
     // Validate required fields
     if (!name || !image[0] || !category || !shortDescription) {
       return response.status(400).json({
@@ -1101,6 +1117,16 @@ export const updateProductDetails = async (request, response) => {
       delete updateData.warehouseStock;
     }
 
+    // GRAPHICS holds products.edit (see config/roles.js) but is explicitly
+    // "visual content only — no access to any other admin module" —
+    // strip every field except the image array, same graceful
+    // strip-just-the-restricted-fields pattern as the MANAGER block above
+    // (never a flat 403 that would also block the ONE thing they're
+    // supposed to be able to do).
+    if (userSubRole === "GRAPHICS") {
+      updateData = { image: updateData.image, updatedBy: userId };
+    }
+
     // Sanitize ObjectId reference fields — Mongoose throws BSONError if they are ""
     // Convert empty strings to null for all ref fields so Mongoose clears them cleanly
     const objectIdFields = [
@@ -1438,6 +1464,16 @@ export const deleteProductDetails = async (request, response) => {
     if (!_id) {
       return response.status(400).json({
         message: "provide _id ",
+        error: true,
+        success: false,
+      });
+    }
+
+    // Same reasoning as createProductController — GRAPHICS is image
+    // updates to existing products only, never deletion.
+    if (request.user?.subRole === "GRAPHICS") {
+      return response.status(403).json({
+        message: "Graphics/Designer accounts cannot delete products.",
         error: true,
         success: false,
       });

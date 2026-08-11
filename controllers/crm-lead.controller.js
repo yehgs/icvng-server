@@ -779,6 +779,21 @@ export async function exportLeadsCSV(req, res) {
   try {
     if (!crmAccess(req.user, res)) return;
 
+    // "Make HQ Manager not able to export leads in the CRM" — a
+    // GLOBAL-scope Manager otherwise gets the same unrestricted,
+    // all-countries export as IT/DIRECTOR (see buildCountryFilter below
+    // returning {} for any GLOBAL admin); export specifically is now
+    // withheld from Manager whenever they're GLOBAL-scoped. A
+    // COUNTRY-scoped ("foreign") Manager is unaffected — their export
+    // still works, already correctly limited to their own country by
+    // buildCountryFilter.
+    if (req.user?.subRole === "MANAGER" && req.user?.scope !== "COUNTRY") {
+      return res.status(403).json({
+        success: false,
+        message: "HQ Managers cannot export CRM leads. Only IT/DIRECTOR can export across all countries.",
+      });
+    }
+
     const { stage, source, search } = req.query;
     const query = { isArchived: false, ...buildCountryFilter(req) };
     if (stage) query.stage = stage;
