@@ -58,9 +58,24 @@ export async function adminLoginController(request, response) {
     // stale COUNTRY scope (e.g. from before this rule existed), correct it
     // right here on login so the dashboard the user sees this session is
     // always right, without needing a manual DB fix.
-    if (HQ_ONLY_SUBROLES.includes(user.subRole) && (user.scope !== 'GLOBAL' || user.assignedCountry)) {
+    //
+    // FIX: this correction used to only be applied in-memory to the `user`
+    // object used to build this response's payload — it was never
+    // `.save()`d, so the database record itself stayed stale. That meant
+    // the ONE login response looked correct, but every subsequent request
+    // (which re-reads the user fresh from the DB via the `auth` middleware)
+    // still saw the old scope, and the frontend's cached copy — which
+    // several pages read `isGlobalAdmin`/`countryScope` from directly —
+    // never got corrected either. Persisting it here means it's fixed for
+    // good on first login, not just cosmetically fixed for one response.
+    if (HQ_ONLY_SUBROLES.includes(user.subRole) && (user.scope !== 'GLOBAL' || user.assignedCountry || (user.deniedPermissions || []).length)) {
       user.scope = 'GLOBAL';
       user.assignedCountry = null;
+      // Defense in depth: an HQ-only role should never be missing
+      // permissions via a stray per-user denial (e.g. left over from
+      // testing, or a copy/paste mistake in User Management).
+      user.deniedPermissions = [];
+      await user.save();
     }
 
     // ── Domain-restricted login ────────────────────────────────────────────

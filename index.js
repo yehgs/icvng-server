@@ -1,6 +1,16 @@
 // icvng-server/index.js
 //
-
+// IMPORTANT: this must be the very first import. ES module `import`
+// statements are hoisted and fully evaluated (including all their
+// top-level side-effect code) before any other code in this file runs —
+// including a `dotenv.config()` call placed further down. Every route
+// module imported below (and everything they transitively import, e.g.
+// services/ai/openaiTranslationClient.js reading
+// process.env.OPENAI_TRANSLATION_MODEL at module-load time) would
+// otherwise execute BEFORE the .env file was loaded, silently seeing
+// undefined for every env var. `dotenv/config` runs dotenv.config() as
+// an import side-effect, so putting it first guarantees env vars are
+// populated before anything else in the app initializes.
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -328,10 +338,7 @@ connectDB().then(() => {
   }
   // PHASE 3: warm the country cache from DB (falls back to config if unseeded)
   refreshCountryCache().catch((e) =>
-    console.warn(
-      "Country cache warm failed (using config fallback):",
-      e.message,
-    ),
+    console.warn("Country cache warm failed (using config fallback):", e.message),
   );
   app.listen(PORT, () => {
     console.log("✅ Server is running on port:", PORT);

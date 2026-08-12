@@ -18,6 +18,7 @@ import TranslationModel from "../models/translation.model.js";
 import { ALL_SUPPORTED_LANGUAGES } from "../config/countries/index.js";
 import {
   translateBatchAI,
+  translateBatchAIDetailed,
   translateOneAI,
 } from "../services/ai/openaiTranslationClient.js";
 
@@ -198,7 +199,24 @@ export async function translateSitePage({ entityId, document, sourceLang = "en",
         continue;
       }
 
-      const translatedFlat = await translateBatch(strings, sourceLang, targetLang);
+      const { results: translatedFlat, failedCount, lastError } =
+        await translateBatchDetailed(strings, sourceLang, targetLang);
+
+      if (failedCount === strings.length) {
+        // Total failure — the reconstructed tree would be 100% untranslated
+        // English, so don't persist it as if it were a real translation.
+        console.error(
+          `[translationService] All ${strings.length} string(s) failed to translate ` +
+            `page:${entityId} → ${targetLang}. Last error: ${lastError}. ` +
+            `See [openaiTranslationClient] log lines above for the underlying OpenAI error.`,
+        );
+        results[targetLang] = {
+          status: "error",
+          error: `OpenAI translation failed for all ${strings.length} string(s): ${lastError}. Check server logs for [openaiTranslationClient] entries.`,
+        };
+        continue;
+      }
+
       const queue = [...translatedFlat];
       const translatedTree = applyPageStrings(sourceTree, "", queue);
 
@@ -213,8 +231,26 @@ export async function translateSitePage({ entityId, document, sourceLang = "en",
         },
         { upsert: true, new: true }
       );
-      console.log(`[translationService] Translated page:${entityId} → ${targetLang}`);
-      results[targetLang] = { status: "ok", stringsTranslated: strings.length };
+
+      if (failedCount > 0) {
+        // Partial failure: the tree was still saved (structurally, every
+        // leaf needs a value), but some leaves are still English pending a
+        // retry — say so plainly rather than reporting "ok".
+        console.warn(
+          `[translationService] Partially translated page:${entityId} → ${targetLang}: ` +
+            `${strings.length - failedCount}/${strings.length} string(s) succeeded, ` +
+            `${failedCount} failed and are still English. Last error: ${lastError}`,
+        );
+        results[targetLang] = {
+          status: "partial",
+          stringsTranslated: strings.length - failedCount,
+          stringsFailed: failedCount,
+          error: `${failedCount} of ${strings.length} string(s) failed to translate: ${lastError}`,
+        };
+      } else {
+        console.log(`[translationService] Translated page:${entityId} → ${targetLang}`);
+        results[targetLang] = { status: "ok", stringsTranslated: strings.length };
+      }
     } catch (err) {
       console.error(`[translationService] Error translating page:${entityId} → ${targetLang}:`, err.message);
       results[targetLang] = { status: "error", error: err.message };
@@ -222,7 +258,7 @@ export async function translateSitePage({ entityId, document, sourceLang = "en",
   }
 
   const languages = Object.keys(results);
-  const anyError = languages.some((l) => results[l].status === "error");
+  const anyError = languages.some((l) => ["error", "partial"].includes(results[l].status));
   const allSkippedOrError = languages.length > 0 && languages.every(
     (l) => results[l].status !== "ok",
   );
@@ -271,6 +307,29 @@ export async function translateBatch(texts, sourceLang = "en", targetLang = "fr"
   if (!texts || texts.length === 0) return texts;
   if (sourceLang === targetLang) return texts;
   return translateBatchAI(texts, sourceLang, targetLang);
+}
+
+/**
+ * Same as translateBatch(), but returns per-item success info instead of
+ * collapsing a failed-and-fell-back-to-source item into an indistinguishable
+ * "translated" string. Use this wherever the outcome gets reported back to
+ * a human (translateEntity/translateSitePage below) — this is what makes a
+ * real OpenAI failure show up as an actual error instead of a false
+ * "Translation complete".
+ *
+ * @param {string[]} texts
+ * @param {string} sourceLang
+ * @param {string} targetLang
+ * @returns {Promise<{results: string[], succeeded: boolean[], failedCount: number, lastError: string|null}>}
+ */
+export async function translateBatchDetailed(texts, sourceLang = "en", targetLang = "fr") {
+  if (!texts || texts.length === 0) {
+    return { results: texts, succeeded: [], failedCount: 0, lastError: null };
+  }
+  if (sourceLang === targetLang) {
+    return { results: texts, succeeded: texts.map(() => true), failedCount: 0, lastError: null };
+  }
+  return translateBatchAIDetailed(texts, sourceLang, targetLang);
 }
 
 // ── Entity translation ────────────────────────────────────────────────────────
@@ -379,13 +438,47 @@ export async function translateEntity({
       }
 
       const texts = fieldsToTranslate.map((e) => e.value);
-      const translated = await translateBatch(texts, sourceLang, targetLang);
+      const { results: translated, succeeded, failedCount, lastError } =
+        await translateBatchDetailed(texts, sourceLang, targetLang);
 
-      // Merge new auto-translations on top of any existing manual fields
+      // Merge new auto-translations on top of any existing manual fields.
+      // Only merge fields OpenAI actually translated — a field that fell
+      // back to its English source (succeeded[idx] === false) is left out
+      // entirely rather than written to the Translation collection as if
+      // it were real translated content. Previously every field got
+      // merged regardless of success, so a total OpenAI outage could still
+      // upsert a doc full of untranslated English text stamped
+      // autoTranslated/engine: "openai" — indistinguishable from a real
+      // translation to anything reading it back, and the caller had no way
+      // to know it happened (this is the root cause of "it displayed
+      // Translation complete yet nothing was translated").
       const translatedFields = { ...(existing?.fields || {}) };
+      let actuallyTranslatedCount = 0;
       fieldsToTranslate.forEach((entry, idx) => {
-        translatedFields[entry.key] = translated[idx];
+        if (succeeded[idx]) {
+          translatedFields[entry.key] = translated[idx];
+          actuallyTranslatedCount++;
+        }
       });
+
+      if (actuallyTranslatedCount === 0) {
+        // Every field failed — don't touch the Translation collection at
+        // all (nothing to persist), and report a real error instead of a
+        // false "ok".
+        console.error(
+          `[translationService] All ${fieldsToTranslate.length} field(s) failed to translate ` +
+            `${entityType}:${entityId} → ${targetLang}. Last error: ${lastError}. ` +
+            `See [openaiTranslationClient] log lines above for the underlying OpenAI error ` +
+            `(check OPENAI_API_KEY, model name, quota/billing, and network egress to api.openai.com).`,
+        );
+        results[targetLang] = {
+          status: "error",
+          error:
+            `OpenAI translation failed for all ${fieldsToTranslate.length} field(s): ${lastError}. ` +
+            `Check server logs for [openaiTranslationClient] entries for the underlying cause.`,
+        };
+        continue;
+      }
 
       // autoTranslated stays false if there are still manually-edited fields
       const hasManualFields = manualFields.length > 0;
@@ -402,10 +495,25 @@ export async function translateEntity({
         { upsert: true, new: true },
       );
 
-      console.log(
-        `[translationService] Translated ${entityType}:${entityId} → ${targetLang}`,
-      );
-      results[targetLang] = { status: "ok", fieldsTranslated: fieldsToTranslate.length };
+      if (failedCount > 0) {
+        console.warn(
+          `[translationService] Partially translated ${entityType}:${entityId} → ${targetLang}: ` +
+            `${actuallyTranslatedCount}/${fieldsToTranslate.length} field(s) succeeded, ` +
+            `${failedCount} failed and were left as-is (not overwritten with English). ` +
+            `Last error: ${lastError}`,
+        );
+        results[targetLang] = {
+          status: "partial",
+          fieldsTranslated: actuallyTranslatedCount,
+          fieldsFailed: failedCount,
+          error: `${failedCount} of ${fieldsToTranslate.length} field(s) failed to translate: ${lastError}`,
+        };
+      } else {
+        console.log(
+          `[translationService] Translated ${entityType}:${entityId} → ${targetLang}`,
+        );
+        results[targetLang] = { status: "ok", fieldsTranslated: actuallyTranslatedCount };
+      }
     } catch (err) {
       console.error(
         `[translationService] Error translating ${entityType}:${entityId} → ${targetLang}:`,
@@ -416,7 +524,7 @@ export async function translateEntity({
   }
 
   const languages = Object.keys(results);
-  const anyError = languages.some((l) => results[l].status === "error");
+  const anyError = languages.some((l) => ["error", "partial"].includes(results[l].status));
   const allSkippedOrError = languages.length > 0 && languages.every(
     (l) => results[l].status !== "ok",
   );

@@ -36,6 +36,17 @@ function getClient() {
         "(server-side env var only — never expose it to the frontend).",
     );
   }
+  // Debug aid: confirms at the moment of first real use (not just at
+  // server boot, when dotenv timing issues could still be misleading —
+  // see index.js) that a key is actually present, without ever logging
+  // the key itself. If translations are failing, this line (or its
+  // absence) in the logs tells you immediately whether it's an env-var
+  // problem or something else (auth/quota/network) further downstream.
+  console.log(
+    `[openaiTranslationClient] Initializing OpenAI client — API key present ` +
+      `(${apiKey.slice(0, 3)}...${apiKey.slice(-4)}, ${apiKey.length} chars), ` +
+      `model=${getModel()}.`,
+  );
   _client = new OpenAI({ apiKey });
   return _client;
 }
@@ -156,12 +167,14 @@ function isRetryableError(err) {
 async function callResponsesAPI(texts, sourceLang, targetLang, maxRetries = 3) {
   const client = getClient();
   const input = buildTranslationInput(texts, sourceLang, targetLang);
+  const model = getModel();
 
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const attemptLabel = `attempt ${attempt + 1}/${maxRetries + 1}`;
     try {
       const response = await client.responses.create({
-        model: getModel(),
+        model,
         input,
         text: {
           format: {
@@ -174,12 +187,34 @@ async function callResponsesAPI(texts, sourceLang, targetLang, maxRetries = 3) {
       });
 
       const raw = response.output_text;
-      if (!raw) throw new Error("Empty response from OpenAI");
+      if (!raw) {
+        // Debug aid: an empty output_text usually means the model didn't
+        // return a normal completion — e.g. it hit its own internal
+        // reasoning/output token cap, or the API version doesn't populate
+        // output_text (older/newer SDK mismatch). Log the raw response
+        // shape (not the full payload — could be large) so this is
+        // diagnosable without needing to reproduce it live.
+        console.error(
+          `[openaiTranslationClient] Empty output_text (${attemptLabel}, model=${model}, ` +
+            `${sourceLang}→${targetLang}, ${texts.length} item(s), response.id=${response?.id}, ` +
+            `status=${response?.status}, incomplete_reason=${response?.incomplete_details?.reason}).`,
+        );
+        throw new Error(
+          `Empty response from OpenAI (status=${response?.status || "unknown"}, ` +
+            `incomplete_reason=${response?.incomplete_details?.reason || "none"})`,
+        );
+      }
 
       const parsed = JSON.parse(raw);
       const translations = parsed.translations;
 
       if (!Array.isArray(translations) || translations.length !== texts.length) {
+        console.error(
+          `[openaiTranslationClient] Shape mismatch (${attemptLabel}, model=${model}, ` +
+            `${sourceLang}→${targetLang}): expected ${texts.length} translations, got ` +
+            `${translations?.length ?? "non-array"}. Raw output_text (truncated): ` +
+            `${raw.slice(0, 500)}`,
+        );
         throw new Error(
           `OpenAI returned ${translations?.length ?? 0} translations for ${texts.length} inputs`,
         );
@@ -189,6 +224,22 @@ async function callResponsesAPI(texts, sourceLang, targetLang, maxRetries = 3) {
     } catch (err) {
       lastErr = err;
       const isLastAttempt = attempt === maxRetries;
+      const status = err?.status || err?.response?.status;
+      const errType = err?.type || err?.code || err?.name;
+
+      // This is the key diagnostic line for "translation says complete but
+      // nothing actually translated" — every failure (including the ones
+      // that get silently retried) is logged with enough detail to tell
+      // API-key/auth issues (401/403), quota/billing issues (429 with a
+      // quota-type error, or 402), bad model name (404), and transient
+      // server issues (5xx/network) apart at a glance, without needing to
+      // reproduce the failure live.
+      console.error(
+        `[openaiTranslationClient] Call failed (${attemptLabel}, model=${model}, ` +
+          `${sourceLang}→${targetLang}, ${texts.length} item(s)): ` +
+          `status=${status ?? "n/a"} type=${errType ?? "n/a"} message="${err.message}"` +
+          (isLastAttempt ? " — giving up (max retries reached)" : " — will retry"),
+      );
 
       if (!isLastAttempt && isRetryableError(err)) {
         await sleep(1000 * 2 ** attempt); // 1s, 2s, 4s
@@ -231,22 +282,32 @@ function cacheSet(text, sourceLang, targetLang, translated) {
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Translate a batch of strings, preserving order, using OpenAI.
- * Falls back to returning the original text for any string that ultimately
- * fails after retries — never throws for individual bad items, so a single
- * entity-level translation run doesn't die because of one problem field.
+ * Translate a batch of strings, preserving order, using OpenAI. Returns
+ * rich per-item status (not just the translated strings) so callers can
+ * tell a real translation apart from a same-as-source fallback — the
+ * simpler `translateBatchAI()` below collapses that distinction away,
+ * which is exactly what let a failed OpenAI call look like a successful
+ * "Translation complete" with nothing actually translated (issue: auto
+ * translation reported success but did nothing). Prefer this function in
+ * any caller that reports outcomes back to a human (translationService.js).
  *
  * @param {string[]} texts
  * @param {string} sourceLang
  * @param {string} targetLang
- * @returns {Promise<string[]>}
+ * @returns {Promise<{results: string[], succeeded: boolean[], failedCount: number, lastError: string|null}>}
  */
-export async function translateBatchAI(texts, sourceLang = "en", targetLang = "fr") {
-  if (!texts || texts.length === 0) return texts || [];
-  if (sourceLang === targetLang) return texts;
+export async function translateBatchAIDetailed(texts, sourceLang = "en", targetLang = "fr") {
+  if (!texts || texts.length === 0) {
+    return { results: texts || [], succeeded: [], failedCount: 0, lastError: null };
+  }
+  if (sourceLang === targetLang) {
+    return { results: texts, succeeded: texts.map(() => true), failedCount: 0, lastError: null };
+  }
 
   const results = new Array(texts.length);
+  const succeeded = new Array(texts.length).fill(true); // empty/cached/skipped strings count as "succeeded" (nothing to fail)
   const toTranslate = []; // { index, text }
+  let lastError = null;
 
   texts.forEach((text, index) => {
     if (!text || typeof text !== "string" || !text.trim()) {
@@ -261,7 +322,9 @@ export async function translateBatchAI(texts, sourceLang = "en", targetLang = "f
     toTranslate.push({ index, text });
   });
 
-  if (toTranslate.length === 0) return results;
+  if (toTranslate.length === 0) {
+    return { results, succeeded, failedCount: 0, lastError: null };
+  }
 
   // Split off anything long enough to risk crowding/truncating a batch —
   // translate those solo.
@@ -273,6 +336,8 @@ export async function translateBatchAI(texts, sourceLang = "en", targetLang = "f
   for (let i = 0; i < normal.length; i += MAX_BATCH_SIZE) {
     chunks.push(normal.slice(i, i + MAX_BATCH_SIZE));
   }
+
+  let failedCount = 0;
 
   for (const chunk of chunks) {
     try {
@@ -286,14 +351,21 @@ export async function translateBatchAI(texts, sourceLang = "en", targetLang = "f
         cacheSet(c.text, sourceLang, targetLang, translated[i]);
       });
     } catch (err) {
+      lastError = err.message;
       console.error(
-        `[openaiTranslationClient] Batch of ${chunk.length} → ${targetLang} failed after retries:`,
+        `[openaiTranslationClient] Batch of ${chunk.length} → ${targetLang} failed after retries — ` +
+          `these field(s) will be left untranslated (not silently substituted with English) so the ` +
+          `caller can report a real failure instead of a false "success":`,
         err.message,
       );
-      // Fall back to the source text for this chunk rather than failing
-      // the whole entity translation.
+      // Fall back to the source text for this chunk (so the caller always
+      // gets a same-length array back and can decide what to do), but mark
+      // it as NOT succeeded so translationService.js knows not to persist
+      // this as if it were a real translation.
       chunk.forEach((c) => {
         results[c.index] = c.text;
+        succeeded[c.index] = false;
+        failedCount++;
       });
     }
   }
@@ -305,14 +377,39 @@ export async function translateBatchAI(texts, sourceLang = "en", targetLang = "f
       results[item.index] = translated;
       cacheSet(item.text, sourceLang, targetLang, translated);
     } catch (err) {
+      lastError = err.message;
       console.error(
-        `[openaiTranslationClient] Large text → ${targetLang} failed after retries:`,
+        `[openaiTranslationClient] Large text (${item.text.length} chars) → ${targetLang} failed after retries:`,
         err.message,
       );
       results[item.index] = item.text;
+      succeeded[item.index] = false;
+      failedCount++;
     }
   }
 
+  return { results, succeeded, failedCount, lastError };
+}
+
+/**
+ * Translate a batch of strings, preserving order, using OpenAI.
+ * Falls back to returning the original text for any string that ultimately
+ * fails after retries — never throws for individual bad items, so a single
+ * entity-level translation run doesn't die because of one problem field.
+ *
+ * Thin wrapper around translateBatchAIDetailed() for callers that just want
+ * the strings and don't need to distinguish a real translation from a
+ * same-as-source fallback (e.g. translateOneAI below). Prefer
+ * translateBatchAIDetailed() directly wherever the result of a translation
+ * run gets reported back to a human.
+ *
+ * @param {string[]} texts
+ * @param {string} sourceLang
+ * @param {string} targetLang
+ * @returns {Promise<string[]>}
+ */
+export async function translateBatchAI(texts, sourceLang = "en", targetLang = "fr") {
+  const { results } = await translateBatchAIDetailed(texts, sourceLang, targetLang);
   return results;
 }
 
