@@ -27,7 +27,7 @@ import {
 // Driven by country config (same source of truth the Translation model
 // uses) rather than a frozen list — a new market/language needs no edit
 // here.
-const SUPPORTED_LANGUAGES = ALL_SUPPORTED_LANGUAGES.length
+export const SUPPORTED_LANGUAGES = ALL_SUPPORTED_LANGUAGES.length
   ? ALL_SUPPORTED_LANGUAGES
   : ["en", "fr", "it"];
 
@@ -46,7 +46,11 @@ if (!process.env.OPENAI_API_KEY) {
 // fields (not a nested `seo: { title, description }` object) — using
 // "seo.title" here silently matched nothing, so SEO copy was never
 // auto-translated. Fixed to the real flat field names below.
-const TRANSLATABLE_FIELDS = {
+// Exported (not just module-private) so scripts/bulkTranslateContent.js can
+// discover every translatable entityType dynamically — including any added
+// after this comment was written — instead of hardcoding a list that
+// silently drifts out of sync with this file.
+export const TRANSLATABLE_FIELDS = {
   product: ["name", "description", "unit", "seoTitle", "seoDescription", "roastOrigin", "coffeeOrigin", "blend", "shortDescription", "additionalInfo"],
   category: ["name"],
   subCategory: ["name"],
@@ -374,6 +378,13 @@ export async function translateEntity({
   entityId,
   document,
   sourceLang = "en",
+  // Optional — restrict this run to a subset of languages instead of every
+  // language in SUPPORTED_LANGUAGES. Mirrors translateSitePage()'s
+  // targetLangs param. Used by scripts/bulkTranslateContent.js so a bulk
+  // run for newly-added languages doesn't redundantly re-translate
+  // languages that already have a full pass done (e.g. re-running fr/it
+  // for every blog post again just because a new language was added).
+  targetLangs,
 }) {
   // Per-language outcome, so callers (the /translations/trigger endpoint in
   // particular) can tell the admin what actually happened instead of just
@@ -399,7 +410,9 @@ export async function translateEntity({
     return { ok: true, error: null, results, note: "No translatable text found on this entity" };
   }
 
-  const targetLanguages = SUPPORTED_LANGUAGES.filter((l) => l !== sourceLang);
+  const targetLanguages = (targetLangs && targetLangs.length ? targetLangs : SUPPORTED_LANGUAGES).filter(
+    (l) => l !== sourceLang,
+  );
 
   for (const targetLang of targetLanguages) {
     try {

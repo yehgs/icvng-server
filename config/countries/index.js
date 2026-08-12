@@ -219,15 +219,29 @@ export function isPaymentProviderEnabled(countryCode, provider) {
 export const ALL_COUNTRY_CODES = Object.keys(COUNTRY_CONFIG);
 
 /**
- * PHASE 5: the union of every language any country supports — the single
- * source of truth for the translation system's language set. Adding a market
- * with a new language (e.g. Portuguese for a future country) here makes it
- * valid everywhere, no schema edits needed.
+ * Site-wide languages offered purely for reach/accessibility — not tied to
+ * any single country's default storefront language, unlike the languages
+ * derived from COUNTRY_CONFIG below. A shopper in any country (NG, BJ, IT,
+ * TG, or a future market) can pick one of these from the language switcher
+ * and see the UI chrome + AI-translated product/blog copy in it, same as
+ * en/fr/it — it's just not any country's *default*. Add a code here (and
+ * its native display name in LANGUAGE_NAMES in i18n/index.js, client-side
+ * and admin-side) to make it available everywhere; the auto-translate
+ * pipeline (translationService.js) and scripts/bulkTranslateContent.js
+ * both pick it up automatically since they read ALL_SUPPORTED_LANGUAGES.
+ */
+export const GLOBAL_EXTRA_LANGUAGES = ["es", "pt", "nl", "ar", "hi", "zh"];
+
+/**
+ * PHASE 5: the union of every language any country supports, plus the
+ * site-wide extra languages above — the single source of truth for the
+ * translation system's language set. Adding a market with a new language
+ * (e.g. Portuguese for a future country) here makes it valid everywhere, no
+ * schema edits needed; same for adding a new *global* language above.
  */
 export const ALL_SUPPORTED_LANGUAGES = Array.from(
-  new Set(
-    Object.values(COUNTRY_CONFIG).flatMap(
-      (c) => c.language?.supported || [],
-    ),
-  ),
+  new Set([
+    ...Object.values(COUNTRY_CONFIG).flatMap((c) => c.language?.supported || []),
+    ...GLOBAL_EXTRA_LANGUAGES,
+  ]),
 ).sort();

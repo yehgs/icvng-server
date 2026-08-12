@@ -11,7 +11,8 @@
     "seed:site-pages": "node scripts/seedSitePages.js",
     "update:multi-country-pages": "node scripts/updateMultiCountryPages.js",
     "translate:multi-country-pages": "node scripts/translateMultiCountryPagesManually.js",
-    "translate:bulk-content": "node scripts/bulkTranslateContent.js"
+    "translate:bulk-content": "node scripts/bulkTranslateContent.js",
+    "translate:ui-locales": "node scripts/translateUiLocales.js"
   },
   "author": "",
   "license": "ISC",
