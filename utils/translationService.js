@@ -49,12 +49,23 @@ const TRANSLATABLE_FIELDS = {
   product: ["name", "description", "unit", "seoTitle", "seoDescription", "roastOrigin", "coffeeOrigin", "blend", "shortDescription", "additionalInfo"],
   category: ["name"],
   subCategory: ["name"],
-  brand: ["name"],
+  // NOTE: "brand" intentionally has no entry here. Brand names are proper
+  // nouns (Nescafé, Lavazza, etc.) — translating them would corrupt them
+  // rather than localize them. Do not add it back without a fields list
+  // that excludes `name`.
   blog: ["title", "content", "excerpt", "seoTitle", "seoDescription", "seoKeywords", "socialTitle"],
   blogCategory: ["name", "description", "seoTitle", "seoDescription"],
   blogTag: ["name", "description"],
-  banner: ["title", "description", "buttonText"],
-  slider: ["title", "description", "buttonText"],
+  // FIX: these previously listed "description"/"buttonText", which don't
+  // exist on either schema (Banner uses subtitle/linkText, Slider has no
+  // button field at all — see models/banner.model.js, models/slider.model.js
+  // and the admin forms' InlineTranslateFields `fields` props, which were
+  // always correct). The mismatch meant extractFields() found nothing for
+  // those keys and AI auto-translate silently only ever translated the
+  // "title" field on banners/sliders — subtitle and button text never got
+  // machine-translated no matter how many times "Auto" was clicked.
+  banner: ["title", "subtitle", "linkText"],
+  slider: ["title", "description"],
   fomo: ["notificationMessage"],
   notification: ["title", "message"],
   coupon: ["description"],
@@ -153,10 +164,19 @@ function applyPageStrings(node, keyName, translatedQueue) {
  * @param {{ entityId: string, document: { content: object, seo?: object }, sourceLang?: string, targetLangs?: string[] }} opts
  */
 export async function translateSitePage({ entityId, document, sourceLang = "en", targetLangs }) {
+  const results = {};
+
+  if (!process.env.OPENAI_API_KEY) {
+    const msg =
+      "OPENAI_API_KEY is not set on the server — auto-translation cannot run.";
+    console.error(`[translationService] ${msg}`);
+    return { ok: false, error: msg, results };
+  }
+
   const sourceTree = { content: document.content || {}, seo: document.seo || {} };
   const strings = [];
   collectPageStrings(sourceTree, "", strings);
-  if (strings.length === 0) return;
+  if (strings.length === 0) return { ok: true, error: null, results, note: "No translatable text found on this page" };
 
   const targetLanguages = (targetLangs && targetLangs.length ? targetLangs : SUPPORTED_LANGUAGES).filter(
     (l) => l !== sourceLang
@@ -174,6 +194,7 @@ export async function translateSitePage({ entityId, document, sourceLang = "en",
       // never silently overwrite their work with a fresh machine pass.
       if (existing && existing.autoTranslated === false) {
         console.log(`[translationService] Skipped page:${entityId} → ${targetLang} (manually reviewed)`);
+        results[targetLang] = { status: "skipped", reason: "manually reviewed" };
         continue;
       }
 
@@ -193,10 +214,26 @@ export async function translateSitePage({ entityId, document, sourceLang = "en",
         { upsert: true, new: true }
       );
       console.log(`[translationService] Translated page:${entityId} → ${targetLang}`);
+      results[targetLang] = { status: "ok", stringsTranslated: strings.length };
     } catch (err) {
       console.error(`[translationService] Error translating page:${entityId} → ${targetLang}:`, err.message);
+      results[targetLang] = { status: "error", error: err.message };
     }
   }
+
+  const languages = Object.keys(results);
+  const anyError = languages.some((l) => results[l].status === "error");
+  const allSkippedOrError = languages.length > 0 && languages.every(
+    (l) => results[l].status !== "ok",
+  );
+
+  return {
+    ok: !anyError && !allSkippedOrError,
+    error: anyError
+      ? "One or more languages failed to translate — see results for details"
+      : null,
+    results,
+  };
 }
 
 // ── Core translation ─────────────────────────────────────────────────────────
@@ -279,16 +316,29 @@ export async function translateEntity({
   document,
   sourceLang = "en",
 }) {
+  // Per-language outcome, so callers (the /translations/trigger endpoint in
+  // particular) can tell the admin what actually happened instead of just
+  // assuming success. Shape: { fr: { status: "ok"|"error"|"skipped", error?, fieldsTranslated? }, it: {...} }
+  const results = {};
+
   const fields = TRANSLATABLE_FIELDS[entityType];
   if (!fields) {
-    console.warn(
-      `[translationService] No fields config for entityType: ${entityType}`,
-    );
-    return;
+    const msg = `No translatable-fields config for entityType "${entityType}"`;
+    console.warn(`[translationService] ${msg}`);
+    return { ok: false, error: msg, results };
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    const msg =
+      "OPENAI_API_KEY is not set on the server — auto-translation cannot run.";
+    console.error(`[translationService] ${msg}`);
+    return { ok: false, error: msg, results };
   }
 
   const extracted = extractFields(document, fields);
-  if (extracted.length === 0) return;
+  if (extracted.length === 0) {
+    return { ok: true, error: null, results, note: "No translatable text found on this entity" };
+  }
 
   const targetLanguages = SUPPORTED_LANGUAGES.filter((l) => l !== sourceLang);
 
@@ -324,6 +374,7 @@ export async function translateEntity({
         console.log(
           `[translationService] Skipped ${entityType}:${entityId} → ${targetLang} (all fields manually edited)`,
         );
+        results[targetLang] = { status: "skipped", reason: "all fields manually edited" };
         continue;
       }
 
@@ -354,13 +405,29 @@ export async function translateEntity({
       console.log(
         `[translationService] Translated ${entityType}:${entityId} → ${targetLang}`,
       );
+      results[targetLang] = { status: "ok", fieldsTranslated: fieldsToTranslate.length };
     } catch (err) {
       console.error(
         `[translationService] Error translating ${entityType}:${entityId} → ${targetLang}:`,
         err.message,
       );
+      results[targetLang] = { status: "error", error: err.message };
     }
   }
+
+  const languages = Object.keys(results);
+  const anyError = languages.some((l) => results[l].status === "error");
+  const allSkippedOrError = languages.length > 0 && languages.every(
+    (l) => results[l].status !== "ok",
+  );
+
+  return {
+    ok: !anyError && !allSkippedOrError,
+    error: anyError
+      ? "One or more languages failed to translate — see results for details"
+      : null,
+    results,
+  };
 }
 
 // ── Retrieval ─────────────────────────────────────────────────────────────────

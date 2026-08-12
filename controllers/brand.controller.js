@@ -1,7 +1,6 @@
 import BrandModel from "../models/brand.model.js";
 import ProductModel from "../models/product.model.js";
 import generateSlug from "../utils/generateSlug.js";
-import { translateEntity, getBulkTranslations, applyTranslation } from "../utils/translationService.js";
 
 export const AddBrandController = async (request, response) => {
   try {
@@ -57,6 +56,10 @@ export const AddBrandController = async (request, response) => {
       });
     }
 
+    // NOTE: no auto-translate call here on purpose — brand names are
+    // proper nouns and should never be machine-translated. See the
+    // comment in utils/translationService.js's TRANSLATABLE_FIELDS.
+
     return response.json({
       message: "Brand successfully created",
       data: saveBrand,
@@ -74,27 +77,13 @@ export const AddBrandController = async (request, response) => {
 
 export const getBrandController = async (request, response) => {
   try {
+    // NOTE: brand names are proper nouns and are never translated (see
+    // TRANSLATABLE_FIELDS in utils/translationService.js) — no
+    // localization pass needed here, unlike categories/subcategories.
     const data = await BrandModel.find().sort({ createdAt: -1 });
 
-    // Localize into the active language — same gap as categories/
-    // subcategories: this feeds the shop filter sidebar's brand list.
-    const language =
-      (request.headers["x-language"] || "").toLowerCase() ||
-      request.country?.language?.default ||
-      "en";
-
-    let localizedData = data;
-    if (language !== "en") {
-      const ids = data.map((b) => b._id.toString());
-      const fieldsById = await getBulkTranslations("brand", ids, language);
-      localizedData = data.map((brand) => {
-        const fields = fieldsById.get(brand._id.toString());
-        return fields ? applyTranslation(brand.toObject(), fields) : brand;
-      });
-    }
-
     return response.json({
-      data: localizedData,
+      data,
       error: false,
       success: true,
     });
@@ -143,13 +132,18 @@ export const updateBrandController = async (request, response) => {
       }
     }
 
-    const update = await BrandModel.updateOne({ _id: _id }, updateData);
+    const updatedBrand = await BrandModel.findByIdAndUpdate(_id, updateData, {
+      new: true,
+    });
+
+    // NOTE: no auto-translate call here on purpose — see the note in
+    // AddBrandController above.
 
     return response.json({
       message: "Updated Brand",
       success: true,
       error: false,
-      data: update,
+      data: updatedBrand,
     });
   } catch (error) {
     return response.status(500).json({

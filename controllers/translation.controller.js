@@ -5,6 +5,7 @@
 import TranslationModel from "../models/translation.model.js";
 import {
   translateEntity,
+  translateSitePage,
   translateText,
   getTranslation,
   getBulkTranslations,
@@ -13,6 +14,16 @@ import {
 /**
  * POST /api/translations/trigger
  * Admin-triggered: translate a single entity now.
+ *
+ * This AWAITS the actual OpenAI translation run and reports real
+ * per-language success/failure back to the admin panel. It used to fire
+ * translateEntity() in the background without awaiting it and always
+ * respond with a hardcoded "Translation queued" success message — so the
+ * "Auto" button in the admin panel always looked like it worked even when
+ * the OpenAI call was failing (bad/missing API key, network egress issue,
+ * rate limit, etc.), because nothing ever surfaced the real error. Now the
+ * button's spinner reflects an actual wait, and the response tells the
+ * admin exactly which language(s) succeeded or failed and why.
  */
 export async function triggerTranslation(req, res) {
   try {
@@ -26,13 +37,29 @@ export async function triggerTranslation(req, res) {
       });
     }
 
-    // Run translation async — don't block the response
-    translateEntity({ entityType, entityId, document, sourceLang }).catch(
-      (err) => console.error("Background translation error:", err.message)
-    );
+    // SitePage content is a free-form dictionary translated via a separate
+    // recursive walker (translateSitePage), not the fixed-field
+    // translateEntity() — this endpoint previously always called
+    // translateEntity() regardless of entityType, so triggering a "page"
+    // translation from the admin silently did nothing (no fields config
+    // exists for "page" in TRANSLATABLE_FIELDS).
+    const outcome =
+      entityType === "page"
+        ? await translateSitePage({ entityId, document, sourceLang })
+        : await translateEntity({ entityType, entityId, document, sourceLang });
+
+    if (!outcome || !outcome.ok) {
+      return res.status(502).json({
+        message: outcome?.error || "Translation failed",
+        results: outcome?.results || {},
+        error: true,
+        success: false,
+      });
+    }
 
     return res.json({
-      message: "Translation queued",
+      message: "Translation complete",
+      results: outcome.results,
       success: true,
       error: false,
     });

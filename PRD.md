@@ -39,9 +39,6 @@ Adding a market is meant to be config-only (see §4).
 
 ## 3. Non-goals (for now)
 
-- Country-scoped Logistics. Today Logistics is HQ-only (see §6). A
-  country-scoped logistics system is planned but not yet built — see the
-  note on `LOGISTICS` in §6.
 - Multi-warehouse-per-country inventory. Stock/warehouse is currently a
   single HQ-managed pool with country-aware storefront visibility, not a
   per-country warehouse network.
@@ -121,7 +118,7 @@ matters (pricing rights are the current example — see §7).
 | `MANAGER` | **No — can be either** | Broad operational access excluding system settings/role/user management. An **HQ Manager** (scope GLOBAL) additionally has pricing-edit rights (product form + Direct Pricing creation); a country/"foreign" Manager does not, even though it's the same subRole — see §7. |
 | `SALES_MANAGER` / `SALES` | No | Orders, customers, CRM, product/order requests. Can be HQ or country-scoped. |
 | `HR` | No | Bounded user management (cannot touch DIRECTOR/IT/MANAGER accounts), stock/warehouse visibility. |
-| `LOGISTICS` | Yes *(for now)* | HQ-only shipping/tracking/logistics ops. **Temporary constraint** — there is no country-scoped logistics system yet. Once that ships, `LOGISTICS` should come out of the HQ-only list in `config/roles.js` (`HQ_ONLY_SUBROLES`) so it can be assigned per-country like Manager/Sales. Until then, treat it exactly like Accountant/Warehouse/Editor for scoping purposes. |
+| `LOGISTICS` | **No — can be either** | Shipping/tracking/logistics ops. A country-scoped LOGISTICS admin manages only their own country's shipping zones/methods (`ShippingZone`/`ShippingMethod` carry `countryScopedPlugin`, same isolation mechanism as orders/customers); an HQ LOGISTICS admin (scope GLOBAL) sees/manages every country's. This shipped after being a temporary HQ-only constraint — `LOGISTICS` was removed from `HQ_ONLY_SUBROLES` once the country-scoped logistics system landed. |
 | `GRAPHICS` | No | Visual/marketing content only. |
 
 `HQ_ONLY_SUBROLES` (exported from `server/config/roles.js`) is the single
@@ -134,8 +131,10 @@ apart. **Never hardcode a second copy of this list** — import it.
 ### 6.2 Enforcement layers (defense in depth)
 
 A country-scoped/"foreign" admin is blocked from HQ-only modules
-(Logistics, Procurement, Pricing, etc.) at three independent layers, all of
-which must stay in sync:
+(Procurement, Pricing, Bank Transfer settings, Exchange Rates, Password
+Vault, etc.) at three independent layers, all of which must stay in sync.
+(Logistics is **not** in this HQ-only group any more — see §6.1 — it uses
+the country-scoped-data pattern instead, the same as orders/customers.)
 
 1. **UI** — `AdminSidebar.jsx` hides whole sections (`COUNTRY_BLOCKED_TOP_LEVEL`)
    and sub-items (`COUNTRY_BLOCKED_SUB_PATHS`) for non-global admins.
@@ -202,7 +201,56 @@ never accidentally zero out an Accountant-set price.
 
 ---
 
-## 8. Core backend modules
+## 8. Content translation (AI-assisted)
+
+Non-English storefront copy (French, Italian — per-country via
+`COUNTRY_CONFIG.language.supported`) is machine-translated from the
+English "master" record using OpenAI (`server/services/ai/openaiTranslationClient.js`,
+Responses API with structured JSON output), not a rules-based/third-party
+MT service. `server/utils/translationService.js` is the business-logic
+layer on top of it.
+
+**How it's triggered:**
+- **Automatically** on create/update, for every entity type listed in
+  `TRANSLATABLE_FIELDS` — product, category, subCategory, blog post, blog
+  category, blog tag, banner, slider, FOMO message, notification, coupon,
+  country content, home content blocks, and the shared catalog dictionaries
+  (tag/attribute/color). This call is `await`ed by the controller (not
+  fire-and-forget) so a real failure surfaces instead of being silently
+  swallowed.
+- **Manually**, via the "Auto" button in each item's inline Translations
+  panel (`InlineTranslateFields.jsx`) — same pipeline, same endpoint
+  (`POST /translations/trigger`), useful for re-running after an edit or
+  recovering from a transient failure.
+- **SitePage** content (About Us, FAQ, policies, etc.) uses a separate
+  function, `translateSitePage()`, because page content is a free-form
+  admin-authored dictionary rather than a fixed field list — it recursively
+  walks `content`/`seo` and translates every string leaf except a
+  deliberately-excluded set of config-only keys (icons, slugs, numeric
+  stats, etc. — see `PAGE_NON_TRANSLATABLE_KEYS`).
+- **Bulk backfill**: `node scripts/bulkTranslateContent.js` runs every
+  Product and BlogPost through the same pipeline in one pass — for content
+  that existed before auto-translate-on-save was wired up/fixed, or after
+  a large import.
+
+**Never machine-translated:** brand names (`brand` has no entry in
+`TRANSLATABLE_FIELDS` on purpose) — they're proper nouns and translating
+them would corrupt them, not localize them.
+
+**Manual-edit protection:** if a human has hand-edited a language's
+translation for an entity (`autoTranslated: false` on the `Translation`
+document, set automatically when an admin edits via the panel), the
+auto-translate pass never overwrites that field again — it only fills in
+still-missing/still-auto fields. This is what makes the bulk script and
+repeated "Auto" clicks safe to re-run.
+
+**Data model:** one `Translation` document per (entityType, entityId,
+language), a flexible `fields` map (works for every entity type without
+per-type schema changes) — see `models/translation.model.js`.
+
+---
+
+## 9. Core backend modules
 
 Non-exhaustive map of `server/controllers` by domain:
 
@@ -221,12 +269,12 @@ Non-exhaustive map of `server/controllers` by domain:
   home content blocks, site pages, SEO, FOMO widget, subscribers.
 - **Support & requests** — support tickets, product requests, order
   requests + order-request auth, contact messages, CRM leads.
-- **Platform** — country management/config, translations (AI-assisted),
-  notifications, file/image upload, scraper tool + quota.
+- **Platform** — country management/config, translations (AI-assisted —
+  see §8), notifications, file/image upload, scraper tool + quota.
 
 ---
 
-## 9. Cross-cutting rules worth knowing before touching code
+## 10. Cross-cutting rules worth knowing before touching code
 
 - **`scope` vs `assignedCountry`**: `scope: "GLOBAL"` → sees/manages
   everything, `assignedCountry` is always `null`. `scope: "COUNTRY"` →
@@ -247,10 +295,8 @@ Non-exhaustive map of `server/controllers` by domain:
 
 ---
 
-## 10. Open items / near-term roadmap
+## 11. Open items / near-term roadmap
 
-- Build the country-scoped Logistics system, then remove `LOGISTICS` from
-  `HQ_ONLY_SUBROLES` (see §6.1).
 - Phase 2.x departments (sub-groupings within a subRole) — not started.
 - Consider migrating `AdminSidebar`/`CountryScopeBanner` off the
   login-cached `localStorage` user object and onto the already-normalized
@@ -261,8 +307,29 @@ Non-exhaustive map of `server/controllers` by domain:
 
 ---
 
-## 11. Change log (high-signal only — not every commit)
+## 12. Change log (high-signal only — not every commit)
 
+- **Translation pipeline reliability fix** — auto-translate (OpenAI-backed)
+  was silently failing platform-wide: `dotenv.config()` ran after ~70
+  imports so env vars weren't loaded before the translation modules
+  initialized; the "Auto" button and every auto-on-save call fired
+  `translateEntity()` without awaiting it and always reported success
+  regardless of outcome. Both fixed — `dotenv/config` is now the first
+  import in `index.js`, and every translate call (manual trigger +
+  auto-on-save, across product/category/blog post/blog category/blog
+  tag/banner/slider/sitePage) is awaited with real per-language
+  success/error reporting. Also fixed along the way: `banner`'s
+  `TRANSLATABLE_FIELDS` referenced field names (`description`/
+  `buttonText`) that don't exist on the schema (real fields are
+  `subtitle`/`linkText`), so only banner titles were ever machine-
+  translated; sliders and banners had no auto-translate-on-save wiring at
+  all (`translateEntity` was imported but never called); the `/translations/
+  trigger` endpoint never actually supported `entityType: "page"` despite
+  SitePage having its own translation function. Brand names are now
+  explicitly excluded from translation (`TRANSLATABLE_FIELDS` has no
+  `brand` entry) — they're proper nouns. Added `scripts/bulkTranslateContent.js`
+  (`npm run translate:bulk-content`) to backfill translations for existing
+  products/blog posts created before these fixes. See §8.
 - **Item #9** — Accountant/Warehouse/Editor confirmed as permanently
   HQ-only (no country/"foreign" accounts); centralized via
   `HQ_ONLY_SUBROLES` in `config/roles.js`; self-healing added at login,

@@ -1,7 +1,9 @@
 // icvng-server/index.js
+//
+
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import morgan from "morgan";
 import helmet from "helmet";
@@ -72,8 +74,6 @@ import crmRouter from "./route/crm.route.js";
 import homeContentBlockRouter from "./route/homeContentBlock.route.js";
 import scraperRouter from "./route/scraper.route.js";
 import profileRouter from "./route/profile.route.js";
-
-dotenv.config();
 
 const app = express();
 
@@ -328,7 +328,10 @@ connectDB().then(() => {
   }
   // PHASE 3: warm the country cache from DB (falls back to config if unseeded)
   refreshCountryCache().catch((e) =>
-    console.warn("Country cache warm failed (using config fallback):", e.message),
+    console.warn(
+      "Country cache warm failed (using config fallback):",
+      e.message,
+    ),
   );
   app.listen(PORT, () => {
     console.log("✅ Server is running on port:", PORT);

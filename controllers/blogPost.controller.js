@@ -79,14 +79,17 @@ export async function createBlogPostController(request, response) {
 
     const savedPost = await newPost.save();
 
-    // Auto-translate to all non-English languages (non-blocking)
-    translateEntity({
-      entityType: "blog",
-      entityId: savedPost._id,
-      document: savedPost.toObject(),
-    }).catch((err) =>
-      console.error("[translate] blog post create:", err.message),
-    );
+    // Auto-translate to all non-English languages. Awaited (was
+    // fire-and-forget) so a real failure isn't silently swallowed.
+    try {
+      await translateEntity({
+        entityType: "blog",
+        entityId: savedPost._id,
+        document: savedPost.toObject(),
+      });
+    } catch (err) {
+      console.error("[translate] blog post create:", err.message);
+    }
 
     const populatedPost = await BlogPostModel.findById(savedPost._id)
       .populate("category", "name slug")
@@ -300,15 +303,18 @@ export async function updateBlogPostController(request, response) {
       .populate("relatedProducts", "name slug price images");
 
     // Re-translate only new/changed fields (manual edits are protected
-    // inside translateEntity itself).
+    // inside translateEntity itself). Awaited (was fire-and-forget) so a
+    // real failure isn't silently swallowed.
     if (updatedPost) {
-      translateEntity({
-        entityType: "blog",
-        entityId: updatedPost._id,
-        document: updatedPost.toObject(),
-      }).catch((err) =>
-        console.error("[translate] blog post update:", err.message),
-      );
+      try {
+        await translateEntity({
+          entityType: "blog",
+          entityId: updatedPost._id,
+          document: updatedPost.toObject(),
+        });
+      } catch (err) {
+        console.error("[translate] blog post update:", err.message);
+      }
     }
 
     return response.json({

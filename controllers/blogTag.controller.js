@@ -34,14 +34,17 @@ export async function createBlogTagController(request, response) {
 
     const savedTag = await newTag.save();
 
-    // Auto-translate to all non-English languages (non-blocking)
-    translateEntity({
-      entityType: "blogTag",
-      entityId: savedTag._id,
-      document: savedTag.toObject(),
-    }).catch((err) =>
-      console.error("[translate] blog tag create:", err.message),
-    );
+    // Auto-translate to all non-English languages. Awaited (was
+    // fire-and-forget) so a real failure isn't silently swallowed.
+    try {
+      await translateEntity({
+        entityType: "blogTag",
+        entityId: savedTag._id,
+        document: savedTag.toObject(),
+      });
+    } catch (err) {
+      console.error("[translate] blog tag create:", err.message);
+    }
 
     return response.status(201).json({
       message: "Blog tag created successfully",
@@ -182,13 +185,15 @@ export async function updateBlogTagController(request, response) {
     });
 
     if (updatedTag) {
-      translateEntity({
-        entityType: "blogTag",
-        entityId: updatedTag._id,
-        document: updatedTag.toObject(),
-      }).catch((err) =>
-        console.error("[translate] blog tag update:", err.message),
-      );
+      try {
+        await translateEntity({
+          entityType: "blogTag",
+          entityId: updatedTag._id,
+          document: updatedTag.toObject(),
+        });
+      } catch (err) {
+        console.error("[translate] blog tag update:", err.message);
+      }
     }
 
     return response.json({

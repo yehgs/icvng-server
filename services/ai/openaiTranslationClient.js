@@ -40,7 +40,14 @@ function getClient() {
   return _client;
 }
 
-const MODEL = process.env.OPENAI_TRANSLATION_MODEL || "gpt-5-mini";
+// Read lazily (not as a frozen top-level const) so this always reflects the
+// actual environment at call time, regardless of module import order — see
+// the comment at the top of index.js about dotenv/config needing to be the
+// first import. A frozen top-level const evaluated before dotenv.config()
+// ran would silently ignore OPENAI_TRANSLATION_MODEL forever.
+function getModel() {
+  return process.env.OPENAI_TRANSLATION_MODEL || "gpt-5-mini";
+}
 
 // A single request that's too large (huge blog post body, e.g.) risks
 // truncation / excessive latency. Anything longer than this is translated
@@ -154,7 +161,7 @@ async function callResponsesAPI(texts, sourceLang, targetLang, maxRetries = 3) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await client.responses.create({
-        model: MODEL,
+        model: getModel(),
         input,
         text: {
           format: {
@@ -335,7 +342,7 @@ export async function detectLanguageAI(text) {
   try {
     const client = getClient();
     const response = await client.responses.create({
-      model: MODEL,
+      model: getModel(),
       input: [
         {
           role: "system",

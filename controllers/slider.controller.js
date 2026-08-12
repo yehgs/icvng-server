@@ -36,6 +36,19 @@ export const addSliderController = async (request, response) => {
       });
     }
 
+    // Auto-translate to all non-English languages. `translateEntity` was
+    // already imported here but never actually called anywhere in this
+    // file — sliders only ever got translated via a manual "Auto" click.
+    try {
+      await translateEntity({
+        entityType: "slider",
+        entityId: saveSlider._id,
+        document: saveSlider.toObject(),
+      });
+    } catch (err) {
+      console.error("[translate] slider create:", err.message);
+    }
+
     return response.json({
       message: "Slider successfully created",
       data: saveSlider,
@@ -128,6 +141,18 @@ export const updateSliderController = async (request, response) => {
         error: true,
         success: false,
       });
+    }
+
+    // Auto-translate to all non-English languages — same gap as the create
+    // path above.
+    try {
+      await translateEntity({
+        entityType: "slider",
+        entityId: update._id,
+        document: update.toObject(),
+      });
+    } catch (err) {
+      console.error("[translate] slider update:", err.message);
     }
 
     return response.json({

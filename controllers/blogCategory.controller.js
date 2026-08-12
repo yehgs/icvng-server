@@ -38,14 +38,17 @@ export async function createBlogCategoryController(request, response) {
 
     const savedCategory = await newCategory.save();
 
-    // Auto-translate to all non-English languages (non-blocking)
-    translateEntity({
-      entityType: "blogCategory",
-      entityId: savedCategory._id,
-      document: savedCategory.toObject(),
-    }).catch((err) =>
-      console.error("[translate] blog category create:", err.message),
-    );
+    // Auto-translate to all non-English languages. Awaited (was
+    // fire-and-forget) so a real failure isn't silently swallowed.
+    try {
+      await translateEntity({
+        entityType: "blogCategory",
+        entityId: savedCategory._id,
+        document: savedCategory.toObject(),
+      });
+    } catch (err) {
+      console.error("[translate] blog category create:", err.message);
+    }
 
     return response.status(201).json({
       message: 'Blog category created successfully',
@@ -200,13 +203,15 @@ export async function updateBlogCategoryController(request, response) {
     );
 
     if (updatedCategory) {
-      translateEntity({
-        entityType: "blogCategory",
-        entityId: updatedCategory._id,
-        document: updatedCategory.toObject(),
-      }).catch((err) =>
-        console.error("[translate] blog category update:", err.message),
-      );
+      try {
+        await translateEntity({
+          entityType: "blogCategory",
+          entityId: updatedCategory._id,
+          document: updatedCategory.toObject(),
+        });
+      } catch (err) {
+        console.error("[translate] blog category update:", err.message);
+      }
     }
 
     return response.json({

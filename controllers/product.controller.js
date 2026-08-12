@@ -425,14 +425,21 @@ export const createProductController = async (request, response) => {
 
     const saveProduct = await product.save();
 
-    // Auto-translate to all non-English languages (non-blocking)
-    translateEntity({
-      entityType: "product",
-      entityId: saveProduct._id,
-      document: saveProduct.toObject(),
-    }).catch((err) =>
-      console.error("[translate] product create:", err.message),
-    );
+    // Auto-translate to all non-English languages. Awaited (was previously
+    // fire-and-forget with just a .catch() logger) so a real failure —
+    // missing OPENAI_API_KEY, network egress issue, bad model name, etc. —
+    // isn't silently swallowed. Wrapped in its own try/catch so a
+    // translation failure never fails the product save itself; the save
+    // has already succeeded above.
+    try {
+      await translateEntity({
+        entityType: "product",
+        entityId: saveProduct._id,
+        document: saveProduct.toObject(),
+      });
+    } catch (err) {
+      console.error("[translate] product create:", err.message);
+    }
 
     // Log activity (non-blocking)
     logActivity({
@@ -1435,15 +1442,20 @@ export const updateProductDetails = async (request, response) => {
       req: request,
     });
 
-    // Re-translate only new/changed fields (manual edits are protected inside translateEntity)
+    // Re-translate only new/changed fields (manual edits are protected
+    // inside translateEntity). Awaited for the same reason as the create
+    // path above — a fire-and-forget call with no await was silently
+    // failing without ever surfacing an error.
     if (updateProduct) {
-      translateEntity({
-        entityType: "product",
-        entityId: _id,
-        document: updateProduct.toObject(),
-      }).catch((err) =>
-        console.error("[translate] product update:", err.message),
-      );
+      try {
+        await translateEntity({
+          entityType: "product",
+          entityId: _id,
+          document: updateProduct.toObject(),
+        });
+      } catch (err) {
+        console.error("[translate] product update:", err.message);
+      }
     }
 
     return response.json({

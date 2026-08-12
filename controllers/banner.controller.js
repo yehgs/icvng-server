@@ -1,5 +1,6 @@
 import BannerModel from '../models/banner.model.js';
 import generateSlug from '../utils/generateSlug.js';
+import { translateEntity } from '../utils/translationService.js';
 
 export const addBannerController = async (request, response) => {
   try {
@@ -54,6 +55,19 @@ export const addBannerController = async (request, response) => {
         error: true,
         success: false,
       });
+    }
+
+    // Auto-translate to all non-English languages. Banners never had this
+    // wired up at all (translateEntity wasn't even imported in this file),
+    // so a banner only ever got translated via a manual "Auto" click.
+    try {
+      await translateEntity({
+        entityType: 'banner',
+        entityId: saveBanner._id,
+        document: saveBanner.toObject(),
+      });
+    } catch (err) {
+      console.error('[translate] banner create:', err.message);
     }
 
     return response.json({
@@ -180,14 +194,28 @@ export const updateBannerController = async (request, response) => {
       updateData.slug = newSlug;
     }
 
-    const update = await BannerModel.updateOne({ _id: _id }, updateData);
+    const update = await BannerModel.findByIdAndUpdate(_id, updateData, {
+      new: true,
+    });
 
-    if (update.matchedCount === 0) {
+    if (!update) {
       return response.status(404).json({
         message: 'Banner not found',
         error: true,
         success: false,
       });
+    }
+
+    // Auto-translate to all non-English languages — same gap as the create
+    // path above.
+    try {
+      await translateEntity({
+        entityType: 'banner',
+        entityId: update._id,
+        document: update.toObject(),
+      });
+    } catch (err) {
+      console.error('[translate] banner update:', err.message);
     }
 
     return response.json({

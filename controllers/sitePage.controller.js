@@ -253,14 +253,26 @@ export const triggerSitePageTranslation = async (req, res) => {
     const doc = await SitePageModel.findOne({ slug, countryCode });
     if (!doc) return res.status(404).json({ success: false, error: true, message: "Save this page/country before translating" });
 
-    translateSitePage({
+    // Awaited (was fire-and-forget with a hardcoded "queued" response) so
+    // the admin sees the real outcome instead of an always-success message
+    // regardless of whether the OpenAI call actually completed.
+    const outcome = await translateSitePage({
       entityId: doc._id,
       document: { content: doc.content, seo: doc.seo },
       sourceLang,
       targetLangs,
-    }).catch((err) => console.error("Background site-page translation error:", err.message));
+    });
 
-    return res.json({ success: true, error: false, message: "Translation queued" });
+    if (!outcome || !outcome.ok) {
+      return res.status(502).json({
+        success: false,
+        error: true,
+        message: outcome?.error || "Translation failed",
+        results: outcome?.results || {},
+      });
+    }
+
+    return res.json({ success: true, error: false, message: "Translation complete", results: outcome.results });
   } catch (err) {
     return res.status(500).json({ success: false, error: true, message: err.message });
   }
