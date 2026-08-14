@@ -12,7 +12,8 @@
     "update:multi-country-pages": "node scripts/updateMultiCountryPages.js",
     "translate:multi-country-pages": "node scripts/translateMultiCountryPagesManually.js",
     "translate:bulk-content": "node scripts/bulkTranslateContent.js",
-    "translate:ui-locales": "node scripts/translateUiLocales.js"
+    "translate:ui-locales": "node scripts/translateUiLocales.js",
+    "find:oversized-content": "node scripts/findOversizedContent.js"
   },
   "author": "",
   "license": "ISC",

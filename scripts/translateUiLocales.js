@@ -55,6 +55,13 @@
  *       without calling OpenAI or writing anything
  */
 
+// IMPORTANT: must be the very first import. Unlike bulkTranslateContent.js
+// (which imports connectDB.js, and that file happens to call
+// dotenv.config() as a side effect), this script never touches MongoDB and
+// so never picked up the .env file at all — OPENAI_API_KEY (and anything
+// else in .env) was always undefined here, regardless of what was actually
+// in the file. See the same fix/explanation at the top of index.js.
+import "dotenv/config";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import fs from "fs/promises";

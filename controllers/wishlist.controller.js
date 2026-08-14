@@ -155,7 +155,10 @@ export const getWishlistController = async (request, response) => {
         populate: [
           {
             path: 'category',
-            select: 'name',
+            // "slug" required — see the identical note in
+            // compare.controller.js / product.controller.js. Needed for
+            // the client's isFiveWeekDeliveryCategory() check.
+            select: 'name slug',
           },
           {
             path: 'subCategory',

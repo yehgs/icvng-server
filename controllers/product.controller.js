@@ -938,8 +938,16 @@ export const getProductController = async (request, response) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        // ✅ CRITICAL: Populate category with name field
-        .populate("category", "name")
+        // "slug" is required, not optional — the client's
+        // isFiveWeekDeliveryCategory() check (single-price display rule,
+        // PRODUCT_VISIBILITY_RULES.md §2/§3a) needs category.slug to catch
+        // a Machine-type product that's mistakenly missing
+        // productType: "MACHINE" but is correctly filed under the
+        // Coffee Maker/Capsule Machine category — exactly the real case
+        // that doc's §2 describes. Without slug, this endpoint (the
+        // primary shop/category listing feed for CardProduct grids) can
+        // silently show the wrong single price for such a product.
+        .populate("category", "name slug")
         .populate("subCategory", "name")
         .populate("brand", "name")
         .populate("tags", "name")

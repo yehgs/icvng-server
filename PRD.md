@@ -203,50 +203,150 @@ never accidentally zero out an Accountant-set price.
 
 ## 8. Content translation (AI-assisted)
 
-Non-English storefront copy (French, Italian — per-country via
-`COUNTRY_CONFIG.language.supported`) is machine-translated from the
-English "master" record using OpenAI (`server/services/ai/openaiTranslationClient.js`,
+Non-English storefront copy is machine-translated from the English
+"master" record using OpenAI (`server/services/ai/openaiTranslationClient.js`,
 Responses API with structured JSON output), not a rules-based/third-party
 MT service. `server/utils/translationService.js` is the business-logic
-layer on top of it.
+layer on top of it. There are two genuinely separate translation systems —
+don't conflate them:
+
+- **Database content** (products, blog posts, categories, etc.) → the
+  `Translation` collection, read at request time. Covered in this section.
+- **Hardcoded UI copy** (nav labels, buttons, empty states — everything
+  NOT stored in the database) → static per-language `.js` files bundled at
+  build time in `admin/src/i18n/locales/` and `client/src/i18n/locales/`.
+  See §8a.
+
+**Supported languages:** `ALL_SUPPORTED_LANGUAGES`
+(`config/countries/index.js`) is the union of two sources — every
+language any individual country supports (`COUNTRY_CONFIG[...].language.supported`,
+e.g. fr/it) **plus** `GLOBAL_EXTRA_LANGUAGES`, a manually maintained list
+of site-wide languages not tied to any single country's storefront
+default (currently es, pt, nl, ar, hi, zh — added for reach/accessibility,
+not because any current market defaults to them). A shopper on any
+country's domain can pick any supported language from the switcher and see
+AI-translated product/blog copy in it, regardless of whether it's that
+country's default. Arabic additionally flips `<html dir="rtl">` via
+`RTL_LANGUAGES` (same file) — see `CountryContext.jsx`/`AdminCountryContext.jsx`.
+
+**Entity types covered** (`TRANSLATABLE_FIELDS` in `translationService.js`,
+now exported so tooling can discover them dynamically instead of
+hardcoding a list): product, category, subCategory, blog, blogCategory,
+blogTag, banner, slider, fomo, notification, coupon, country,
+homeContentBlock, tag, attribute, color. **Never translated:** brand
+names (`brand` has no entry — they're proper nouns; translating one would
+corrupt it, not localize it).
 
 **How it's triggered:**
-- **Automatically** on create/update, for every entity type listed in
-  `TRANSLATABLE_FIELDS` — product, category, subCategory, blog post, blog
-  category, blog tag, banner, slider, FOMO message, notification, coupon,
-  country content, home content blocks, and the shared catalog dictionaries
-  (tag/attribute/color). This call is `await`ed by the controller (not
-  fire-and-forget) so a real failure surfaces instead of being silently
-  swallowed.
+- **Automatically** on create/update, for every entity type above. This
+  call is `await`ed by the controller (not fire-and-forget) so a real
+  failure surfaces instead of being silently swallowed.
 - **Manually**, via the "Auto" button in each item's inline Translations
   panel (`InlineTranslateFields.jsx`) — same pipeline, same endpoint
-  (`POST /translations/trigger`), useful for re-running after an edit or
-  recovering from a transient failure.
+  (`POST /translations/trigger`). Content fields whose source is real HTML
+  from a WYSIWYG editor (currently just blog `content`) get a lightweight
+  Tiptap rich-text editor here instead of a plain textarea showing raw
+  markup — see the component's `richTextFields` prop.
 - **SitePage** content (About Us, FAQ, policies, etc.) uses a separate
   function, `translateSitePage()`, because page content is a free-form
   admin-authored dictionary rather than a fixed field list — it recursively
   walks `content`/`seo` and translates every string leaf except a
   deliberately-excluded set of config-only keys (icons, slugs, numeric
   stats, etc. — see `PAGE_NON_TRANSLATABLE_KEYS`).
-- **Bulk backfill**: `node scripts/bulkTranslateContent.js` runs every
-  Product and BlogPost through the same pipeline in one pass — for content
-  that existed before auto-translate-on-save was wired up/fixed, or after
-  a large import.
-
-**Never machine-translated:** brand names (`brand` has no entry in
-`TRANSLATABLE_FIELDS` on purpose) — they're proper nouns and translating
-them would corrupt them, not localize them.
+- **Bulk backfill**: `node scripts/bulkTranslateContent.js` — fully
+  dynamic (not hardcoded to product/blog), covering every entity type
+  above via an `ENTITY_REGISTRY` map. `--entities=` (alias `--only=`) and
+  `--languages=` restrict the run; both default to everything. **Resumable
+  by default** (`skipExisting`): a field that already has a translated
+  value is left alone on a re-run, so an interrupted run (dropped DB
+  connection, bad key discovered partway through, Ctrl+C) just needs the
+  exact same command run again rather than re-translating — and
+  re-billing OpenAI for — everything from scratch. Pass `--force` for a
+  genuine full re-translate. The document-fetch step and each entity's
+  translation call are wrapped in retry-with-backoff, and one entity
+  type's total failure no longer aborts the rest of the run.
 
 **Manual-edit protection:** if a human has hand-edited a language's
 translation for an entity (`autoTranslated: false` on the `Translation`
 document, set automatically when an admin edits via the panel), the
 auto-translate pass never overwrites that field again — it only fills in
-still-missing/still-auto fields. This is what makes the bulk script and
-repeated "Auto" clicks safe to re-run.
+still-missing/still-auto fields.
+
+**Failure handling:** `translateBatchAIDetailed()` (openaiTranslationClient.js)
+tracks per-item success separately from the returned strings — a field
+that fails after retries is left out of what gets persisted entirely
+(not silently written as untranslated English stamped like a real
+translation). `translateEntity()`/`translateSitePage()` report
+`"ok"`/`"partial"`/`"error"` per language accordingly, and the trigger
+endpoint/admin UI reflect the real outcome instead of an unconditional
+"Translation complete." Diagnostic logging (`[openaiTranslationClient]`/
+`[translationService]` prefixed) includes status code, error type, and
+enough context to diagnose a bad API key, quota/billing issue, wrong
+model name, or oversized input without reproducing it live.
 
 **Data model:** one `Translation` document per (entityType, entityId,
 language), a flexible `fields` map (works for every entity type without
 per-type schema changes) — see `models/translation.model.js`.
+
+**Startup ordering gotcha (fixed, but worth knowing):** any script that
+doesn't import `config/connectDB.js` won't get `.env` loaded for free —
+`connectDB.js` calling `dotenv.config()` was an accidental side-effect
+dependency for scripts that only needed OpenAI, not MongoDB
+(`scripts/translateUiLocales.js` hit exactly this — it looked like a bad
+API key when the key was actually just never loaded). Every entry point
+that needs `.env` — `index.js` and every standalone script — now imports
+`dotenv/config` as its own first line rather than relying on another
+module's side effect.
+
+**"Input exceeds the context window" failures — root cause & fix:**
+pasting or drag-dropping an image directly into the blog post rich-text
+editor (`admin/src/pages/blog/BlogPosts.jsx`'s `RichEditor`) had no
+handling, so Tiptap/ProseMirror's default paste behavior embedded it as a
+base64 `data:image/...;base64,...` string directly inside the saved HTML
+— a single screenshot easily inflates a post's `content` field from a
+normal few-KB to several MB (base64 costs ~33% more text than the
+original binary size). That's what two posts actually had (3,085,572 and
+844,261 characters — a normal post is a few KB to maybe 20-30KB even with
+several properly-uploaded image URLs), and it's wildly outside any LLM's
+per-request context window. Fixed at the source: the editor now
+intercepts paste/drop and uploads the image to Cloudinary the same way
+the toolbar's "Insert Image" button already did, so the base64 embed can't
+happen going forward (with a defensive strip for the rarer case of
+pasting rich HTML — e.g. from a Word doc — that already contains an
+embedded base64 image). `scripts/findOversizedContent.js` scans every
+entity type for abnormally large translatable fields (not just blog
+content) to find any pre-existing occurrences so they can be manually
+repaired (re-insert the image via the now-fixed upload path).
+
+---
+
+## 8a. UI-copy translation (hardcoded locale files)
+
+`admin/src/i18n/index.js` and `client/src/i18n/index.js` are a lightweight
+zero-dependency i18n engine (deep-merge over an English base, localStorage
+persistence) — same engine, separately instantiated per app. Locale files
+live in `src/i18n/locales/{lang}.js`, one flat-ish nested object of
+strings per language.
+
+**Generator script:** `server/scripts/translateUiLocales.js` — a
+different tool from `bulkTranslateContent.js` (translates static files in
+the admin/client repos, not database content). Flattens `en.js`, batches
+it through the same `translateBatchAIDetailed()` OpenAI pipeline, and
+writes `{lang}.js`. Incremental by default (an existing non-empty value
+for a key is left alone on re-run — hand-edited overrides survive);
+`--force` fully regenerates. Expects `icvng-admin`/`icvng-client` as
+sibling folders next to `icvng-server` by default — override with
+`--admin-dir=`/`--client-dir=`. At last count: ~2,300 admin keys, ~750
+client keys, across 6 newly-added languages per app — a first full run is
+a genuinely large/slow/costly one-time job.
+
+**Header language switcher:** `client/src/components/LanguageSelector.jsx`
+(SVG-flag based, via `FlagIcon.jsx`) is the one actually rendered in
+`HeaderTest.jsx` — `LanguageSwitcher.jsx` (emoji-flag based) exists but
+isn't wired into the live header. Both list every code in
+`SUPPORTED_LANGUAGES`, not filtered to the current country's configured
+languages, since these are site-wide UI/content languages independent of
+any market's default (see the note on `GLOBAL_EXTRA_LANGUAGES` above).
 
 ---
 
@@ -309,6 +409,14 @@ Non-exhaustive map of `server/controllers` by domain:
 
 ## 12. Change log (high-signal only — not every commit)
 
+- **Base64-image-paste bug found & fixed** — the OpenAI translation
+  failures ("input exceeds the context window") on two blog posts traced
+  to pasted/dropped images being embedded as base64 directly in the post's
+  `content` HTML instead of uploaded to Cloudinary, ballooning it to
+  millions of characters. Fixed the editor at the source (paste/drop now
+  auto-uploads, matching the toolbar button's existing behavior) and added
+  `scripts/findOversizedContent.js` to find any other affected records
+  across every entity type. See §8.
 - **Translation pipeline reliability fix** — auto-translate (OpenAI-backed)
   was silently failing platform-wide: `dotenv.config()` ran after ~70
   imports so env vars weren't loaded before the translation modules
@@ -330,6 +438,23 @@ Non-exhaustive map of `server/controllers` by domain:
   `brand` entry) — they're proper nouns. Added `scripts/bulkTranslateContent.js`
   (`npm run translate:bulk-content`) to backfill translations for existing
   products/blog posts created before these fixes. See §8.
+- **Multi-language expansion + display-priority fix** — added
+  `GLOBAL_EXTRA_LANGUAGES` (es/pt/nl/ar/hi/zh) as site-wide languages
+  independent of any country's config, plus RTL support for Arabic and a
+  header language switcher covering all of them (see §8/§8a for the full
+  translation-system writeup). Also fixed a real bug across all three
+  client price-display call sites (`CardProduct.jsx`,
+  `ProductDisplayPage.jsx`, `Search.jsx`): every one of them showed *every*
+  price option that had a value set — a product with both stock and a
+  configured delivery price showed a "Standard delivery" box **and** a
+  "Special order" box side by side. Now exactly one is ever shown, per the
+  priority order formalized in `PRODUCT_VISIBILITY_RULES.md` §3a. Also
+  made `scripts/bulkTranslateContent.js` fully dynamic (every entity type
+  in `TRANSLATABLE_FIELDS`, not just product/blog) and resumable by
+  default (`skipExisting` — a re-run only retries what's still missing,
+  instead of re-translating and re-billing everything from scratch), and
+  added `scripts/translateUiLocales.js` to machine-translate the hardcoded
+  admin/client UI copy the same way.
 - **Item #9** — Accountant/Warehouse/Editor confirmed as permanently
   HQ-only (no country/"foreign" accounts); centralized via
   `HQ_ONLY_SUBROLES` in `config/roles.js`; self-healing added at login,

@@ -178,7 +178,11 @@ export const getCompareListController = async (request, response) => {
         populate: [
           {
             path: 'category',
-            select: 'name',
+            // "slug" is required here too — see the identical note in
+            // product.controller.js's getProductController. Without it,
+            // ComparePage's five-week-category check silently falls back
+            // to productType alone.
+            select: 'name slug',
           },
           {
             path: 'subCategory',

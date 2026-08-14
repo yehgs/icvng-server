@@ -385,6 +385,20 @@ export async function translateEntity({
   // languages that already have a full pass done (e.g. re-running fr/it
   // for every blog post again just because a new language was added).
   targetLangs,
+  // Optional — when true, a field that already has ANY existing
+  // auto-translated value for a language is left alone instead of being
+  // re-translated, even though the normal rule below is "re-translate
+  // everything when there are no manual edits to protect" (appropriate for
+  // the auto-on-save trigger, where the doc was just edited so a fresh
+  // translation is exactly what's wanted). For a BULK backfill run,
+  // though, that default behavior means any interruption — a dropped DB
+  // connection, a bad API key discovered partway through, Ctrl+C — forces
+  // a full from-scratch re-run next time, re-billing OpenAI for hundreds
+  // of fields that already succeeded. skipExisting=true makes a re-run
+  // pick up only what's actually still missing. Used by
+  // scripts/bulkTranslateContent.js by default (pass --force there to get
+  // the normal full-re-translate behavior instead).
+  skipExisting = false,
 }) {
   // Per-language outcome, so callers (the /translations/trigger endpoint in
   // particular) can tell the admin what actually happened instead of just
@@ -431,22 +445,38 @@ export async function translateEntity({
       // - If existing doc with autoTranslated === false → skip fields that
       //   are already in existing.fields (human-reviewed); translate the rest
       // - If existing doc with autoTranslated === true  → re-translate all
-      //   (source content changed; no human edits to protect)
+      //   (source content changed; no human edits to protect) — UNLESS
+      //   skipExisting is set, in which case a field that already has a
+      //   value is left alone too (see the skipExisting param doc above).
       const manualFields =
         existing && existing.autoTranslated === false
           ? Object.keys(existing.fields || {})
           : [];
 
+      const alreadyDoneFields =
+        skipExisting && existing?.fields
+          ? Object.keys(existing.fields).filter(
+              (k) => existing.fields[k] && String(existing.fields[k]).trim() !== "",
+            )
+          : [];
+
+      const skipFields = new Set([...manualFields, ...alreadyDoneFields]);
       const fieldsToTranslate =
-        manualFields.length > 0
-          ? extracted.filter((e) => !manualFields.includes(e.key))
+        skipFields.size > 0
+          ? extracted.filter((e) => !skipFields.has(e.key))
           : extracted;
 
       if (fieldsToTranslate.length === 0) {
+        const reason =
+          manualFields.length > 0 && alreadyDoneFields.length > 0
+            ? "all fields already manually edited or already translated"
+            : manualFields.length > 0
+              ? "all fields manually edited"
+              : "all fields already translated (skipExisting)";
         console.log(
-          `[translationService] Skipped ${entityType}:${entityId} → ${targetLang} (all fields manually edited)`,
+          `[translationService] Skipped ${entityType}:${entityId} → ${targetLang} (${reason})`,
         );
-        results[targetLang] = { status: "skipped", reason: "all fields manually edited" };
+        results[targetLang] = { status: "skipped", reason };
         continue;
       }
 

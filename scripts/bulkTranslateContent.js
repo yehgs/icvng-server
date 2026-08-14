@@ -55,6 +55,15 @@
  *
  *   --only=... is accepted as an alias for --entities=... (matches the
  *   flag name from the previous version of this script).
+ *
+ * RESUMABILITY: by default, a field that already has a translated value
+ * for a language is left alone on a re-run (skipExisting) — so if a run
+ * gets interrupted (dropped DB connection, Ctrl+C, a bad API key
+ * discovered partway through), just run the exact same command again and
+ * it picks up only what's still missing, instead of re-translating (and
+ * re-billing OpenAI for) everything from scratch. Pass --force to disable
+ * this and fully re-translate every field regardless of what's already
+ * there (e.g. after a source-content edit you want reflected everywhere).
  */
 
 import connectDB from "../config/connectDB.js";
@@ -118,8 +127,34 @@ const requestedEntities = getList("entities") || getList("only"); // --only kept
 const requestedLanguages = getList("languages");
 const LIMIT = getArg("limit") ? parseInt(getArg("limit"), 10) : null;
 const DRY_RUN = args.includes("--dry-run");
+const FORCE = args.includes("--force"); // disables skipExisting — fully re-translate everything
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Retry a flaky async op (e.g. a DB query hitting a transient network
+ * blip) a few times with backoff before giving up. Used around the initial
+ * Model.find() in runBatch() — that query itself wasn't wrapped in any
+ * try/catch before, so a single transient connection hiccup fetching the
+ * list of documents crashed the ENTIRE script (every entity type, not
+ * just the one being fetched) instead of just that one batch. */
+async function withRetry(fn, { retries = 3, baseDelayMs = 2000, label = "operation" } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries) {
+        const delay = baseDelayMs * 2 ** attempt;
+        console.warn(
+          `  ⚠️  ${label} failed (attempt ${attempt + 1}/${retries + 1}): ${err.message} — retrying in ${delay / 1000}s...`,
+        );
+        await sleep(delay);
+      }
+    }
+  }
+  throw lastErr;
+}
 
 function resolveEntityTypes() {
   const available = Object.keys(TRANSLATABLE_FIELDS).filter((k) => ENTITY_REGISTRY[k]);
@@ -153,16 +188,28 @@ function resolveLanguages() {
 
 async function runBatch(entityType, Model, targetLangs) {
   const fields = TRANSLATABLE_FIELDS[entityType];
-  let query = Model.find().sort({ createdAt: 1 });
-  if (LIMIT) query = query.limit(LIMIT);
-  const docs = await query;
+
+  // Wrapped in withRetry: this used to be a bare `await Model.find()...`
+  // with no error handling at all, so a transient DB connection blip here
+  // took down the entire script (every entity type in the run), not just
+  // this one batch.
+  const docs = await withRetry(
+    async () => {
+      let query = Model.find().sort({ createdAt: 1 });
+      if (LIMIT) query = query.limit(LIMIT);
+      return query;
+    },
+    { label: `${entityType}: fetching document list` },
+  );
 
   console.log(
     `\n→ ${entityType} (${fields.join(", ")}): ${docs.length} record(s) × ` +
-      `[${targetLangs.join(", ")}]${LIMIT ? ` (limited to ${LIMIT})` : ""}`,
+      `[${targetLangs.join(", ")}]${LIMIT ? ` (limited to ${LIMIT})` : ""}` +
+      `${FORCE ? " (--force: re-translating everything)" : " (resumable — skips already-translated fields)"}`,
   );
 
   let ok = 0;
+  let alreadyDone = 0; // every language for this doc was already fully translated — not a failure
   let partial = 0;
   let skipped = 0;
   let failed = 0;
@@ -177,12 +224,17 @@ async function runBatch(entityType, Model, targetLangs) {
     }
 
     try {
-      const outcome = await translateEntity({
-        entityType,
-        entityId: doc._id,
-        document: doc.toObject(),
-        targetLangs,
-      });
+      const outcome = await withRetry(
+        () =>
+          translateEntity({
+            entityType,
+            entityId: doc._id,
+            document: doc.toObject(),
+            targetLangs,
+            skipExisting: !FORCE,
+          }),
+        { label: `${entityType}:${doc._id}`, retries: 2 },
+      );
 
       if (!outcome) {
         console.log("no-op (no translatable fields)");
@@ -191,11 +243,18 @@ async function runBatch(entityType, Model, targetLangs) {
         console.log("ok");
         ok++;
       } else {
-        const langs = Object.entries(outcome.results || {})
-          .map(([lang, r]) => `${lang}:${r.status}`)
-          .join(", ");
-        console.log(`partial/failed (${langs || outcome.error})`);
-        partial++;
+        const statuses = Object.values(outcome.results || {}).map((r) => r.status);
+        const allAlreadyDone = statuses.length > 0 && statuses.every((s) => s === "skipped");
+        if (allAlreadyDone) {
+          console.log("already translated (nothing to do)");
+          alreadyDone++;
+        } else {
+          const langs = Object.entries(outcome.results || {})
+            .map(([lang, r]) => `${lang}:${r.status}`)
+            .join(", ");
+          console.log(`partial/failed (${langs || outcome.error})`);
+          partial++;
+        }
       }
     } catch (err) {
       console.log(`ERROR — ${err.message}`);
@@ -206,9 +265,9 @@ async function runBatch(entityType, Model, targetLangs) {
   }
 
   console.log(
-    `  ${entityType} summary: ${ok} ok, ${partial} partial/failed, ${skipped} no-op, ${failed} errored`,
+    `  ${entityType} summary: ${ok} ok, ${alreadyDone} already done, ${partial} partial/failed, ${skipped} no-op, ${failed} errored`,
   );
-  return { ok, partial, skipped, failed };
+  return { ok, alreadyDone, partial, skipped, failed };
 }
 
 async function main() {
@@ -225,20 +284,31 @@ async function main() {
   console.log(`Entity types: ${entityTypes.join(", ")}`);
   console.log(`Languages:    ${targetLangs.join(", ")}`);
   if (DRY_RUN) console.log("(DRY RUN — nothing will be translated or written)");
+  if (FORCE) console.log("(--force: skipExisting disabled — every field re-translated regardless of what's already there)");
 
-  const totals = { ok: 0, partial: 0, skipped: 0, failed: 0 };
+  const totals = { ok: 0, alreadyDone: 0, partial: 0, skipped: 0, failed: 0 };
 
   for (const entityType of entityTypes) {
     const Model = ENTITY_REGISTRY[entityType];
-    const r = await runBatch(entityType, Model, targetLangs);
-    totals.ok += r.ok;
-    totals.partial += r.partial;
-    totals.skipped += r.skipped;
-    totals.failed += r.failed;
+    try {
+      const r = await runBatch(entityType, Model, targetLangs);
+      totals.ok += r.ok;
+      totals.alreadyDone += r.alreadyDone;
+      totals.partial += r.partial;
+      totals.skipped += r.skipped;
+      totals.failed += r.failed;
+    } catch (err) {
+      // A single entity type failing even after withRetry's internal
+      // retries (e.g. sustained network outage) no longer takes down
+      // every other entity type in the same run — this used to be one big
+      // uncaught rejection that killed the whole script.
+      console.error(`\n❌ ${entityType} batch failed entirely: ${err.message} — continuing with remaining entity types.`);
+    }
   }
 
   console.log(
-    `\n✅ Done. Totals: ${totals.ok} ok, ${totals.partial} partial/failed, ${totals.skipped} no-op, ${totals.failed} errored.`,
+    `\n✅ Done. Totals: ${totals.ok} ok, ${totals.alreadyDone} already translated (nothing to do), ` +
+      `${totals.partial} partial/failed, ${totals.skipped} no-op, ${totals.failed} errored.`,
   );
   console.log(
     "   Review results in Admin → the relevant page → item → Translations tab. Anything you edit there is",
@@ -246,6 +316,12 @@ async function main() {
   console.log(
     "   marked 'Manual' and this script will never overwrite it on a re-run.",
   );
+  if (totals.partial > 0 || totals.failed > 0) {
+    console.log(
+      "   Some items had failures — just run this exact same command again: already-translated fields are",
+    );
+    console.log("   skipped automatically, so a re-run only retries what's still missing.");
+  }
   process.exit(0);
 }
 

@@ -41,6 +41,19 @@ contradiction that left the product fetchable (reachable via header search,
 shop search, and its own product page) even though it was never actually
 purchasable.
 
+**Checking both signals only works if the category's `slug` is actually
+present in the API response.** `getProductController` (`/product/get` —
+the main shop/category listing feed for `CardProduct` grids),
+`getCompareListController` (`/compare/get`), and `getWishlistController`
+(`/wishlist/get`) were all found populating `category` with `select:
+'name'` only, silently dropping the slug signal on exactly those
+endpoints — so a Machine-type product mis-tagged `productType: "COFFEE"`
+(the same failure mode as the Tassimo example above) could still slip
+through on the listing page, compare page, or wishlist even though the
+single-product page and search correctly caught it. All three now select
+`'name slug'`. If you add a new product-fetching endpoint or touch an
+existing `.populate("category", ...)` call, include `slug`.
+
 - **Five-week type** → only `price5weeksDelivery` counts as a valid
   delivery price. A `price3weeksDelivery` value set on one of these is
   **silently ignored by the storefront** — this is the exact bug that
@@ -79,6 +92,55 @@ Notes:
   `stock` field** as a last-resort fallback for products never migrated to
   the newer stock system.
 - `productAvailability` is a **separate, independent** switch — see §4.
+
+---
+
+## 3a. Display rule — exactly ONE price shown, ever
+
+Purchasability (§3) says a product qualifies if *either* (a) or (b) is
+true — but that's a backend eligibility check, not a display instruction.
+The storefront must still pick exactly **one** of those to actually show
+the customer. For a long time it didn't: `CardProduct.jsx`,
+`ProductDisplayPage.jsx`, and the header search dropdown (`Search.jsx`)
+each independently rendered *every* price option that had a value set,
+which meant a product with both stock and a configured delivery price
+showed a "Standard delivery" box **and** a "Special order — ~2/5 weeks"
+box side by side, letting the shopper pick either — including the delivery
+option on a product that was sitting in the warehouse ready to ship
+immediately.
+
+**The display priority (applied in all three places above, exactly the
+same way):**
+
+```
+1. hasAvailableStock (warehouse OR partner, per §3(b)'s stock check)
+     → show ONLY the regular price (btcPrice), labeled "1-3 business
+       days" — same label whether stock is warehouse or partner-sourced,
+       since §1's glossary defines "Regular Price" as fulfilled from
+       EITHER source on the same timeline. (Previously partner-stock
+       items were mislabeled "Special Order" even though they were
+       showing the regular price — fixed alongside the two-prices bug.)
+
+2. otherwise (no stock at all)
+     → show ONLY the one delivery price matching this product's category
+       (§2): price5weeksDelivery for five-week types, price3weeksDelivery
+       for everything else. The regular price is NEVER shown here, even
+       if btcPrice happens to be set on the product — a five-week-type
+       product out of stock shows the 5-week price and nothing else.
+```
+
+A product that fails both branches (no stock AND no matching delivery
+price) shows no price option at all — this is the same "not purchasable"
+state §3/§4 already cover, unrelated to this display-priority rule.
+
+**Where this is implemented:** `client/src/utils/getApplicablePrice.js` is
+the shared single source of truth (returns the one applicable price + its
+label, or `null`), used by `ComparePage.jsx`, `ProductAdmin.jsx`, and
+`WishListPage.jsx` (collapsed from three separate price rows into one).
+`CardProduct.jsx` (`getPricingOptions()`), `ProductDisplayPage.jsx`
+(`priceOptions`), and `Search.jsx` (inline IIFE) implement the identical
+priority rule inline instead of importing the shared helper (they
+predate it) — if you touch the rule itself, all six must move together.
 
 ---
 
@@ -185,7 +247,10 @@ kept in sync**:
    (live warning banner — imports the same helper, don't reimplement it inline)
 3. **Client** — `icvng-client/src/config/deliveryCategories.js` (same
    shape/export as admin's) + call sites in `ProductDisplayPage.jsx`,
-   `CardProduct.jsx`, `Search.jsx`
+   `CardProduct.jsx`, `Search.jsx`, `ComparePage.jsx`, `ProductAdmin.jsx`,
+   `WishListPage.jsx` — the latter three via the shared
+   `utils/getApplicablePrice.js` helper; see §3a for the full list and
+   which endpoints feed each.
 
 Pricing/stock permissions (§5) are implemented in:
 - `icvng-server/controllers/product.controller.js` (`canSetPricing`, `PRICING_FIELDS`)
