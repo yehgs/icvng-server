@@ -419,6 +419,74 @@ switchers without touching any of its existing `Translation` documents).
 
 ---
 
+## 8c. UI-copy CRUD (making the locale files DB-editable)
+
+Even after §8a's `translateUiLocales.js` generates a locale file, the
+*only* way to fix or tweak one of those ~2,300 admin / ~750 client strings
+was still: edit the `.js` file in the repo → commit → redeploy. There was
+no live-editing path — unlike database content (products, blog, etc.),
+which has always had one via `InlineTranslateFields.jsx`.
+
+`models/uiTranslation.model.js` is a new collection — one document per
+`(app, key, language)`, e.g. `{ app: "admin", key: "common.save",
+language: "fr", value: "Enregistrer" }`. `app` is `"admin"` or `"client"`
+since each has its own independent key set. This does **not** replace the
+static locale files — it's an override layer on top:
+
+- **Live loading:** `admin/src/i18n/index.js` and `client/src/i18n/index.js`
+  both keep an `EFFECTIVE` object that starts as a clone of the bundled
+  static `MERGED` locales (always available synchronously — no flash of
+  untranslated content, works even if the API is down) and gets
+  `applyDbOverrides(lang, flatMap)`'d on top once
+  `GET /api/ui-translations/merged?app=<app>&language=<lang>` resolves
+  (`loadUiTranslationOverrides()`, called from `AdminCountryContext.jsx`
+  on mount/every language switch, and from `CountryContext.jsx` on mount
+  only — the client already does a full page reload on language switch,
+  so there's no in-place case to handle there). `translate()` reads from
+  `EFFECTIVE`, not `MERGED`, so a DB override actually takes effect.
+  `subscribeI18nRevision()` is a tiny pub-sub so already-rendered strings
+  re-translate once the async fetch resolves, instead of only affecting
+  strings rendered after it (`t`'s `useCallback` deps include the bumped
+  revision counter in both contexts).
+- **API:** `GET /api/ui-translations/merged` (public — this is what the
+  live apps call; UI chrome isn't sensitive), `GET /api/ui-translations`
+  (admin, paginated/searchable browse+edit — keyed off the English rows as
+  the canonical key list, joined with the requested language's value),
+  `GET /api/ui-translations/namespaces` (admin, distinct top-level key
+  prefixes for the section filter dropdown), `PUT /api/ui-translations`
+  (admin, upsert one key's value for one non-English language — English
+  itself isn't editable through this system; it's the base copy, edit
+  `en.js` and re-run the seed script instead). Same
+  `translations.view`/`translations.manage` gating as §8b.
+- **Manual-edit protection:** a row gets `isEdited: true` once saved
+  through the admin UI — same discipline as the content-translation
+  pipeline (`translationService.js`) and `seedLanguages.js`. This matters
+  for the seed script below, which skips edited rows by default.
+- **Admin UI:** `admin/src/pages/settings/UiTranslationsManagement.jsx`
+  (`/admin/ui-translations`) — pick app + language + optional
+  section/search filter, edit values inline against the English reference
+  column, paginated (25/page — the admin key set alone is in the
+  thousands, an unpaginated table would be unusable). Same
+  IT/DIRECTOR/EDITOR nav visibility reasoning as §8b.
+- **Seed script:** `node scripts/seedUiTranslations.js` is what actually
+  *inputs* the existing locale-file content into this collection —
+  flattens every `{app}/src/i18n/locales/{lang}.js` (same
+  `icvng-admin`/`icvng-client` sibling-folder convention as
+  `translateUiLocales.js`, same `--admin-dir=`/`--client-dir=` override)
+  into dot-path keys and upserts one row per key/language. Idempotent and
+  incremental: skips a row already marked `isEdited` (protects hand edits
+  from the admin CRUD) and skips a row whose value already matches the
+  file (no-op writes). `--force-edited` overrides the edited-row
+  protection (rare — mainly right after a locale file was deliberately
+  rewritten wholesale and should now win over any prior hand edits).
+  `--dry-run` reports counts without writing. Must be re-run any time
+  `en.js` (or another locale file) gains new keys, or the new keys simply
+  won't exist in the DB-editable table yet (the live apps still work
+  fine in the meantime — they fall back to whatever's bundled in the
+  static file, same as any key with no DB override).
+
+---
+
 ## 9. Core backend modules
 
 Non-exhaustive map of `server/controllers` by domain:
@@ -518,6 +586,24 @@ Non-exhaustive map of `server/controllers` by domain:
 
 ## 12. Change log (high-signal only — not every commit)
 
+- **UI-copy locale files (i18n folder content, both apps) made
+  DB-editable via a new admin CRUD** — previously the only way to change
+  one of the ~2,300 admin / ~750 client hardcoded strings in
+  `src/i18n/locales/*.js` was editing the file and redeploying, unlike
+  database content which already had `InlineTranslateFields.jsx`. New
+  `uiTranslation` collection (`models/uiTranslation.model.js`) stores one
+  row per `(app, key, language)`; `admin/src/i18n/index.js` and
+  `client/src/i18n/index.js` both now overlay DB values on top of the
+  bundled static locale (`EFFECTIVE`/`applyDbOverrides`/
+  `loadUiTranslationOverrides`/`subscribeI18nRevision`) instead of reading
+  the static `MERGED` object directly, wired in via
+  `AdminCountryContext.jsx`/`CountryContext.jsx`. New admin page
+  `UiTranslationsManagement.jsx` (`/admin/ui-translations`) is the actual
+  CRUD — paginated/searchable, edits go live without a deploy. New
+  `scripts/seedUiTranslations.js` is what inputs the existing locale-file
+  content into the collection in the first place (flattens every locale
+  file into dot-path rows, incremental + manual-edit-protected, same
+  conventions as `translateUiLocales.js`). See §8c.
 - **Language lib made admin-manageable + translation UI expanded past
   fr/it** — two related fixes. (1) `InlineTranslateFields.jsx`,
   `BlogPosts.jsx`, and `SitePagesManagement.jsx` each hardcoded their
