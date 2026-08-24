@@ -26,6 +26,7 @@ import { auditRoutes } from "./core/routeAuditor.js";
 import { paymentConfigMiddleware } from "./config/paymentRouter.js";
 import countryRouter from "./route/country.route.js";
 import translationRouter from "./route/translation.route.js";
+import languageRouter from "./route/language.route.js";
 import sitePageRouter from "./route/sitePage.route.js";
 import dashboardRouter from "./route/dashboard.route.js";
 import seoRouter from "./route/seo.route.js";
@@ -243,6 +244,7 @@ app.use("/api/file", uploadRouter);
 // ── Phase 1: Multi-country endpoints ─────────────────────────────────────────
 app.use("/api/country", countryRouter);
 app.use("/api/translations", translationRouter);
+app.use("/api/languages", languageRouter);
 app.use("/api/admin/dashboard", dashboardRouter);
 // SEO files served at root — must be before API routes
 app.use("/", seoRouter);

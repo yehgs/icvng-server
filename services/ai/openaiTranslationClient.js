@@ -85,6 +85,13 @@ const LANGUAGE_NAMES = {
   ig: "Igbo",
   nl: "Dutch",
   tw: "Twi",
+  // The two GLOBAL_EXTRA_LANGUAGES (config/countries/index.js) that were
+  // missing here — without an entry, languageName() fell back to the raw
+  // code ("hi"/"zh") in the AI prompt instead of the language name, which
+  // still mostly worked but was a weaker, more error-prone prompt than
+  // every other supported language got.
+  hi: "Hindi",
+  zh: "Chinese (Simplified)",
 };
 
 function languageName(code) {

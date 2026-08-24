@@ -175,6 +175,17 @@ export const ROLE_DEFINITIONS = {
       "coupons.view", "coupons.manage",
       "crm.view",
       "pricing.view", // direct-pricing page allowed EDITOR
+      // Editor needs to see/select a partner supplier to enable Partner
+      // Stock on a product (see ProductForm.jsx's canSeePartnerStock —
+      // already true for EDITOR, but the supplier list/quick-create calls
+      // were 403ing with no supplier permission at all, silently blocking
+      // partnership-product creation). suppliers.view only — NOT
+      // suppliers.manage, which unlocks the full Supplier Management
+      // module (bank details, tax info, editing/deleting any supplier).
+      // The lightweight /suppliers/selection endpoint (view-gated) and a
+      // narrowed quick-create-PARTNER-supplier path (see
+      // supplier.controller.js) are what Editor actually needs.
+      "suppliers.view",
       "scraper.use",
       "translations.view", "translations.manage",
       "notifications.view",

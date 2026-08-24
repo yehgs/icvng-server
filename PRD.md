@@ -114,7 +114,7 @@ matters (pricing rights are the current example — see §7).
 | `DIRECTOR` | Yes | Executive — full access, all modules, all countries. |
 | `ACCOUNTANT` | Yes | Finance & pricing owner — invoices, finance entries, pricing (full: general pricing, price list, Direct Pricing, pricing config, price calc/utilities), exchange rates, reports. **There is only ever one Accountant role — no country/"foreign" Accountant accounts.** |
 | `WAREHOUSE` | Yes | HQ inventory — stock, warehouse, purchase-order fulfilment. Same "always HQ" rule as Accountant. |
-| `EDITOR` | Yes | Content & catalog — products, blog, banners, sliders, translations, Direct Pricing (view/limited). Same "always HQ" rule. |
+| `EDITOR` | Yes | Content & catalog — products, blog, banners, sliders, translations, Direct Pricing (view/limited). Same "always HQ" rule. Holds `suppliers.view` (not `suppliers.manage`) so they can pick or quick-create a **PARTNER**-type supplier when enabling Partner Stock on a product — see §10. |
 | `MANAGER` | **No — can be either** | Broad operational access excluding system settings/role/user management. An **HQ Manager** (scope GLOBAL) additionally has pricing-edit rights (product form + Direct Pricing creation); a country/"foreign" Manager does not, even though it's the same subRole — see §7. |
 | `SALES_MANAGER` / `SALES` | No | Orders, customers, CRM, product/order requests. Can be HQ or country-scoped. |
 | `HR` | No | Bounded user management (cannot touch DIRECTOR/IT/MANAGER accounts), stock/warehouse visibility. |
@@ -343,10 +343,79 @@ a genuinely large/slow/costly one-time job.
 **Header language switcher:** `client/src/components/LanguageSelector.jsx`
 (SVG-flag based, via `FlagIcon.jsx`) is the one actually rendered in
 `HeaderTest.jsx` — `LanguageSwitcher.jsx` (emoji-flag based) exists but
-isn't wired into the live header. Both list every code in
-`SUPPORTED_LANGUAGES`, not filtered to the current country's configured
-languages, since these are site-wide UI/content languages independent of
-any market's default (see the note on `GLOBAL_EXTRA_LANGUAGES` above).
+isn't wired into the live header. It now derives its list from
+`SUPPORTED_LANGUAGES`/`LANGUAGE_NAMES` (`i18n/index.js`) instead of a
+separately hand-maintained copy of the same 9 codes (previously a third
+independent copy of this list existed, alongside the admin's own — see
+the `InlineTranslateFields.jsx` fix in §8). Not filtered to the current
+country's configured languages, since these are site-wide UI/content
+languages independent of any market's default (see the note on
+`GLOBAL_EXTRA_LANGUAGES` above).
+
+---
+
+**Manual translation UI didn't match what the pipeline actually supports
+(fixed):** despite the backend already supporting all 9 languages via
+`ALL_SUPPORTED_LANGUAGES` above, `InlineTranslateFields.jsx` — the shared
+component every product/category/subCategory/brand/tag/attribute/color/
+banner/slider/fomo/coupon translation panel is built on — along with
+`BlogPosts.jsx` and `SitePagesManagement.jsx`, each had their own
+hardcoded `ALL_NON_EN = [fr, it]` array instead of reading the real
+language list. So every "Translations" panel in the admin only ever
+offered French/Italian as manual targets, even though es/pt/nl/ar/hi/zh
+translations could already exist in the `Translation` collection (created
+automatically on save, or via a bulk-translate run) — an admin just had
+no UI to see or hand-edit them. All three now derive their language list
+from `SUPPORTED_LANGUAGES`/`LANGUAGE_NAMES` in `admin/src/i18n/index.js`
+(§8a) instead of a separate hardcoded copy.
+
+---
+
+## 8b. Language lib (DB-backed language metadata + CRUD)
+
+Before this, "which languages does the platform support" only existed as
+hardcoded arrays duplicated across several files (`admin/src/i18n/index.js`,
+`client/src/i18n/index.js`, `client/src/components/LanguageSelector.jsx`,
+plus the three admin translation-panel files fixed above) — all agreeing
+on the same 9 codes (en, fr, it, es, pt, nl, ar, hi, zh) by discipline, not
+by a single source of truth, and changing the set meant editing source in
+several places and redeploying.
+
+`models/language.model.js` is a new collection giving that list a
+database-backed metadata layer: `code`, `name` (English), `nativeName`,
+`flagEmoji`, `isRTL`, `isActive`, `sortOrder`. It does **not** replace
+`ALL_SUPPORTED_LANGUAGES` as the source of truth for which codes the
+`Translation` model's `language` field will accept — that's still a
+static export because Mongoose enums resolve at schema-compile time, so
+it can't read a collection synchronously at boot. The Language collection
+is the editable *metadata* layer on top: display name, native name, flag,
+RTL, and an active/inactive toggle (deactivating hides a language from
+switchers without touching any of its existing `Translation` documents).
+
+- **API:** `GET /api/languages/active` (public — client/admin switchers),
+  `GET /api/languages` (admin, all languages including inactive), `POST /
+  PUT /:languageId / DELETE /:languageId` (admin CRUD) — see
+  `controllers/language.controller.js` / `route/language.route.js`.
+  Gated on `translations.view`/`translations.manage` (same permissions
+  that already govern the rest of the content-translation system —
+  EDITOR/MANAGER/IT/DIRECTOR all hold at least one), `hqOnly: true`.
+  `code` is create-only, never editable after (every `Translation`
+  document and the AI pipeline key off it). English (`en`) can't be
+  deactivated or deleted — it's the master content language every
+  translatable field is authored in by default.
+- **Admin UI:** `admin/src/pages/settings/LanguageManagement.jsx`
+  (`/admin/languages`, nav under Settings — IT/DIRECTOR/EDITOR, matching
+  the "always HQ" subRoles; MANAGER can reach it directly if HQ-scoped,
+  but isn't shown the nav link since a country-scoped Manager would just
+  hit the `hqOnly` guard).
+- **Seed script:** `node scripts/seedLanguages.js` inputs the same 9
+  languages into the collection (idempotent — upserts by `code`, skips
+  existing rows unless `--force`, which never touches `isActive` so it
+  can't silently re-enable something an admin turned off).
+- Adding a language here makes it *selectable*, but doesn't retroactively
+  translate existing content — follow up with
+  `node scripts/bulkTranslateContent.js --languages=<code>` (§8) to
+  backfill product/category/subCategory/blog/etc. content into it.
 
 ---
 
@@ -388,10 +457,50 @@ Non-exhaustive map of `server/controllers` by domain:
   Delivery" price in every UI. Legacy naming, don't rename the field — see
   `PRODUCT_VISIBILITY_RULES.md`.
 - **Partner/supplier stock**: an NG-specific arrangement today
-  (`canSeePartnerStock` gates on `isGlobalAdmin || countryScope === "NG"`).
+  (`canSeePartnerStock` gates on `isGlobalAdmin || countryScope === "NG"` —
+  this already covers EDITOR, since EDITOR is unconditionally
+  `isGlobalAdmin` per `HQ_ONLY_SUBROLES`). Enabling it on a product
+  requires picking or creating a supplier, which is a *separate* permission
+  gate (`suppliers.view`/`suppliers.manage`, see below) — don't assume
+  `canSeePartnerStock === true` alone means a role can finish the flow.
+- **Supplier permissions are two-tier, and matter for partner-stock
+  products specifically**: `suppliers.manage` (DIRECTOR/IT only — see
+  `AdminSidebar` nav gating) unlocks the full Supplier Management module
+  (procurement, bank/tax details, edit/delete any supplier) via `GET/PUT/
+  DELETE /suppliers*` and `POST /suppliers` for a **FULL** supplier record.
+  `suppliers.view` (EDITOR, WAREHOUSE, and — via scope, not subRole — an
+  HQ Manager) only unlocks the lightweight `GET /suppliers/selection`
+  endpoint (name/email/phone/**supplierType**, `ACTIVE` only — used by
+  `ProductForm.jsx`'s Partner Stock supplier dropdown) plus a *narrowed*
+  `POST /suppliers`: `createSupplierController` requires `suppliers.manage`
+  for anything except a minimal `supplierType: "PARTNER"` record (name
+  required, email/phone optional, no address/contactPerson/bankDetails/
+  taxInfo/paymentTerms/non-default status) — submitting anything beyond
+  that with only `suppliers.view` gets a 403, not a silent strip. Before
+  this was added, `suppliers.view`-only roles (EDITOR included) had *no*
+  usable path to select or create a partner supplier at all — the old
+  `GET /suppliers` used by the form required `suppliers.manage`, so the
+  Partner Stock section rendered (per `canSeePartnerStock` above) but the
+  supplier field inside it always came up empty and uncreatable.
 - **A product with no way for a customer to buy it** (no online stock, no
   partner stock, no matching-type delivery price) is force-set to `DRAFT`
-  on save, regardless of what `publish` value was submitted.
+  on save, regardless of what `publish` value was submitted — on both
+  create and update. `ProductForm.jsx`'s client-side validation no longer
+  hard-blocks submission when pricing is missing (it did previously,
+  duplicating this server-side safeguard as a dead-end error instead of
+  letting it do its job) — the amber "will be hidden from shop" banner is
+  informational only now; submission always proceeds and the server
+  decides the resulting `publish` status.
+- **Subcategory dropdown caching**: `admin/src/utils/categoryService.js`
+  caches the flat category and subcategory lists client-side for 5 minutes
+  (shared across every consumer — `ProductForm.jsx`, filter dropdowns,
+  etc.). `CategoryManagement.jsx` calls `clearCategoryCache()` after every
+  category create/update/delete; `SubCategoryManagement.jsx` must do the
+  same after every subcategory create/update/delete, or a subcategory
+  created there won't appear in `ProductForm.jsx`'s subcategory dropdown
+  for up to 5 minutes (this was previously missing — the most common way
+  to hit it: create a subcategory, then immediately go create a product
+  using it).
 
 ---
 
@@ -409,6 +518,57 @@ Non-exhaustive map of `server/controllers` by domain:
 
 ## 12. Change log (high-signal only — not every commit)
 
+- **Language lib made admin-manageable + translation UI expanded past
+  fr/it** — two related fixes. (1) `InlineTranslateFields.jsx`,
+  `BlogPosts.jsx`, and `SitePagesManagement.jsx` each hardcoded their
+  manual-translation language picker to just `[fr, it]`, even though the
+  backend (`ALL_SUPPORTED_LANGUAGES`) already supported all 9 — fixed to
+  read `SUPPORTED_LANGUAGES`/`LANGUAGE_NAMES` from `admin/src/i18n/index.js`
+  instead, immediately unlocking es/pt/nl/ar/hi/zh across product,
+  category, subCategory, brand, tag, attribute, color, banner, slider,
+  fomo, coupon, blog, and site-page translation panels in one shared fix.
+  Also added the two missing language names (`hi`, `zh`) to
+  `openaiTranslationClient.js`'s prompt-facing name map. (2) New
+  `Language` collection + CRUD (`models/language.model.js`,
+  `controllers/language.controller.js`, `route/language.route.js` at
+  `/api/languages`, admin page `LanguageManagement.jsx` at
+  `/admin/languages`) makes the language list itself admin-manageable
+  instead of only existing as hardcoded arrays; `scripts/seedLanguages.js`
+  seeds it with the same 9 languages. Also deduplicated
+  `client/src/components/LanguageSelector.jsx`'s own separately-maintained
+  copy of the same list to import from `i18n/index.js` instead. See §8/§8a/§8b.
+- **HQ Editor couldn't complete partner/partnership product creation** —
+  `canSeePartnerStock` already correctly showed the Partner Stock section
+  to EDITOR, but `ProductForm.jsx` fetched suppliers via `GET /suppliers`
+  (requires `suppliers.manage`) and quick-created a partner supplier via
+  `POST /suppliers` (also `suppliers.manage`) — EDITOR held neither
+  permission, so both calls 403'd and the required Supplier field could
+  never be filled in, even though the section itself was visible. Fixed by:
+  granting EDITOR `suppliers.view`; switching `ProductForm.jsx` to the
+  lightweight `GET /suppliers/selection` endpoint (view-gated, and now
+  includes `supplierType` in its projection so the PARTNER-only dropdown
+  filter actually filters); and narrowing `POST /suppliers` to accept
+  `suppliers.view`-only callers for a minimal `supplierType: "PARTNER"`
+  record only (name required; email/phone optional; no
+  address/bankDetails/taxInfo/paymentTerms/non-default status — those
+  still 403 without `suppliers.manage`). Also benefits WAREHOUSE and an HQ
+  Manager, who held the same `suppliers.view`-only gap. See §10.
+- **Product creation no longer hard-blocks on missing pricing** —
+  `ProductForm.jsx`'s client-side `validateForm()` treated "no BTC/2-week/
+  5-week price set" as a blocking error, refusing to submit at all. The
+  server already force-saves such a product as `DRAFT`
+  (`isProductPurchasable`/`effectivePublish` in `product.controller.js`,
+  unchanged) — the client-side check just duplicated that as a dead end
+  instead of letting it work, blocking an Editor from saving progress on a
+  product mid-setup (e.g. everything filled in except pricing, added later
+  by Accounting). Removed the block; the amber "will be hidden from shop"
+  warning still explains the consequence, submission now always proceeds.
+- **Subcategories created via SubCategoryManagement.jsx weren't showing up
+  in ProductForm.jsx** — `categoryService.js`'s 5-minute client cache was
+  invalidated on category create/update/delete (`CategoryManagement.jsx`
+  calls `clearCategoryCache()`) but not on the equivalent subcategory
+  actions. Added the same `clearCategoryCache()` calls to
+  `SubCategoryManagement.jsx`'s create/update/delete handlers. See §10.
 - **Base64-image-paste bug found & fixed** — the OpenAI translation
   failures ("input exceeds the context window") on two blog posts traced
   to pasted/dropped images being embedded as base64 directly in the post's

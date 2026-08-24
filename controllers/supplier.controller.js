@@ -1,6 +1,7 @@
 // controllers/supplier.controller.js
 import SupplierModel from "../models/supplier.model.js";
 import generateSlug from "../utils/generateSlug.js";
+import { userHasPermission } from "../middleware/requirePermission.js";
 
 export const createSupplierController = async (request, response) => {
   try {
@@ -17,6 +18,38 @@ export const createSupplierController = async (request, response) => {
       notes,
       supplierType, // 'PARTNER' (quick-create, minimal info) or 'FULL' (complete record)
     } = request.body;
+
+    // The route accepts suppliers.view OR suppliers.manage (see
+    // supplier.route.js) so an Editor/Warehouse/HQ-Manager can quick-create
+    // a PARTNER supplier inline from ProductForm.jsx's Partner Stock
+    // section — but only suppliers.manage may create a FULL procurement
+    // supplier record (bank details, tax info, payment terms) or set a
+    // status other than the default ACTIVE. A view-only caller trying to
+    // create anything other than a minimal PARTNER record is refused
+    // outright rather than silently stripped, since unlike the
+    // product/subCategory image-only patterns, there's no "partial save"
+    // that makes sense for a supplier — better to tell them clearly than
+    // let them think a full record was saved when it wasn't.
+    const hasManage = userHasPermission(request.user, "suppliers.manage");
+    if (!hasManage && supplierType !== "PARTNER") {
+      return response.status(403).json({
+        message:
+          "You can only quick-create a partner supplier (name only). Full supplier records require Procurement/Accounting access.",
+        error: true,
+        success: false,
+      });
+    }
+    const sensitiveFieldsSubmitted =
+      address || contactPerson || bankDetails || taxInfo || paymentTerms ||
+      (status && status !== "ACTIVE");
+    if (!hasManage && sensitiveFieldsSubmitted) {
+      return response.status(403).json({
+        message:
+          "Partner supplier quick-create only supports name, email, and phone. Full supplier details require Procurement/Accounting access.",
+        error: true,
+        success: false,
+      });
+    }
 
     // Only name is required — email and phone are optional for partner suppliers
     if (!name || !name.trim()) {
@@ -321,9 +354,14 @@ export const deleteSupplierController = async (request, response) => {
 // Get suppliers for dropdown/selection
 export const getSuppliersForSelection = async (request, response) => {
   try {
+    // supplierType is included so consumers like ProductForm.jsx's Partner
+    // Stock supplier dropdown can filter to PARTNER-type suppliers only —
+    // without it every active supplier (including full/procurement ones)
+    // was showing up there, since the client-side filter treats a missing
+    // supplierType as "show it".
     const suppliers = await SupplierModel.find(
       { status: "ACTIVE" },
-      "name email phone _id",
+      "name email phone supplierType _id",
     ).sort({ name: 1 });
 
     return response.json({
