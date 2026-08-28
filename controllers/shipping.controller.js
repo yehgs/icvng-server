@@ -3155,8 +3155,35 @@ export const getTrackingByNumber = async (request, response) => {
   try {
     const { trackingNumber } = request.params;
 
+    // COUNTRY SCOPING — this is a PUBLIC endpoint (no auth), so the
+    // countryScopedPlugin's hooks do NOT fire: they only engage when the
+    // AsyncLocalStorage context carries a countryScope, and that is null for
+    // unauthenticated traffic. Without an explicit filter, a visitor on
+    // i-coffee.it could read a Nigerian shipment's status, address and
+    // carrier just by guessing/knowing a tracking number.
+    //
+    // req.countryCode comes from countryDetect via the storefront's
+    // X-Storefront-Host header, so it reflects the site the customer is
+    // actually on. A tracking number that belongs to another country is
+    // reported as simply not found — deliberately identical to the genuine
+    // not-found response, so this can't be used to probe which country a
+    // tracking number belongs to.
+    const storefrontCountry = request.countryCode || DEFAULT_COUNTRY;
+
     const tracking =
       await ShippingTrackingModel.getByTrackingNumber(trackingNumber);
+
+    if (
+      tracking &&
+      tracking.countryCode &&
+      tracking.countryCode !== storefrontCountry
+    ) {
+      return response.status(404).json({
+        message: "Tracking number not found",
+        error: true,
+        success: false,
+      });
+    }
 
     if (!tracking) {
       return response.status(404).json({

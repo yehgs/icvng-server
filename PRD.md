@@ -474,16 +474,20 @@ static locale files — it's an override layer on top:
   `icvng-admin`/`icvng-client` sibling-folder convention as
   `translateUiLocales.js`, same `--admin-dir=`/`--client-dir=` override)
   into dot-path keys and upserts one row per key/language. Idempotent and
-  incremental: skips a row already marked `isEdited` (protects hand edits
-  from the admin CRUD) and skips a row whose value already matches the
-  file (no-op writes). `--force-edited` overrides the edited-row
-  protection (rare — mainly right after a locale file was deliberately
+  incremental by default: skips a row already marked `isEdited` (protects
+  hand edits from the admin CRUD) and skips a row whose value already
+  matches the file (no-op) — re-running it on data it's already imported
+  reports mostly "skipped (unchanged)", which is expected, not a failure.
+  `--force` bypasses both checks and unconditionally reimports every key
+  from the files, including hand-edited rows (resets `isEdited` back to
+  `false` — use deliberately, mainly right after a locale file was
   rewritten wholesale and should now win over any prior hand edits).
-  `--dry-run` reports counts without writing. Must be re-run any time
-  `en.js` (or another locale file) gains new keys, or the new keys simply
-  won't exist in the DB-editable table yet (the live apps still work
-  fine in the meantime — they fall back to whatever's bundled in the
-  static file, same as any key with no DB override).
+  `--dry-run` reports counts (including what `--force` would touch)
+  without writing. Must be re-run any time `en.js` (or another locale
+  file) gains new keys, or the new keys simply won't exist in the
+  DB-editable table yet (the live apps still work fine in the
+  meantime — they fall back to whatever's bundled in the static file,
+  same as any key with no DB override).
 
 ---
 

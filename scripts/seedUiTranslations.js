@@ -21,10 +21,15 @@
  * Manual-edit protection, same discipline as the content-translation
  * pipeline (translationService.js) and seedLanguages.js: a row an admin
  * has hand-edited via the CRUD page (`isEdited: true`) is left alone on a
- * normal re-run — only missing/never-edited rows are (re)written from the
- * static files. Pass --force-edited to override that and blow away hand
- * edits too (rare — mainly right after a big rewrite of a static locale
- * file that should now be considered the new source of truth).
+ * normal re-run, and a row whose value already matches the file is a
+ * no-op — only missing or genuinely-changed rows are written. That's why
+ * re-running the script on data it already imported reports mostly
+ * "skipped (unchanged)" — that's expected, not a failure, it means the DB
+ * already matches the files. Pass --force to bypass BOTH of those checks
+ * and unconditionally reimport every key from the files (overwrites hand
+ * edits too — use deliberately, e.g. right after a locale file was
+ * rewritten wholesale and should now be treated as the new source of
+ * truth for everything, not just what's missing).
  *
  * WHERE THIS RUNS: like translateUiLocales.js, this reads files from the
  * ADMIN and CLIENT repos, not just this server repo — sibling folders by
@@ -33,7 +38,10 @@
  *
  * Usage:
  *   node scripts/seedUiTranslations.js
- *     → both apps, every language file found in each app's locales/ folder
+ *     → both apps, every language file found in each app's locales/ folder.
+ *       Incremental — only creates missing rows and updates genuinely
+ *       changed ones; already-imported unchanged rows are skipped on
+ *       purpose (see "Manual-edit protection" above).
  *
  *   node scripts/seedUiTranslations.js --app=admin
  *     → just the admin panel
@@ -42,13 +50,18 @@
  *     → restrict to specific languages (en is always included regardless —
  *       it's the baseline every key list is built from)
  *
- *   node scripts/seedUiTranslations.js --force-edited
- *     → also overwrite rows an admin has hand-edited via the CRUD page
- *       (normally skipped — see "Manual-edit protection" above)
+ *   node scripts/seedUiTranslations.js --force
+ *     → full unconditional reimport: every key/language gets its value
+ *       overwritten from the file, nothing is skipped — including rows
+ *       an admin hand-edited via the CRUD page (isEdited is reset to
+ *       false, since the file is being treated as authoritative again).
+ *       This is what "reimport everything, don't skip what's already
+ *       there" means.
  *
  *   node scripts/seedUiTranslations.js --dry-run
  *     → report how many rows would be created/updated/skipped per
- *       app/language, without writing anything
+ *       app/language, without writing anything (respects --force too, so
+ *       you can preview exactly what a --force run would touch)
  */
 
 import "dotenv/config";
@@ -72,7 +85,7 @@ const getList = (name) => {
 
 const requestedApps = getList("app") || ["admin", "client"];
 const requestedLanguages = getList("languages"); // null = every file found
-const FORCE_EDITED = args.includes("--force-edited");
+const FORCE = args.includes("--force");
 const DRY_RUN = args.includes("--dry-run");
 
 const ADMIN_DIR = getArg("admin-dir") || path.resolve(__dirname, "../../icvng-admin");
@@ -148,26 +161,35 @@ async function seedApp(app) {
     console.log(`  → ${app}/${lang}: ${flat.length} keys`);
 
     for (const [key, value] of flat) {
-      if (DRY_RUN) {
-        created += 1; // dry-run: just count what WOULD be touched, don't distinguish create/update
-        continue;
-      }
-
       const existing = await UiTranslationModel.findOne({ app, key, language: lang });
+
       if (existing) {
-        if (existing.isEdited && !FORCE_EDITED) {
-          skippedEdited += 1;
-          continue;
+        if (!FORCE) {
+          if (existing.isEdited) {
+            skippedEdited += 1;
+            continue;
+          }
+          if (existing.value === value) {
+            skippedUnchanged += 1;
+            continue;
+          }
         }
-        if (existing.value === value && !existing.isEdited) {
-          skippedUnchanged += 1;
+        // --force reaches here even when isEdited or value-matches would
+        // otherwise have skipped it — that's the "don't skip already
+        // imported data" behavior.
+        if (DRY_RUN) {
+          updated += 1;
           continue;
         }
         existing.value = value;
-        if (FORCE_EDITED) existing.isEdited = false; // re-seeding over a hand-edit resets it to "from file" status
+        if (FORCE) existing.isEdited = false; // file is authoritative again
         await existing.save();
         updated += 1;
       } else {
+        if (DRY_RUN) {
+          created += 1;
+          continue;
+        }
         await UiTranslationModel.create({ app, key, language: lang, value, isEdited: false });
         created += 1;
       }
@@ -178,12 +200,15 @@ async function seedApp(app) {
 }
 
 async function main() {
-  if (!DRY_RUN) await connectDB();
+  // Dry-run now reads the DB too (to report accurate created/updated/
+  // skipped counts, not just a lump estimate) — only writes are skipped,
+  // so the connection is needed either way.
+  await connectDB();
 
   console.log(
     `→ Seeding UI translations${DRY_RUN ? " [DRY RUN]" : ""} — apps: ${requestedApps.join(", ")}` +
       (requestedLanguages ? `, languages: en,${requestedLanguages.join(",")}` : ", languages: all found") +
-      (FORCE_EDITED ? " [--force-edited: overwriting hand edits too]" : ""),
+      (FORCE ? " [--force: reimporting everything, including hand edits]" : ""),
   );
 
   const totals = { created: 0, updated: 0, skippedEdited: 0, skippedUnchanged: 0 };

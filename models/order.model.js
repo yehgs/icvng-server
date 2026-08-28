@@ -304,6 +304,21 @@ const orderSchema = new mongoose.Schema(
       required: function () {
         return this.isWebsiteOrder === false;
       },
+
+    // ── SALES AGENT SNAPSHOT (manual orders) ──────────────────────────────
+    // `createdBy` is a live ref: populate it and you get whatever the user
+    // looks like TODAY. For commission, attribution and audit we need who
+    // made the sale AT THE TIME — an agent who has since changed subRole,
+    // moved country, or left the company must not rewrite history.
+    // Populated by createAdminOrderController; null on website orders.
+    salesAgent: {
+      userId: { type: mongoose.Schema.ObjectId, ref: "User", default: null },
+      name: { type: String },
+      email: { type: String },
+      subRole: { type: String },
+      countryCode: { type: String, uppercase: true, trim: true },
+      recordedAt: { type: Date },
+    },
       index: true,
     },
 

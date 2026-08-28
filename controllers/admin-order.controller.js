@@ -7,6 +7,28 @@ import mongoose from "mongoose";
 import { generateInvoiceTemplate } from "../utils/invoiceTemplate.js";
 import sendEmail from "../config/sendEmail.js";
 import { logActivity } from "../utils/activityLogger.js";
+// Country-scoped customer notifications on status transitions. Until now
+// updateOrderStatusController wrote the new status and returned — no email
+// was EVER sent to a customer when an admin changed a payment or order
+// status, in any country.
+import {
+  paymentStatusEmail,
+  orderStatusEmail,
+  resolveEmailCountry,
+  subjectFor,
+} from "../utils/countryEmailTemplates.js";
+import { sendCountryEmail } from "../config/emailService.js";
+import { ALL_COUNTRY_CODES, getCountryByCode } from "../config/countries/index.js";
+// Canonical storefront purchasability/stock rules, so manual orders can
+// never sell something the storefront refuses to sell (or refuse something
+// the storefront happily sells). See utils/manualOrderValidation.js.
+import {
+  isProductSellable,
+  resolveCategorySlugs,
+  getManualOrderUnitPrice,
+  priceOptionConsumesStock,
+  getEffectiveOnlineStock,
+} from "../utils/manualOrderValidation.js";
 
 // Helper functions
 const getProductPrice = (product, priceOption = "regular") => {
@@ -31,17 +53,34 @@ export const createAdminOrderController = async (request, response) => {
     const userId = request.userId;
     const user = await UserModel.findById(userId);
 
-    if (user.role !== "ADMIN" || user.subRole !== "SALES") {
+    // ── ROLE GUARD ────────────────────────────────────────────────────────
+    // BUGFIX: this previously read `user.subRole !== "SALES"`, which 403'd
+    // IT, DIRECTOR and MANAGER out of manual order creation entirely — and
+    // made the `["IT","MANAGER","DIRECTOR"]` customer-ownership exemption 40
+    // lines below unreachable dead code, since those roles could never get
+    // past this gate to reach it.
+    const MANUAL_ORDER_SUBROLES = ["SALES", "MANAGER", "IT", "DIRECTOR"];
+    if (user.role !== "ADMIN" || !MANUAL_ORDER_SUBROLES.includes(user.subRole)) {
       return response.status(403).json({
-        message: "Only sales agents can create orders",
+        message: "You do not have permission to create manual orders",
         error: true,
       });
     }
 
+    const isGlobalManualOrderAdmin = ["IT", "DIRECTOR"].includes(user.subRole);
+
     const {
       customerId,
       items,
+      // `orderType` is accepted but no longer trusted — manual orders are
+      // BTC-only now (see below). Kept in the destructure so an older admin
+      // build still posting orderType:"BTB" gets a clear 400 rather than a
+      // confusing schema error.
       orderType,
+      // Country the order belongs to. Only meaningful for IT/DIRECTOR, who
+      // can raise an order on behalf of any market; everyone else is pinned
+      // to their own scope regardless of what they send.
+      countryCode: requestedCountryCode,
       orderMode,
       paymentMethod,
       deliveryAddress,
@@ -54,6 +93,44 @@ export const createAdminOrderController = async (request, response) => {
       sendInvoiceEmail = false,
     } = request.body;
 
+    // ── BTC-ONLY ──────────────────────────────────────────────────────────
+    // Business decision (2026-08-28): the manual order system handles
+    // business-to-customer sales only. BTB pricing/stock paths are retired.
+    // Rejected loudly rather than silently coerced, so a stale admin build
+    // posting BTB is visible instead of quietly writing BTC-priced orders
+    // that a sales agent believes are BTB.
+    if (orderType && orderType !== "BTC") {
+      return response.status(400).json({
+        message:
+          "Manual orders are BTC-only. BTB ordering has been retired — create the customer as BTC.",
+        error: true,
+      });
+    }
+    const resolvedOrderType = "BTC";
+
+    // ── COUNTRY OF RECORD ─────────────────────────────────────────────────
+    // BUGFIX: this used to be decided further down as
+    // `request.countryScope || request.countryCode || "NG"`. For IT/DIRECTOR
+    // countryScope is null (they are GLOBAL), so it fell through to the
+    // domain-detected country — which for the admin panel is always the
+    // admin host, i.e. NG. A director therefore could not raise a Togo
+    // manual order at all; every order they created was stamped Nigeria.
+    let orderCountryCode;
+    if (isGlobalManualOrderAdmin) {
+      const requested = (requestedCountryCode || "").toUpperCase();
+      if (requested && !ALL_COUNTRY_CODES.includes(requested)) {
+        return response.status(400).json({
+          message: `Unknown country code: ${requested}`,
+          error: true,
+        });
+      }
+      orderCountryCode = requested || request.countryCode || "NG";
+    } else {
+      // Country-scoped roles (SALES, MANAGER) are pinned to their own
+      // country. Anything they send in the body is ignored, not merged.
+      orderCountryCode = request.countryScope || request.countryCode || "NG";
+    }
+
     const customer = await CustomerModel.findById(customerId);
     if (!customer) {
       return response.status(404).json({
@@ -62,7 +139,19 @@ export const createAdminOrderController = async (request, response) => {
       });
     }
 
-    if (!["IT", "MANAGER", "DIRECTOR"].includes(user.subRole)) {
+    // ── CUSTOMER COUNTRY MATCH ────────────────────────────────────────────
+    // A customer belongs to exactly one country. Raising an order for a
+    // customer outside the order's country would create a record neither
+    // country's staff can consistently see, and would send the customer an
+    // email branded for the wrong market.
+    if (customer.countryCode && customer.countryCode !== orderCountryCode) {
+      return response.status(403).json({
+        message: `Customer belongs to ${customer.countryCode}; cannot create a ${orderCountryCode} order for them.`,
+        error: true,
+      });
+    }
+
+    if (!isGlobalManualOrderAdmin && user.subRole !== "MANAGER") {
       if (
         customer.createdBy?.toString() !== userId &&
         !customer.isWebsiteCustomer
@@ -108,25 +197,48 @@ export const createAdminOrderController = async (request, response) => {
           throw new Error(`Product with ID ${item.productId} not found`);
         }
 
-        const availableStock = product.warehouseStock?.enabled
-          ? product.warehouseStock.offlineStock || 0
-          : product.stock || 0;
+        // ── COUNTRY GATE ────────────────────────────────────────────────
+        // A product belonging to another market must not be sellable into
+        // this order. Legacy products with no countryCode are allowed
+        // through, matching countryScopedPlugin's own legacy fallback.
+        if (product.countryCode && product.countryCode !== orderCountryCode) {
+          throw new Error(
+            `${product.name} is not available in ${orderCountryCode}`,
+          );
+        }
 
-        if (availableStock < item.quantity) {
+        // ── STOREFRONT PARITY VALIDATION ────────────────────────────────
+        // Same rule the customer-facing site applies (PRODUCT_VISIBILITY_
+        // RULES.md §3/§4), via the shared helper rather than a local copy.
+        // The previous inline check read warehouseStock.offlineStock and
+        // ignored partnerStock entirely, so partner-supplied stock read as
+        // zero and the agent was blocked from selling it.
+        const categorySlugs = await resolveCategorySlugs(product, session);
+        const sellable = isProductSellable(product, categorySlugs);
+        if (!sellable.sellable) {
+          throw new Error(`${product.name}: ${sellable.reason}`);
+        }
+
+        const priceOption = item.priceOption || "regular";
+        const consumesStock = priceOptionConsumesStock(priceOption);
+        const availableStock = getEffectiveOnlineStock(product);
+
+        // Special-order (2/5-week) lines are supplier-sourced and hold no
+        // local stock, so they are exempt from the stock check — and must
+        // not decrement it later either.
+        if (consumesStock && availableStock < item.quantity) {
           throw new Error(
             `Insufficient stock for ${product.name}. Available: ${availableStock}, Required: ${item.quantity}`,
           );
         }
 
-        let unitPrice;
-        if (orderType === "BTB") {
-          unitPrice = product.btbPrice || product.price;
-        } else {
-          unitPrice = getProductPrice(product, item.priceOption);
-        }
+        // BTC pricing only — BTB is retired (see the guard at the top).
+        const unitPrice = getManualOrderUnitPrice(product, priceOption);
 
         if (!unitPrice || unitPrice <= 0) {
-          throw new Error(`Invalid price for product ${product.name}`);
+          throw new Error(
+            `No valid BTC price for ${product.name} (${priceOption})`,
+          );
         }
 
         const itemSubtotal = unitPrice * item.quantity;
@@ -139,16 +251,47 @@ export const createAdminOrderController = async (request, response) => {
         groupTotals.subTotal += itemSubtotal;
         groupTotals.grandTotal += itemTotal;
 
-        if (product.warehouseStock?.enabled) {
-          const newOfflineStock =
-            (product.warehouseStock.offlineStock || 0) - item.quantity;
+        // ── STOCK DECREMENT ─────────────────────────────────────────────
+        // Skipped entirely for special-order (2/5-week) lines: those are
+        // supplier-sourced, hold no local inventory, and decrementing for
+        // them silently drained stock that was never reserved.
+        //
+        // Note this now writes to ONLINE stock, matching the pool the
+        // validation above reads. The old code validated against
+        // offlineStock and then decremented offlineStock, which was
+        // self-consistent but measured a different pool from the storefront
+        // — so a manual sale never reduced what the website could sell.
+        if (!consumesStock) {
+          // no-op: special order, nothing to draw down locally
+        } else if (product.partnerStock?.enabled) {
+          const newPartnerQty =
+            (product.partnerStock.quantity || 0) - item.quantity;
+          await ProductModel.findByIdAndUpdate(
+            item.productId,
+            {
+              "partnerStock.quantity": newPartnerQty,
+              "partnerStock.lastUpdated": new Date(),
+            },
+            { session },
+          );
+          stockUpdates.push({
+            productId: item.productId,
+            productName: product.name,
+            quantityDeducted: item.quantity,
+            source: "partnerStock",
+            previousStock: product.partnerStock.quantity || 0,
+            newStock: newPartnerQty,
+          });
+        } else if (product.warehouseStock?.enabled) {
+          const newOnlineStock =
+            (product.warehouseStock.onlineStock || 0) - item.quantity;
           const newFinalStock =
             (product.warehouseStock.finalStock || 0) - item.quantity;
 
           await ProductModel.findByIdAndUpdate(
             item.productId,
             {
-              "warehouseStock.offlineStock": newOfflineStock,
+              "warehouseStock.onlineStock": newOnlineStock,
               "warehouseStock.finalStock": newFinalStock,
               "warehouseStock.lastUpdated": new Date(),
               "warehouseStock.updatedBy": userId,
@@ -160,8 +303,9 @@ export const createAdminOrderController = async (request, response) => {
             productId: item.productId,
             productName: product.name,
             quantityDeducted: item.quantity,
-            previousOfflineStock: product.warehouseStock.offlineStock || 0,
-            newOfflineStock,
+            source: "warehouseStock.onlineStock",
+            previousStock: product.warehouseStock.onlineStock || 0,
+            newStock: newOnlineStock,
           });
         } else {
           const newStock = (product.stock || 0) - item.quantity;
@@ -195,7 +339,7 @@ export const createAdminOrderController = async (request, response) => {
           parentOrderId: isParent ? null : firstOrderId,
           orderSequence: index + 1,
           totalItemsInGroup: items.length,
-          orderType,
+          orderType: resolvedOrderType,
           orderMode,
           isWebsiteOrder: false,
           productId: item.productId,
@@ -213,13 +357,13 @@ export const createAdminOrderController = async (request, response) => {
           tax_amount: taxAmount / items.length,
           shipping_cost: shippingCostPerItem,
           totalAmt: itemTotal,
-          currency: "NGN",
-          // Item #7: manual/offline orders need the same country stamping
-          // as website orders — prefer the creating admin's own assigned
-          // country (req.countryScope) so a Togo admin's manual order is
-          // correctly attributed to Togo; GLOBAL admins fall back to the
-          // domain-detected country like every other order path.
-          countryCode: request.countryScope || request.countryCode || "NG",
+          // Currency follows the ORDER's country, not a hardcoded NGN — a
+          // Togo manual order is XOF, an Italian one EUR. Hardcoding NGN
+          // here meant every non-NG manual order was denominated wrongly on
+          // the order record, the invoice and the customer email.
+          currency:
+            getCountryByCode(orderCountryCode)?.currency?.code || "NGN",
+          countryCode: orderCountryCode,
           groupTotals: isParent ? groupTotals : {},
           payment_status: paymentMethod === "CASH" ? "PENDING" : "PENDING",
           payment_method: paymentMethod,
@@ -228,7 +372,21 @@ export const createAdminOrderController = async (request, response) => {
           deliveryAddress: deliveryAddress || customer.address,
           delivery_address: null,
           shippingMethod: shippingMethodId || null,
+          // ── SALES AGENT ATTRIBUTION ──────────────────────────────────
+          // `createdBy` is the acting admin. `salesAgent` snapshots WHO
+          // made the sale at the time it was made, including their subRole
+          // and country, so attribution survives the agent later changing
+          // role, moving country, or leaving — which a populated ref alone
+          // does not.
           createdBy: userId,
+          salesAgent: {
+            userId,
+            name: user.name,
+            email: user.email,
+            subRole: user.subRole,
+            countryCode: user.assignedCountry || orderCountryCode,
+            recordedAt: new Date(),
+          },
           notes,
           customer_notes: customerNotes,
           invoiceGenerated: false,
@@ -379,6 +537,7 @@ export const getAllOrdersController = async (request, response) => {
       sortOrder = "desc",
       startDate,
       endDate,
+      countryCode,
     } = request.query;
 
     let query = {};
@@ -432,7 +591,15 @@ export const getAllOrdersController = async (request, response) => {
     //     (MANAGER, SALES, ACCOUNTANT, etc.) would otherwise see every
     //     country's orders too.
     if (isGlobalOrderViewer) {
-      // no country filter
+      // Unrestricted by default — but IT/DIRECTOR can narrow the cross-country
+      // view to one country with ?countryCode=TG, which is what backs the
+      // country filter dropdown in WebsiteOrderManagement.jsx. Validated
+      // against ALL_COUNTRY_CODES so a junk value can't produce an empty list
+      // that looks like "no orders exist".
+      const requestedCountry = (countryCode || "").toUpperCase();
+      if (requestedCountry && ALL_COUNTRY_CODES.includes(requestedCountry)) {
+        query = { $and: [query, { countryCode: requestedCountry }] };
+      }
     } else if (request.countryScope) {
       query = { $and: [query, { countryCode: request.countryScope }] };
     } else {
@@ -476,10 +643,31 @@ export const getAllOrdersController = async (request, response) => {
       OrderModel.countDocuments(query),
     ]);
 
+    // Per-country counts for the cross-country view. Only computed for
+    // IT/DIRECTOR — everyone else's list is single-country by construction, so
+    // the breakdown would be a pointless extra aggregation on every page load.
+    //
+    // NOTE: this deliberately drops the pagination-only parts of `query` and
+    // keeps the filters, so the breakdown describes the whole filtered result
+    // set rather than the current page.
+    let countryBreakdown = null;
+    if (isGlobalOrderViewer) {
+      const rows = await OrderModel.aggregate([
+        { $match: query },
+        { $group: { _id: "$countryCode", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]);
+      countryBreakdown = rows.map((r) => ({
+        countryCode: r._id || "NG",
+        count: r.count,
+      }));
+    }
+
     return response.json({
       message: "Orders retrieved successfully",
       data: {
         docs: orders,
+        countryBreakdown,
         totalDocs: totalCount,
         limit: parseInt(limit),
         page: parseInt(page),
@@ -561,6 +749,12 @@ export const updateOrderStatusController = async (request, response) => {
       updateData.actual_delivery = new Date();
     }
 
+    // Capture the PRE-update values so we only email on an actual transition —
+    // re-saving the same status (common when an admin edits notes) must not
+    // re-notify the customer.
+    const previousPaymentStatus = order.payment_status;
+    const previousOrderStatus = order.order_status;
+
     const updatedOrder = await OrderModel.findByIdAndUpdate(
       orderId,
       updateData,
@@ -569,6 +763,60 @@ export const updateOrderStatusController = async (request, response) => {
       .populate("userId", "name email")
       .populate("customerId", "name email companyName")
       .populate("createdBy", "name email");
+
+    // ── Country-scoped customer notifications ────────────────────────────────
+    // Branded/localized from the ORDER's countryCode, never the admin's: an
+    // IT/DIRECTOR in Lagos flipping a Togo order to SHIPPED must send the
+    // customer a French, Togo-branded email. Wrapped so a mail failure can
+    // never fail the status update itself, which has already been persisted.
+    try {
+      const recipient = updatedOrder.userId || updatedOrder.customerId;
+      const emailCountry = resolveEmailCountry(updatedOrder.countryCode);
+
+      if (recipient?.email) {
+        if (payment_status && payment_status !== previousPaymentStatus) {
+          await sendCountryEmail({
+            countryCode: emailCountry.code,
+            sendTo: recipient.email,
+            subject: subjectFor("paymentStatus", emailCountry, {
+              orderId: updatedOrder.orderId,
+              status: payment_status,
+            }),
+            html: paymentStatusEmail({
+              order: updatedOrder,
+              user: recipient,
+              status: payment_status,
+              country: emailCountry,
+              amount:
+                updatedOrder.groupTotals?.grandTotal ?? updatedOrder.totalAmt,
+              currency: updatedOrder.currency,
+            }),
+          });
+        }
+
+        if (order_status && order_status !== previousOrderStatus) {
+          await sendCountryEmail({
+            countryCode: emailCountry.code,
+            sendTo: recipient.email,
+            subject: subjectFor("orderStatus", emailCountry, {
+              orderId: updatedOrder.orderId,
+              status: order_status,
+            }),
+            html: orderStatusEmail({
+              order: updatedOrder,
+              user: recipient,
+              status: order_status,
+              country: emailCountry,
+            }),
+          });
+        }
+      }
+    } catch (emailError) {
+      console.error(
+        "[admin-order] status-change notification failed:",
+        emailError.message,
+      );
+    }
 
     logActivity({
       userId: request.user?._id,

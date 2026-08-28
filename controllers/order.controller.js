@@ -2,13 +2,44 @@
 import OrderModel from "../models/order.model.js";
 import CartProductModel from "../models/cartproduct.model.js";
 import UserModel from "../models/user.model.js";
+// CRITICAL BUGFIX (2026-08-28): ProductModel was USED on the cart-snapshot
+// path below but never imported. Because paystackPaymentController stamps
+// `cartItemsJSON` into metadata on EVERY checkout, that path was always the
+// one taken — so every Paystack order threw
+// `ReferenceError: ProductModel is not defined` before a single Order doc was
+// written. The webhook caught it, logged it, and returned 200 (so Paystack
+// never retried); the verify endpoint caught it and returned 500 (so the
+// customer saw "Verification Error"). Net effect: money captured at the
+// gateway, zero orders in Mongo, nothing recorded anywhere.
+// Symptom that surfaced it: ref PSK-1787910602350-6a9144dbaa567b1ecde5a3ea,
+// NGN 51,182.45, i-coffee.ng, paid + "Success" in Paystack, absent from BOTH
+// the customer's order list and the admin order list.
+import ProductModel from "../models/product.model.js";
 import ShippingZoneModel from "../models/shipping-zone.model.js";
 import ShippingMethodModel from "../models/shipping-method.model.js";
 import BankTransferSettingsModel from "../models/bankTransferSettings.model.js";
+// Durable audit trail for payments that succeed at the gateway but fail to
+// produce an order. A console.error on a serverless host is not an audit
+// trail — this is (see models/payment-failure.model.js).
+import PaymentFailureModel from "../models/payment-failure.model.js";
 import mongoose from "mongoose";
 import Stripe from "../config/stripe.js";
 import { STRIPE_WEBHOOK_SECRET } from "../config/stripe.js";
 import crypto from "crypto";
+// Country-scoped, language-scoped customer emails. ALWAYS branded off the
+// ORDER's countryCode, never the requesting admin's / the API host's.
+import {
+  orderConfirmationEmail,
+  paymentStatusEmail,
+  resolveEmailCountry,
+  subjectFor,
+} from "../utils/countryEmailTemplates.js";
+import { sendCountryEmail } from "../config/emailService.js";
+// Gateway availability is DECLARED per country in config/countries/index.js
+// (`payments: { paystack, stripe }`) but was never ENFORCED anywhere — the
+// helper existed and had zero call sites. A crafted request could therefore
+// open a Paystack session against a Togo/Benin/Italy storefront.
+import { isPaymentProviderEnabled, getCountryByCode } from "../config/countries/index.js";
 
 // Helper functions
 const getProductPrice = (product, priceOption = "regular") => {
@@ -26,6 +57,74 @@ const pricewithDiscount = (price, dis = 0) => {
   const discountAmount = Math.ceil((Number(price) * Number(dis)) / 100);
   return Number(price) - discountAmount;
 };
+
+/**
+ * Send the country-scoped order-confirmation email for a freshly created
+ * order group.
+ *
+ * Country resolution rule (applies everywhere in this codebase):
+ *   the email is branded, localized and denominated from the ORDER's own
+ *   countryCode — NOT req.countryCode, NOT the admin's country, NOT the API
+ *   host. A Togo order confirmed by an HQ webhook still gets a French,
+ *   Togo-branded, XOF email.
+ *
+ * Never throws: a mail failure must not roll back or 500 a payment that has
+ * already been captured. Failures are recorded against the payment reference
+ * so they are visible and replayable.
+ */
+async function sendOrderConfirmationEmails({ orders, user, reference, provider }) {
+  try {
+    if (!orders?.length || !user?.email) return;
+
+    const parent = orders.find((o) => o.isParentOrder) || orders[0];
+    const country = resolveEmailCountry(parent.countryCode);
+
+    await sendCountryEmail({
+      countryCode: country.code,
+      sendTo: user.email,
+      subject: subjectFor("orderConfirmed", country, { orderId: parent.orderId }),
+      html: orderConfirmationEmail({
+        order: parent,
+        user,
+        items: orders,
+        country,
+      }),
+    });
+
+    // Payment confirmation is a separate, legally-meaningful notice from the
+    // order confirmation — customers routinely need the former as proof of
+    // charge even when the latter lands in promotions.
+    if (parent.payment_status === "PAID") {
+      await sendCountryEmail({
+        countryCode: country.code,
+        sendTo: user.email,
+        subject: subjectFor("paymentStatus", country, {
+          orderId: parent.orderId,
+          status: "PAID",
+        }),
+        html: paymentStatusEmail({
+          order: parent,
+          user,
+          status: "PAID",
+          country,
+          amount: parent.groupTotals?.grandTotal ?? parent.totalAmt,
+          currency: parent.currency,
+        }),
+      });
+    }
+  } catch (err) {
+    console.error("[order] confirmation email failed:", err.message);
+    await PaymentFailureModel.record({
+      reference,
+      provider: provider || "PAYSTACK",
+      stage: "EMAIL",
+      countryCode: orders?.[0]?.countryCode,
+      userId: user?._id,
+      customerEmail: user?.email,
+      error: err,
+    });
+  }
+}
 
 // ===== Shared: create a logged-in user's order(s) from a confirmed Paystack charge =====
 // Used by BOTH the server-to-server webhook (paystackWebhookController) and the
@@ -59,6 +158,18 @@ async function createOrderFromPaystackTransaction({
   if (!user) {
     throw new Error("User not found");
   }
+
+  // COUNTRY RESOLUTION — metadata wins over request context.
+  //
+  // The webhook is called by PAYSTACK'S servers, not the customer's browser:
+  // there is no X-Storefront-Host header and req.headers.host is our own API
+  // host, so countryDetect can only fall back to DEFAULT_COUNTRY ("NG"). That
+  // silently mis-stamps any non-NG Paystack order. The country is therefore
+  // snapshotted into metadata at checkout INITIATION (where the storefront
+  // host is genuinely known) and read back here — exactly the pattern the
+  // Stripe path already uses via session.metadata.countryCode.
+  const resolvedCountry = metadata.countryCode || countryCode || "NG";
+  const resolvedCurrency = metadata.currencyCode || currencyCode || "NGN";
 
   // Prefer the cart SNAPSHOT taken at checkout initiation (immune to the
   // live cart changing/clearing between initiation and confirmation — see
@@ -113,7 +224,7 @@ async function createOrderFromPaystackTransaction({
         address.city,
         address.state,
         null,
-        countryCode,
+        resolvedCountry,
       );
     }
   }
@@ -207,8 +318,8 @@ async function createOrderFromPaystackTransaction({
       subTotalAmt: itemSubtotal,
       totalAmt: itemTotal,
       shipping_cost: shippingCostPerItem,
-      currency: currencyCode || "NGN",
-      countryCode: countryCode || "NG",
+      currency: resolvedCurrency,
+      countryCode: resolvedCountry,
       exchangeRateUsed: exchangeRateInfo,
       amountsInNGN: {
         subtotal: itemSubtotal,
@@ -252,8 +363,23 @@ async function createOrderFromPaystackTransaction({
   await UserModel.updateOne({ _id: userId }, { shopping_cart: [] });
 
   console.log(
-    `✅ Paystack: Created order group ${orderGroupId} with ${orders.length} orders`,
+    `✅ Paystack: Created order group ${orderGroupId} with ${orders.length} orders (${resolvedCountry})`,
   );
+
+  // If a previous attempt on this reference was recorded as failed (e.g. the
+  // webhook hit the ProductModel crash and the browser-redirect retry now
+  // succeeded), close that record out so it stops showing as an open
+  // reconciliation item.
+  await PaymentFailureModel.resolve(reference, { orderGroupId });
+
+  // Country-scoped confirmation + payment-received emails. Awaited but
+  // non-fatal — see sendOrderConfirmationEmails.
+  await sendOrderConfirmationEmails({
+    orders,
+    user,
+    reference,
+    provider: "PAYSTACK",
+  });
 
   return { orders, orderGroupId, alreadyExisted: false };
 }
@@ -286,12 +412,24 @@ export async function paystackWebhookController(request, response) {
           currencyCode: request.country?.currency?.code || "NGN",
         });
       } catch (err) {
-        // Validation failures (no cart, user missing, product unavailable)
-        // are logged but still ack the webhook with 200 — Paystack retries
-        // on non-2xx, and retrying won't fix a genuinely empty cart. The
-        // verify-on-redirect path (verifyPaystackController) is the primary
-        // order-creation mechanism for this app; this webhook is a backup.
+        // We still ack with 200 — Paystack retries on non-2xx and a retry
+        // won't fix a genuinely empty cart. But we no longer ONLY log:
+        // console output on a serverless host is not recoverable, and that
+        // is precisely how a real NGN 51,182.45 charge went untraceable.
+        // Persist it so finance/IT can reconcile and replay.
         console.error("Paystack webhook order creation failed:", err.message);
+        await PaymentFailureModel.record({
+          reference,
+          provider: "PAYSTACK",
+          stage: "ORDER_CREATION",
+          countryCode: metadata?.countryCode || request.countryCode || "NG",
+          userId: metadata?.userId,
+          customerEmail: data?.customer?.email,
+          amount: typeof data?.amount === "number" ? data.amount / 100 : undefined,
+          currency: data?.currency || "NGN",
+          metadata,
+          error: err,
+        });
       }
     }
 
@@ -350,12 +488,33 @@ export async function verifyPaystackController(request, response) {
     // reached), so metadata.isGuest can never actually be true here. The
     // dead guest-order branch that used to live here (and its
     // ./guest_order.controller.js import) has been removed.
-    const result = await createOrderFromPaystackTransaction({
-      reference,
-      metadata,
-      countryCode: request.countryCode || "NG",
-      currencyCode: request.country?.currency?.code || "NGN",
-    });
+    let result;
+    try {
+      result = await createOrderFromPaystackTransaction({
+        reference,
+        metadata,
+        countryCode: request.countryCode || "NG",
+        currencyCode: request.country?.currency?.code || "NGN",
+      });
+    } catch (creationError) {
+      // The charge IS confirmed at this point (we checked status above), so a
+      // failure here means money exists with no order behind it. Record it
+      // before surfacing the error, so it is reconcilable even if the
+      // customer closes the tab.
+      await PaymentFailureModel.record({
+        reference,
+        provider: "PAYSTACK",
+        stage: "ORDER_CREATION",
+        countryCode: metadata?.countryCode || request.countryCode || "NG",
+        userId: metadata?.userId,
+        customerEmail: verifyData.data?.customer?.email,
+        amount: typeof amount === "number" ? amount / 100 : undefined,
+        currency,
+        metadata,
+        error: creationError,
+      });
+      throw creationError;
+    }
     const orderGroupId = result.orderGroupId;
 
     return response.json({
@@ -391,6 +550,22 @@ export async function paystackPaymentController(request, response) {
       currency = "NGN",
     } = request.body;
 
+    // ── GATEWAY AVAILABILITY GUARD ────────────────────────────────────────
+    // Paystack is NIGERIA-ONLY. Stripe serves every country (Nigeria
+    // included, which is how an NG customer pays in a foreign currency).
+    // Enforced from COUNTRY_CONFIG rather than a hardcoded country list, so
+    // adding a future local gateway (or enabling Paystack elsewhere) is a
+    // config change, not a code change.
+    const initCountry = request.countryCode || "NG";
+    if (!isPaymentProviderEnabled(initCountry, "paystack")) {
+      const meta = getCountryByCode(initCountry);
+      return response.status(400).json({
+        message: `Paystack is not available in ${meta?.name || initCountry}. Please use another payment method.`,
+        error: true,
+        success: false,
+      });
+    }
+
     if (currency !== "NGN") {
       return response.status(400).json({
         message: "Paystack is only available for NGN currency",
@@ -425,6 +600,14 @@ export async function paystackPaymentController(request, response) {
         shippingMethodId: shippingMethodId || "",
         shippingCost,
         itemCount: cartItems.length,
+        // Snapshot the storefront's country HERE, where it is genuinely
+        // known (the browser sent X-Storefront-Host on this call). The
+        // webhook that later creates the order is called by Paystack, not
+        // the browser, so it has no way to detect country and would
+        // otherwise stamp every order "NG". Mirrors what the Stripe
+        // checkout-session path already does with session.metadata.
+        countryCode: request.countryCode || "NG",
+        currencyCode: request.country?.currency?.code || "NGN",
         // Snapshot the cart NOW, at checkout initiation, instead of relying
         // on re-querying the live cart at confirmation time (webhook or the
         // browser-redirect verify endpoint) — that gap can be minutes long
@@ -534,8 +717,34 @@ export async function webhookStripe(request, response) {
         console.log(
           `✅ Stripe: Created order group with ${orders.length} orders`,
         );
+
+        // Country-scoped confirmation + payment-received emails. Stripe is
+        // the gateway for TG/BJ/IT (and for NG customers paying in a foreign
+        // currency), so this is the path that most often needs a non-English,
+        // non-NGN email — branded off the ORDER's countryCode.
+        const stripeUser = userId ? await UserModel.findById(userId) : null;
+        await sendOrderConfirmationEmails({
+          orders,
+          user: stripeUser,
+          reference: session.payment_intent,
+          provider: "STRIPE",
+        });
       } catch (error) {
         console.error("Error processing checkout.session.completed:", error);
+        // Persist so a Stripe charge can never go orphaned+untraceable the
+        // way the Paystack one did.
+        await PaymentFailureModel.record({
+          reference: session?.payment_intent || session?.id,
+          provider: "STRIPE",
+          stage: "ORDER_CREATION",
+          countryCode: session?.metadata?.countryCode || "NG",
+          userId: session?.metadata?.userId,
+          customerEmail: session?.customer_email,
+          amount: typeof session?.amount_total === "number" ? session.amount_total / 100 : undefined,
+          currency: session?.currency?.toUpperCase(),
+          metadata: session?.metadata,
+          error,
+        });
         // Still return 200 to Stripe to acknowledge receipt
       }
       break;
@@ -564,6 +773,22 @@ export async function stripePaymentController(request, response) {
       currency = "USD",
       paymentMethod = "stripe",
     } = request.body;
+
+    // ── GATEWAY AVAILABILITY GUARD ────────────────────────────────────────
+    // Stripe is enabled for ALL countries today (see COUNTRY_CONFIG). The
+    // guard is still applied rather than assumed, so that when a
+    // country-local gateway is introduced later and Stripe is switched off
+    // for that market, turning `stripe: false` in config is genuinely
+    // sufficient — no code change, no silently-still-reachable endpoint.
+    const stripeCountry = request.countryCode || "NG";
+    if (!isPaymentProviderEnabled(stripeCountry, "stripe")) {
+      const meta = getCountryByCode(stripeCountry);
+      return response.status(400).json({
+        message: `Stripe is not available in ${meta?.name || stripeCountry}. Please use another payment method.`,
+        error: true,
+        success: false,
+      });
+    }
 
     if (currency === "NGN") {
       return response.status(400).json({
@@ -1094,6 +1319,42 @@ export async function DirectBankTransferOrderController(request, response) {
     console.log(
       `✅ Bank transfer: Created order group ${orderGroupId} with ${orders.length} orders`,
     );
+
+    // Country-scoped confirmation. Bank-transfer orders are PENDING, not
+    // PAID, so the customer gets the order confirmation with an "awaiting
+    // payment" badge plus an explicit awaiting-transfer payment notice —
+    // both in their country's language.
+    const btUser = await UserModel.findById(userId);
+    await sendOrderConfirmationEmails({
+      orders,
+      user: btUser,
+      reference: orderGroupId,
+      provider: "BANK_TRANSFER",
+    });
+    try {
+      const btParent = orders.find((o) => o.isParentOrder) || orders[0];
+      const btCountry = resolveEmailCountry(btParent.countryCode);
+      if (btUser?.email) {
+        await sendCountryEmail({
+          countryCode: btCountry.code,
+          sendTo: btUser.email,
+          subject: subjectFor("paymentStatus", btCountry, {
+            orderId: btParent.orderId,
+            status: "PENDING_BANK_TRANSFER",
+          }),
+          html: paymentStatusEmail({
+            order: btParent,
+            user: btUser,
+            status: "PENDING_BANK_TRANSFER",
+            country: btCountry,
+            amount: groupTotals.grandTotal,
+            currency: btParent.currency,
+          }),
+        });
+      }
+    } catch (mailErr) {
+      console.error("[order] bank-transfer notice email failed:", mailErr.message);
+    }
 
     return response.json({
       message: "Bank transfer order placed successfully",

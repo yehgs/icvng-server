@@ -2,6 +2,7 @@
 import CustomerModel from '../models/customer.model.js';
 import UserModel from '../models/user.model.js';
 import mongoose from 'mongoose';
+import { ALL_COUNTRY_CODES } from "../config/countries/index.js";
 
 // Create new customer
 export const createCustomerController = async (request, response) => {
@@ -32,6 +33,27 @@ export const createCustomerController = async (request, response) => {
       notes,
       assignedTo,
     } = request.body;
+
+    // ── COUNTRY RESOLUTION ────────────────────────────────────────────────
+    const actingUser = await UserModel.findById(request.userId).select(
+      "subRole assignedCountry",
+    );
+    const isGlobalCustomerAdmin = ["IT", "DIRECTOR"].includes(
+      actingUser?.subRole,
+    );
+    let resolvedCustomerCountry;
+    if (isGlobalCustomerAdmin) {
+      const requested = (request.body.countryCode || "").toUpperCase();
+      if (requested && !ALL_COUNTRY_CODES.includes(requested)) {
+        return response.status(400).json({
+          message: `Unknown country code: ${requested}`,
+          error: true,
+        });
+      }
+      resolvedCustomerCountry = requested || request.countryCode || "NG";
+    } else {
+      resolvedCustomerCountry = request.countryScope || request.countryCode || "NG";
+    }
 
     // Validate required fields for BTB customers
     if (customerType === 'BTB') {
@@ -67,7 +89,14 @@ export const createCustomerController = async (request, response) => {
       registrationNumber:
         customerType === 'BTB' ? registrationNumber : undefined,
       createdBy: userId,
-      countryCode: request.countryScope || 'NG',
+      // COUNTRY OF RECORD.
+      // BUGFIX: this was `request.countryScope || 'NG'`. IT/DIRECTOR are
+      // GLOBAL, so countryScope is null for them and EVERY customer they
+      // created was stamped Nigeria — a director literally could not create
+      // a Togo or Italian customer. Global admins may now name the country
+      // explicitly (validated); country-scoped roles remain pinned to their
+      // own scope and cannot override it from the body.
+      countryCode: resolvedCustomerCountry,
       isWebsiteCustomer: false,
       notes,
       assignedTo: assignedTo || [userId],
@@ -151,7 +180,17 @@ export const getCustomersController = async (request, response) => {
     // Country-scoped admin (e.g. a foreign Togo manager) only sees customers
     // belonging to their own office — GLOBAL admins are unrestricted.
     if (request.countryScope) {
+      // Country-scoped roles (SALES, MANAGER): pinned, body/query ignored.
       query = { $and: [query, { countryCode: request.countryScope }] };
+    } else if (request.query.countryCode) {
+      // GLOBAL roles (IT, DIRECTOR): unrestricted by default, but may narrow
+      // to one market — this is what backs the country selector shown to
+      // them when picking a customer for a manual order. Validated so a junk
+      // value can't return an empty list that reads as "no customers exist".
+      const requested = String(request.query.countryCode).toUpperCase();
+      if (ALL_COUNTRY_CODES.includes(requested)) {
+        query = { $and: [query, { countryCode: requested }] };
+      }
     }
 
     // Add filters

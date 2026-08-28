@@ -263,11 +263,19 @@ shippingRouter.post(
 );
 
 // Tracking Management
-// NOTE: ShippingTrackingModel does not carry the countryScopedPlugin yet
-// (tracking country-scoping is a separate, not-yet-built phase) — these
-// routes still get `countryScope` for context consistency and to be ready
-// for that phase, but a COUNTRY-scoped Logistics admin currently sees all
-// trackings, same as before this change.
+// CORRECTION (2026-08-28): the note that used to sit here — claiming
+// ShippingTrackingModel "does not carry the countryScopedPlugin yet" — was
+// stale and actively misleading. The model HAS carried the plugin since
+// shipping-tracking.model.js:372. A COUNTRY-scoped Logistics admin is
+// therefore already restricted to their own country's trackings on these
+// routes, and IT/DIRECTOR can narrow to one country via ?countryCode=XX
+// (see applyGlobalCountryFilter in the controller).
+//
+// The genuine remaining gap was the PUBLIC lookup — GET /track/:number,
+// registered above with no auth — where the plugin's hooks never fire
+// because unauthenticated requests carry no countryScope in context. That
+// is now filtered explicitly against req.countryCode inside
+// getTrackingByNumber.
 shippingRouter.get(
   "/trackings",
   auth,
