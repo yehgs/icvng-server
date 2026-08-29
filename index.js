@@ -64,6 +64,8 @@ import stockRouter from "./route/stock.route.js";
 import pricingRouter from "./route/price.route.js";
 import exchangeRateRouter from "./route/exchange-rate.route.js";
 import bankTransferSettingsRouter from "./route/bankTransferSettings.route.js";
+// System-wide email provider config (Resend / SMTP) — HQ IT/DIRECTOR only.
+import emailProviderSettingsRouter from "./route/emailProviderSettings.route.js";
 import warehouseRouter from "./route/warehouse.route.js";
 import shippingRouter from "./route/shipping.route.js";
 import blogRouter from "./route/blog.route.js";
@@ -289,6 +291,7 @@ app.use("/api/stock", stockRouter);
 app.use("/api/pricing", pricingRouter);
 app.use("/api/exchange-rates", exchangeRateRouter);
 app.use("/api/bank-transfer-settings", bankTransferSettingsRouter);
+app.use("/api/email-settings", emailProviderSettingsRouter);
 app.use("/api/warehouse", warehouseRouter);
 app.use("/api/shipping", shippingRouter);
 app.use("/api/blog", blogRouter);

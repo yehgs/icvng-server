@@ -57,9 +57,49 @@
  */
 
 import "dotenv/config";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath, pathToFileURL } from "url";
 import connectDB from "../config/connectDB.js";
 import OrderModel from "../models/order.model.js";
 import PaymentFailureModel from "../models/payment-failure.model.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Register EVERY Mongoose model before doing any work.
+ *
+ * WHY THIS IS NECESSARY
+ * ─────────────────────
+ * In the running server, index.js imports the route tree, which imports
+ * every controller, which imports every model — so by the time any query
+ * runs, Mongoose knows about all of them. A standalone script imports only
+ * what it names, so `.populate("category")` inside
+ * createOrderFromPaystackTransaction blew up with:
+ *
+ *   MissingSchemaError: Schema hasn't been registered for model "category"
+ *
+ * Globbing the models directory (rather than listing imports by hand) means
+ * this never breaks again when a new model or populate path is added.
+ */
+async function registerAllModels() {
+  const dir = path.join(__dirname, "..", "models");
+  const files = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".model.js"))
+    .sort();
+
+  for (const file of files) {
+    try {
+      await import(pathToFileURL(path.join(dir, file)).href);
+    } catch (err) {
+      // A model that fails to load is worth knowing about, but must not
+      // abort recovery — the one we actually need may still be fine.
+      console.warn(`   ⚠ could not load model ${file}: ${err.message}`);
+    }
+  }
+  return files.length;
+}
 
 const args = process.argv.slice(2);
 const getArg = (n) => {
@@ -117,17 +157,16 @@ async function main() {
 
   await connectDB();
 
-  // Imported lazily so connectDB() has already run and the model registry is
-  // populated before order.controller.js pulls its model graph in.
-  const { default: _unused, ...rest } = await import(
-    "../controllers/order.controller.js"
-  ).then((m) => ({ default: null, ...m }));
+  const modelCount = await registerAllModels();
+  console.log(`   ${modelCount} models registered`);
 
   // createOrderFromPaystackTransaction is module-private by design (it is not
   // an HTTP handler). Rather than export it just for this script, we replay
   // through the same public verify path the browser uses, which is the exact
   // code path we are trying to prove works again.
-  const { verifyPaystackController } = rest;
+  const { verifyPaystackController } = await import(
+    "../controllers/order.controller.js"
+  );
   if (typeof verifyPaystackController !== "function") {
     console.error("✖ Could not load verifyPaystackController.");
     process.exit(1);
