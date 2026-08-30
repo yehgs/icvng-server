@@ -23,12 +23,20 @@ import { ALL_COUNTRY_CODES, getCountryByCode } from "../config/countries/index.j
 // never sell something the storefront refuses to sell (or refuse something
 // the storefront happily sells). See utils/manualOrderValidation.js.
 import {
-  isProductSellable,
+  isProductSellableForMode,
   resolveCategorySlugs,
   getManualOrderUnitPrice,
   priceOptionConsumesStock,
-  getEffectiveOnlineStock,
+  getStockForMode,
 } from "../utils/manualOrderValidation.js";
+// ONLINE/OFFLINE is the axis everything else hangs off — see the header of
+// config/manualOrderModes.js for why the server derives it rather than
+// trusting what the client sent.
+import {
+  resolveOrderMode,
+  orderTypeForMode,
+  MANUAL_ORDER_SUBROLES,
+} from "../config/manualOrderModes.js";
 
 // Helper functions
 const getProductPrice = (product, priceOption = "regular") => {
@@ -59,7 +67,6 @@ export const createAdminOrderController = async (request, response) => {
     // made the `["IT","MANAGER","DIRECTOR"]` customer-ownership exemption 40
     // lines below unreachable dead code, since those roles could never get
     // past this gate to reach it.
-    const MANUAL_ORDER_SUBROLES = ["SALES", "MANAGER", "IT", "DIRECTOR"];
     if (user.role !== "ADMIN" || !MANUAL_ORDER_SUBROLES.includes(user.subRole)) {
       return response.status(403).json({
         message: "You do not have permission to create manual orders",
@@ -93,20 +100,34 @@ export const createAdminOrderController = async (request, response) => {
       sendInvoiceEmail = false,
     } = request.body;
 
-    // ── BTC-ONLY ──────────────────────────────────────────────────────────
-    // Business decision (2026-08-28): the manual order system handles
-    // business-to-customer sales only. BTB pricing/stock paths are retired.
-    // Rejected loudly rather than silently coerced, so a stale admin build
-    // posting BTB is visible instead of quietly writing BTC-priced orders
-    // that a sales agent believes are BTB.
-    if (orderType && orderType !== "BTC") {
+    // ── MODE RESOLUTION (the axis everything else follows) ───────────────
+    // CORRECTION to the 2026-08-28 revision, which forced every manual order
+    // to BTC and rejected BTB. That was a misreading: BTB is not retired, it
+    // is the OFFLINE half of the system.
+    //
+    //   ONLINE  → BTC customers, btcPrice, storefront stock rules
+    //   OFFLINE → BTB customers, btbPrice, warehouse offline stock
+    //
+    // For SALES the mode comes from their ACCOUNT (user.userMode), not the
+    // request — an online agent must not be able to raise a BTB warehouse
+    // sale, and a UI lock alone is not a control. IT/DIRECTOR/MANAGER choose.
+    const modeResult = resolveOrderMode(user, orderMode);
+    if (modeResult.error) {
+      return response.status(403).json({ message: modeResult.error, error: true });
+    }
+    const resolvedMode = modeResult.mode;
+    const resolvedOrderType = orderTypeForMode(resolvedMode);
+
+    // orderType is derived, never accepted. If a client sent one that
+    // disagrees with its own mode, that is a stale build — say so rather
+    // than silently writing the derived value, which would produce an order
+    // the agent believes is something else.
+    if (orderType && orderType !== resolvedOrderType) {
       return response.status(400).json({
-        message:
-          "Manual orders are BTC-only. BTB ordering has been retired — create the customer as BTC.",
+        message: `A ${resolvedMode} order is always ${resolvedOrderType}; received orderType "${orderType}".`,
         error: true,
       });
     }
-    const resolvedOrderType = "BTC";
 
     // ── COUNTRY OF RECORD ─────────────────────────────────────────────────
     // BUGFIX: this used to be decided further down as
@@ -135,6 +156,23 @@ export const createAdminOrderController = async (request, response) => {
     if (!customer) {
       return response.status(404).json({
         message: "Customer not found",
+        error: true,
+      });
+    }
+
+    // ── CUSTOMER MODE / TYPE MATCH ───────────────────────────────────────
+    // An ONLINE order must be for a BTC customer and an OFFLINE order for a
+    // BTB one. Without this, an offline agent could bill a storefront
+    // customer at BTB warehouse prices.
+    if (customer.customerType && customer.customerType !== resolvedOrderType) {
+      return response.status(400).json({
+        message: `A ${resolvedMode} order requires a ${resolvedOrderType} customer; this customer is ${customer.customerType}.`,
+        error: true,
+      });
+    }
+    if (customer.customerMode && customer.customerMode !== resolvedMode) {
+      return response.status(400).json({
+        message: `This customer is registered as ${customer.customerMode}; you are creating an ${resolvedMode} order.`,
         error: true,
       });
     }
@@ -214,14 +252,19 @@ export const createAdminOrderController = async (request, response) => {
         // ignored partnerStock entirely, so partner-supplied stock read as
         // zero and the agent was blocked from selling it.
         const categorySlugs = await resolveCategorySlugs(product, session);
-        const sellable = isProductSellable(product, categorySlugs);
+        // ONLINE applies the canonical storefront rule (so a manual online
+        // order matches exactly what the website would accept); OFFLINE
+        // applies the warehouse rule — BTB price + physical offline stock,
+        // and no special-order escape hatch.
+        const sellable = isProductSellableForMode(product, resolvedMode, categorySlugs);
         if (!sellable.sellable) {
           throw new Error(`${product.name}: ${sellable.reason}`);
         }
 
-        const priceOption = item.priceOption || "regular";
-        const consumesStock = priceOptionConsumesStock(priceOption);
-        const availableStock = getEffectiveOnlineStock(product);
+        const priceOption =
+          resolvedMode === "OFFLINE" ? "regular" : item.priceOption || "regular";
+        const consumesStock = priceOptionConsumesStock(priceOption, resolvedMode);
+        const availableStock = getStockForMode(product, resolvedMode);
 
         // Special-order (2/5-week) lines are supplier-sourced and hold no
         // local stock, so they are exempt from the stock check — and must
@@ -233,11 +276,12 @@ export const createAdminOrderController = async (request, response) => {
         }
 
         // BTC pricing only — BTB is retired (see the guard at the top).
-        const unitPrice = getManualOrderUnitPrice(product, priceOption);
+        const unitPrice = getManualOrderUnitPrice(product, priceOption, resolvedMode);
 
         if (!unitPrice || unitPrice <= 0) {
           throw new Error(
-            `No valid BTC price for ${product.name} (${priceOption})`,
+            `No valid ${resolvedOrderType} price for ${product.name}` +
+              (resolvedMode === "ONLINE" ? ` (${priceOption})` : ""),
           );
         }
 
@@ -262,7 +306,32 @@ export const createAdminOrderController = async (request, response) => {
         // self-consistent but measured a different pool from the storefront
         // — so a manual sale never reduced what the website could sell.
         if (!consumesStock) {
-          // no-op: special order, nothing to draw down locally
+          // no-op: online special order, supplier-sourced, no local stock
+        } else if (resolvedMode === "OFFLINE") {
+          // Offline sales draw down the WAREHOUSE COUNTER pool, never the
+          // storefront pool — otherwise a counter sale would silently
+          // reduce what the website can sell.
+          const newOfflineStock =
+            (product.warehouseStock?.offlineStock || 0) - item.quantity;
+          const newFinal = (product.warehouseStock?.finalStock || 0) - item.quantity;
+          await ProductModel.findByIdAndUpdate(
+            item.productId,
+            {
+              "warehouseStock.offlineStock": newOfflineStock,
+              "warehouseStock.finalStock": newFinal,
+              "warehouseStock.lastUpdated": new Date(),
+              "warehouseStock.updatedBy": userId,
+            },
+            { session },
+          );
+          stockUpdates.push({
+            productId: item.productId,
+            productName: product.name,
+            quantityDeducted: item.quantity,
+            source: "warehouseStock.offlineStock",
+            previousStock: product.warehouseStock?.offlineStock || 0,
+            newStock: newOfflineStock,
+          });
         } else if (product.partnerStock?.enabled) {
           const newPartnerQty =
             (product.partnerStock.quantity || 0) - item.quantity;
@@ -340,7 +409,7 @@ export const createAdminOrderController = async (request, response) => {
           orderSequence: index + 1,
           totalItemsInGroup: items.length,
           orderType: resolvedOrderType,
-          orderMode,
+          orderMode: resolvedMode,
           isWebsiteOrder: false,
           productId: item.productId,
           product_details: {

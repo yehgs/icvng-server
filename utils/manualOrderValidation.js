@@ -143,14 +143,19 @@ export function isProductSellable(product, categorySlugs = []) {
  * This does the lookup explicitly so callers can't repeat that mistake.
  */
 export async function resolveCategorySlugs(product, session) {
-  const ids = (product?.category || []).map((c) =>
-    typeof c === "object" && c?._id ? c._id : c,
-  );
+  // Normalise first: `category` is not reliably an array. Some code paths
+  // populate it as a single object, others leave a bare ObjectId. Calling
+  // .map() on those throws — the same bug that crashed the admin product
+  // search modal. See categoryList() in admin/src/config/manualOrderRules.js.
+  const raw = product?.category;
+  const cats = !raw ? [] : Array.isArray(raw) ? raw : [raw];
+
+  const ids = cats.map((c) => (c && typeof c === "object" && c._id ? c._id : c));
   if (!ids.length) return [];
 
   // Already populated with slugs? Use them.
-  const populated = (product.category || [])
-    .filter((c) => typeof c === "object" && c?.slug)
+  const populated = cats
+    .filter((c) => c && typeof c === "object" && c.slug)
     .map((c) => c.slug);
   if (populated.length === ids.length) return populated;
 
@@ -163,13 +168,72 @@ export async function resolveCategorySlugs(product, session) {
 }
 
 /**
- * BTC unit price for a manual order line.
- *
- * BTB pricing is deliberately absent — manual orders are BTC-only as of
- * 2026-08-28. `btbPrice` remains on the product schema for historical
- * orders and reporting, but nothing may price a NEW order from it.
+ * ── OFFLINE (BTB) STOCK ──────────────────────────────────────────────────
+ * Offline sales are fulfilled from the warehouse counter, not the pool the
+ * storefront sells from. Reading online stock here would let an offline
+ * agent sell inventory the website has already committed.
  */
-export function getManualOrderUnitPrice(product, priceOption = "regular") {
+export function getEffectiveOfflineStock(product) {
+  if (product?.warehouseStock?.enabled) {
+    return product.warehouseStock.offlineStock || 0;
+  }
+  return product?.stock || 0;
+}
+
+/** Stock for a mode. ONLINE → storefront pool, OFFLINE → warehouse counter. */
+export function getStockForMode(product, mode) {
+  return mode === "OFFLINE"
+    ? getEffectiveOfflineStock(product)
+    : getEffectiveOnlineStock(product);
+}
+
+/**
+ * ── OFFLINE (BTB) SELLABILITY ────────────────────────────────────────────
+ * Deliberately NOT the storefront §3 rule. Offline is a warehouse
+ * transaction: it needs a BTB price and physical offline stock, and it does
+ * NOT get the special-order delivery-price escape hatch — you cannot hand a
+ * walk-in customer a product that has to be ordered from a supplier in five
+ * weeks and call it an over-the-counter sale.
+ */
+export function isProductSellableOffline(product) {
+  if (product?.productAvailability === false) {
+    return { sellable: false, reason: "Product is marked not available for sale", availableStock: 0 };
+  }
+  const availableStock = getEffectiveOfflineStock(product);
+  if (!(Number(product?.btbPrice) > 0)) {
+    return { sellable: false, reason: "No BTB price set", availableStock };
+  }
+  if (availableStock <= 0) {
+    return { sellable: false, reason: "No offline warehouse stock", availableStock };
+  }
+  return { sellable: true, reason: null, availableStock, viaStock: true, viaDelivery: false };
+}
+
+/**
+ * Mode-aware sellability. ONLINE applies the canonical storefront rule so
+ * manual online orders match exactly what the website would accept; OFFLINE
+ * applies the warehouse rule above.
+ */
+export function isProductSellableForMode(product, mode, categorySlugs = []) {
+  return mode === "OFFLINE"
+    ? isProductSellableOffline(product)
+    : isProductSellable(product, categorySlugs);
+}
+
+/**
+ * Unit price for a manual order line, by mode.
+ *
+ *   ONLINE  → btcPrice, or a special-order delivery price
+ *   OFFLINE → btbPrice, always
+ *
+ * BTB pricing is live again: the 2026-08-28 "BTC-only" change was a
+ * misreading — BTB is the offline half of the system, not retired.
+ */
+export function getManualOrderUnitPrice(product, priceOption = "regular", mode = "ONLINE") {
+  if (mode === "OFFLINE") {
+    // No delivery-price options offline — see isProductSellableOffline.
+    return product?.btbPrice || 0;
+  }
   switch (priceOption) {
     case "3weeks":
     case "2weeks":
@@ -183,11 +247,11 @@ export function getManualOrderUnitPrice(product, priceOption = "regular") {
 }
 
 /**
- * Which stock pool a given price option draws down.
- * Delivery-priced (special order) lines are sourced from the supplier and
- * must NOT decrement local stock — decrementing it was never correct and
- * would have quietly drained inventory that was never reserved.
+ * Which stock pool a given line draws down.
+ * Online special-order lines are supplier-sourced and hold no local stock.
+ * Offline lines ALWAYS consume, since there is no special-order path.
  */
-export function priceOptionConsumesStock(priceOption) {
+export function priceOptionConsumesStock(priceOption, mode = "ONLINE") {
+  if (mode === "OFFLINE") return true;
   return !["3weeks", "2weeks", "5weeks"].includes(priceOption);
 }

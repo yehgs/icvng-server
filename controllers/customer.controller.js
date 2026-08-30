@@ -179,6 +179,31 @@ export const getCustomersController = async (request, response) => {
 
     // Country-scoped admin (e.g. a foreign Togo manager) only sees customers
     // belonging to their own office — GLOBAL admins are unrestricted.
+    // ── MODE / TYPE SCOPING ───────────────────────────────────────────────
+    // An ONLINE sales agent must only see BTC/ONLINE customers, and an
+    // OFFLINE agent only BTB/OFFLINE ones. Passing ?mode= narrows the
+    // picker; for a SALES account the caller's own userMode is applied
+    // regardless of what was asked for, so the manual-order customer picker
+    // cannot show someone the order endpoint would then reject.
+    const requester = await UserModel.findById(request.userId).select(
+      "subRole userMode",
+    );
+    const isDualMode = ["IT", "DIRECTOR", "MANAGER"].includes(requester?.subRole);
+    const forcedMode =
+      requester?.subRole === "SALES" ? (requester.userMode || "").toUpperCase() : null;
+    const askedMode = String(request.query.mode || "").toUpperCase();
+    const effectiveMode = forcedMode || (isDualMode ? askedMode : "");
+
+    if (effectiveMode === "ONLINE" || effectiveMode === "OFFLINE") {
+      query = {
+        $and: [
+          query,
+          { customerMode: effectiveMode },
+          { customerType: effectiveMode === "OFFLINE" ? "BTB" : "BTC" },
+        ],
+      };
+    }
+
     if (request.countryScope) {
       // Country-scoped roles (SALES, MANAGER): pinned, body/query ignored.
       query = { $and: [query, { countryCode: request.countryScope }] };
@@ -450,20 +475,39 @@ export const getCustomersForOrderController = async (request, response) => {
 
     let query = { status: 'ACTIVE' };
 
+    // ── MODE SCOPING ──────────────────────────────────────────────────────
+    // ONLINE  → BTC/ONLINE customers (this now includes storefront
+    //           registrations, mirrored into Customer by
+    //           services/customerSync.service.js)
+    // OFFLINE → BTB/OFFLINE customers
+    //
+    // For SALES the caller's own userMode wins over the query param: the
+    // picker must never offer someone the order endpoint would reject.
+    const forcedMode =
+      user.subRole === 'SALES' ? (user.userMode || '').toUpperCase() : null;
+    const askedMode = String(request.query.mode || '').toUpperCase();
+    const effectiveMode = forcedMode || askedMode;
+
+    if (['ONLINE', 'OFFLINE'].includes(effectiveMode)) {
+      query.customerMode = effectiveMode;
+      query.customerType = effectiveMode === 'OFFLINE' ? 'BTB' : 'BTC';
+    }
+
     // Role-based filtering
     if (['DIRECTOR', 'IT', 'MANAGER'].includes(user.subRole)) {
-      // Can see all active customers
-      query = { status: 'ACTIVE' };
+      // Can see all active customers in the effective mode.
     } else {
-      // Can only see customers they created or are assigned to
-      query = {
-        status: 'ACTIVE',
-        $or: [
-          { createdBy: userId },
-          { assignedTo: userId },
-          { isWebsiteCustomer: true },
-        ],
-      };
+      // SALES/EDITOR/ACCOUNTANT: only customers they created, are assigned
+      // to, or storefront registrations (which have no creating admin).
+      //
+      // MERGED into `query` rather than reassigning it — reassigning here
+      // silently dropped the mode/type filter set above, so an ONLINE agent
+      // would have seen BTB warehouse customers in their picker.
+      query.$or = [
+        { createdBy: userId },
+        { assignedTo: userId },
+        { isWebsiteCustomer: true },
+      ];
     }
 
     const customers = await CustomerModel.find(query)

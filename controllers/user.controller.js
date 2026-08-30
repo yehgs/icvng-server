@@ -11,6 +11,7 @@ import uploadImageCloudinary from '../utils/uploadImageCloudinary.js';
 import generatedOtp from '../utils/generatedOtp.js';
 import forgotPasswordTemplate from '../utils/forgotPasswordTemplate.js';
 import jwt from 'jsonwebtoken';
+import { syncUserToCustomer } from "../services/customerSync.service.js";
 
 export async function registerUserController(request, response) {
   try {
@@ -66,6 +67,12 @@ export async function registerUserController(request, response) {
 
     const newUser = new UserModel(payload);
     const savedUser = await newUser.save();
+
+    // Mirror the new storefront registration into the Customer module so
+    // they appear in Customer Management and in the ONLINE manual-order
+    // customer picker straight away. Non-fatal: a mirror failure must never
+    // fail a registration — the backfill script picks up any that slip.
+    syncUserToCustomer(savedUser).catch(() => {});
 
     // Generate verification email URL — use country domain if available
     const frontendDomain = request.country?.domain

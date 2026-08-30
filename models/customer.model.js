@@ -57,11 +57,33 @@ const customerSchema = new mongoose.Schema(
       },
       sparse: true,
     },
+    // ── LINK TO THE STOREFRONT ACCOUNT ────────────────────────────────────
+    // Set for customers mirrored from a website registration (role USER,
+    // subRole BTC). Null for admin-created offline customers.
+    //
+    // Before this existed, `isWebsiteCustomer` was a flag with nothing
+    // behind it: a storefront shopper lived only in the User collection, so
+    // they never appeared in Customer Management and an ONLINE sales agent
+    // had no one to select when raising a manual order for them. See
+    // services/customerSync.service.js.
+    //
+    // `sparse` so the unique index only applies to documents that have one —
+    // offline customers legitimately share the absence of a userId.
+    userId: {
+      type: mongoose.Schema.ObjectId,
+      ref: "User",
+      default: null,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
     createdBy: {
       type: mongoose.Schema.ObjectId,
       ref: "User",
       required: function () {
-        return this.customerMode === "OFFLINE";
+        // Website-mirrored customers have no creating admin, which is
+        // correct — they created themselves on the storefront.
+        return this.customerMode === "OFFLINE" && !this.userId;
       },
     },
     assignedTo: [
