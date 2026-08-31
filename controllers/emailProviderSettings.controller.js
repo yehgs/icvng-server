@@ -261,6 +261,19 @@ export const testEmailProvider = async (request, response) => {
       forceProvider: provider,
     });
 
+    // BUGFIX: when the global kill switch is off, sendCountryEmail returns
+    // { suppressed: true } with no provider — and this used to report that
+    // as "Test email sent via undefined", which reads as success. Nothing
+    // was sent. Say so plainly and name the switch to un-tick.
+    if (result?.suppressed) {
+      return response.status(400).json({
+        message:
+          'Nothing was sent: "Email sending enabled" is currently off. Turn it on and save before testing.',
+        error: true,
+        success: false,
+      });
+    }
+
     return response.json({
       message: `Test email sent via ${result.provider}`,
       error: false,
