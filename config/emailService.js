@@ -84,13 +84,30 @@ function envSender(countryCode = "NG") {
   };
 }
 
-function resolveSender(settings, countryCode = "NG") {
+function resolveSender(settings, countryCode = "NG", provider = "SMTP") {
   const country = getCountryByCode(countryCode) || getCountryByCode("NG");
   if (!settings) {
-    return { ...envSender(country.code), replyTo: undefined, countryApiKey: undefined, country };
+    // No settings document — for Resend, fall back to the country's own
+    // domain (which is what is verified there), never to EMAIL_USER.
+    const fallback =
+      provider === "RESEND"
+        ? { fromEmail: country.domain ? `orders@${country.domain}` : "",
+            fromName: `I-Coffee ${country.name}` }
+        : envSender(country.code);
+    return { ...fallback, replyTo: undefined, countryApiKey: undefined, country };
   }
-  return { ...settings.senderFor(country.code, country), country };
+  return { ...settings.senderFor(country.code, country, provider), country };
 }
+
+/**
+ * Domains nobody can verify in Resend, because nobody owns them. Sending
+ * from one is a guaranteed 403, so we fail with a message that says what to
+ * fix instead of surfacing the provider's error.
+ */
+const UNVERIFIABLE_SENDER_DOMAINS = [
+  "gmail.com", "googlemail.com", "yahoo.com", "outlook.com",
+  "hotmail.com", "live.com", "icloud.com", "aol.com", "proton.me",
+];
 
 // ── Resend transport ────────────────────────────────────────────────────────
 
@@ -234,24 +251,39 @@ export async function sendCountryEmail({
     return { suppressed: true };
   }
 
-  const sender = resolveSender(settings, countryCode);
-  const from = sender.fromEmail
-    ? `${sender.fromName} <${sender.fromEmail}>`
-    : sender.fromName;
-  const effectiveReplyTo = replyTo || sender.replyTo;
-
   const primary = forceProvider || settings?.activeProvider || "RESEND";
   const secondary = primary === "RESEND" ? "SMTP" : "RESEND";
+  const effectiveReplyTo = replyTo;
 
+  // Sender identity is resolved PER PROVIDER, because the fallback differs:
+  // SMTP sends as the authenticated mailbox, Resend sends as a verified
+  // domain. Resolving once for both is what let a Gmail login leak into a
+  // Resend send.
   const attempt = async (provider) => {
+    const sender = resolveSender(settings, countryCode, provider);
+    const from = sender.fromEmail
+      ? `${sender.fromName} <${sender.fromEmail}>`
+      : sender.fromName;
+    const finalReplyTo = effectiveReplyTo || sender.replyTo;
+
     if (provider === "RESEND") {
       const apiKey = resendApiKey(settings, sender.countryApiKey);
       if (!apiKey) throw new Error("Resend selected but no API key configured");
       if (!sender.fromEmail) {
         throw new Error("Resend requires a verified from-address; none configured");
       }
+      // Preflight: catch an unverifiable sender before the API call, so the
+      // admin gets an actionable instruction rather than a raw 403.
+      const domain = sender.fromEmail.split("@")[1]?.toLowerCase() || "";
+      if (UNVERIFIABLE_SENDER_DOMAINS.includes(domain)) {
+        throw new Error(
+          `Cannot send from "${sender.fromEmail}" — ${domain} can never be verified in Resend. ` +
+            `Set a from-address on a domain you own (e.g. orders@${sender.country.domain}) ` +
+            `in Settings → Email Provider, and verify that domain in Resend.`,
+        );
+      }
       return sendViaResend({
-        apiKey, from, to: sendTo, subject, html, replyTo: effectiveReplyTo,
+        apiKey, from, to: sendTo, subject, html, replyTo: finalReplyTo,
       });
     }
     return sendViaSmtp({
@@ -262,14 +294,14 @@ export async function sendCountryEmail({
       to: sendTo,
       subject,
       html,
-      replyTo: effectiveReplyTo,
+      replyTo: finalReplyTo,
     });
   };
 
   try {
     const result = await attempt(primary);
     console.log(
-      `[emailService][${sender.country.code}][${result.provider}] Sent to ${sendTo}: ${result.messageId}`,
+      `[emailService][${countryCode}][${result.provider}] Sent to ${sendTo}: ${result.messageId}`,
     );
     recordResult({ ok: true, provider: result.provider });
     return result;
@@ -279,12 +311,12 @@ export async function sendCountryEmail({
     if (forceProvider) throw primaryErr;
 
     console.warn(
-      `[emailService][${sender.country.code}] ${primary} failed (${primaryErr.message}); trying ${secondary}.`,
+      `[emailService][${countryCode}] ${primary} failed (${primaryErr.message}); trying ${secondary}.`,
     );
     try {
       const result = await attempt(secondary);
       console.log(
-        `[emailService][${sender.country.code}][${result.provider}] Sent via fallback to ${sendTo}: ${result.messageId}`,
+        `[emailService][${countryCode}][${result.provider}] Sent via fallback to ${sendTo}: ${result.messageId}`,
       );
       recordResult({ ok: true, provider: result.provider });
       return result;

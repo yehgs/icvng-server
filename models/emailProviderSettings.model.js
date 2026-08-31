@@ -149,16 +149,36 @@ emailProviderSettingsSchema.statics.getSettings = async function getSettings({
 emailProviderSettingsSchema.methods.senderFor = function senderFor(
   countryCode,
   country,
+  provider = "SMTP",
 ) {
   const entry = (this.countries || []).find(
     (c) => c.countryCode === countryCode && c.isActive !== false,
   );
 
+  // ── PROVIDER-AWARE FALLBACK ───────────────────────────────────────────
+  // These two providers need fundamentally different fallbacks, and using
+  // one chain for both is what produced the "gmail.com domain is not
+  // verified" 403.
+  //
+  // SMTP authenticates AS a mailbox, so EMAIL_USER is the correct sender —
+  // it is the account doing the sending.
+  //
+  // RESEND authenticates with an API key and sends AS a domain it has
+  // verified. EMAIL_USER is a Gmail login, and gmail.com can never be
+  // verified because we do not own it. Falling back to it guarantees a 403.
+  // So for Resend the last resort is the COUNTRY'S OWN DOMAIN — which is
+  // exactly the set of domains verified in Resend — rather than a mailbox
+  // login that has nothing to do with sending identity.
+  const domainFallback = country?.domain ? `orders@${country.domain}` : "";
+
   const fromEmail =
     entry?.fromEmail ||
     this.resend?.defaultFromEmail ||
-    process.env[`EMAIL_USER_${countryCode}`] ||
-    process.env.EMAIL_USER ||
+    (provider === "RESEND"
+      ? domainFallback
+      : process.env[`EMAIL_USER_${countryCode}`] ||
+        process.env.EMAIL_USER ||
+        domainFallback) ||
     "";
 
   const fromName =
