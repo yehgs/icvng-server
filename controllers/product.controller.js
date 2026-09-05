@@ -816,7 +816,17 @@ export const getProductControllerAdmin = async (request, response) => {
 
     const skip = (page - 1) * limit;
 
-    const [data, totalCount] = await Promise.all([
+    // partnerStockCount: how many products MATCHING THE CURRENT FILTERS have
+    // supplier-managed ("partnership") online stock enabled. Computed against
+    // the full filtered set (not just the current page of `limit`) so the
+    // admin's "% partnership vs normal" stat (see ProductManagement.jsx) is
+    // accurate across all matching products, not just the 10 shown on screen.
+    const partnerStockQuery = {
+      ...query,
+      $and: [...(query.$and || []), { "partnerStock.enabled": true }],
+    };
+
+    const [data, totalCount, partnerStockCount] = await Promise.all([
       ProductModel.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -826,6 +836,7 @@ export const getProductControllerAdmin = async (request, response) => {
         )
         .populate("partnerStock.supplier", "name contactPerson.phone"),
       ProductModel.countDocuments(query),
+      ProductModel.countDocuments(partnerStockQuery),
     ]);
 
     // HQ-only fields: BTB (B2B) pricing and offline warehouse stock are not
@@ -859,6 +870,7 @@ export const getProductControllerAdmin = async (request, response) => {
       success: true,
       totalCount: totalCount,
       totalNoPage: Math.ceil(totalCount / limit),
+      partnerStockCount: partnerStockCount,
       data: responseData,
     });
   } catch (error) {

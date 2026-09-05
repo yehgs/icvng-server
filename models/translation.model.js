@@ -43,6 +43,7 @@ const translationSchema = new mongoose.Schema(
         "blogTag",
         "banner",
         "slider",
+        "popup",
         "coupon",
         "notification",
         "email",

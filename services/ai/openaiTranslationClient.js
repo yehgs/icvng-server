@@ -154,11 +154,84 @@ function buildTranslationInput(texts, sourceLang, targetLang) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function isRetryableError(err) {
+/**
+ * Classifies an OpenAI SDK error into one of a small set of stable codes so
+ * callers up the stack (translationService.js → controllers → admin UI) can
+ * show a message that actually matches the real cause, instead of a generic
+ * "Translation failed" for everything.
+ *
+ * "quota_exceeded" is the one this was specifically added for: the account
+ * has run out of credit / hit its billing limit. OpenAI reports this as a
+ * 429 with type/code "insufficient_quota" — which looks identical to an
+ * ordinary rate limit (also a 429) unless you inspect the body, so a plain
+ * `status === 429` check (what this file used to do) can't tell "you're
+ * sending requests too fast, back off and retry" apart from "there is no
+ * money left, retrying will never succeed" — one of these is worth
+ * retrying, the other never is, and previously both just retried 3 times,
+ * failed, and surfaced the raw OpenAI error text (which is written for a
+ * developer reading API docs, not for an admin clicking a translate
+ * button).
+ *
+ * @param {any} err
+ * @returns {"quota_exceeded" | "auth" | "rate_limited" | "bad_model" | "server_error" | "network" | "unknown"}
+ */
+function classifyTranslationError(err) {
   const status = err?.status || err?.response?.status;
-  // 429 rate limit, 500/502/503/504 transient server issues, or a raw
-  // network/timeout error from the SDK (no status at all).
-  return status === 429 || (status >= 500 && status < 600) || !status;
+  const code = (err?.code || err?.error?.code || "").toString().toLowerCase();
+  const type = (err?.type || err?.error?.type || "").toString().toLowerCase();
+  const message = (err?.message || "").toLowerCase();
+
+  const looksLikeQuota =
+    code.includes("insufficient_quota") ||
+    type.includes("insufficient_quota") ||
+    message.includes("insufficient_quota") ||
+    message.includes("exceeded your current quota") ||
+    message.includes("billing") ||
+    status === 402;
+
+  if (looksLikeQuota) return "quota_exceeded";
+  if (status === 401 || status === 403) return "auth";
+  if (status === 404 || message.includes("model")) return "bad_model";
+  if (status === 429) return "rate_limited";
+  if (status >= 500 && status < 600) return "server_error";
+  if (!status) return "network";
+  return "unknown";
+}
+
+// A short, human-readable message per error class — this is what ends up in
+// front of an admin (via translateEntity's results[lang].error and the
+// "Auto" button's toast), so it needs to say what happened and what to do
+// about it, not just restate the HTTP status.
+const FRIENDLY_ERROR_MESSAGES = {
+  quota_exceeded:
+    "The OpenAI account has run out of credit or hit its usage/billing limit. " +
+    "Auto-translation can't run until billing is topped up — contact IT/Finance. " +
+    "(Manual translation edits still work normally.)",
+  auth: "The OpenAI API key is missing, invalid, or was revoked. Contact IT to check OPENAI_API_KEY.",
+  bad_model: "The configured OpenAI model is unavailable or misspelled. Contact IT to check OPENAI_TRANSLATION_MODEL.",
+  rate_limited: "OpenAI is rate-limiting requests right now. This usually clears on its own — try again in a minute.",
+  server_error: "OpenAI's servers had a temporary issue. Try again shortly.",
+  network: "Couldn't reach OpenAI (network/connectivity issue). Try again shortly.",
+  unknown: null, // fall back to the raw error message — nothing more specific to say
+};
+
+/**
+ * Public helper so translationService.js can attach the same classification
+ * (and friendly text) to results it reports back to the admin UI, without
+ * duplicating the detection logic.
+ */
+export function describeTranslationError(err) {
+  const code = classifyTranslationError(err);
+  return { code, friendlyMessage: FRIENDLY_ERROR_MESSAGES[code] || null };
+}
+
+function isRetryableError(err) {
+  const code = classifyTranslationError(err);
+  // Quota exhaustion, a bad/missing API key, and a bad model name will
+  // never succeed no matter how many times we retry — burning 3 more
+  // attempts (with backoff) just delays telling the admin what's actually
+  // wrong. Only genuinely transient conditions are worth retrying.
+  return code === "rate_limited" || code === "server_error" || code === "network";
 }
 
 /**
@@ -256,6 +329,13 @@ async function callResponsesAPI(texts, sourceLang, targetLang, maxRetries = 3) {
     }
   }
 
+  // Tag the error with a stable classification + friendly message before it
+  // leaves this module, so every caller up the chain (translateBatchAIDetailed
+  // → translationService.js → controllers → admin UI) can react to *why* it
+  // failed instead of just knowing that it failed.
+  const { code, friendlyMessage } = describeTranslationError(lastErr);
+  lastErr.translationErrorCode = code;
+  if (friendlyMessage) lastErr.friendlyMessage = friendlyMessage;
   throw lastErr;
 }
 
@@ -305,16 +385,17 @@ function cacheSet(text, sourceLang, targetLang, translated) {
  */
 export async function translateBatchAIDetailed(texts, sourceLang = "en", targetLang = "fr") {
   if (!texts || texts.length === 0) {
-    return { results: texts || [], succeeded: [], failedCount: 0, lastError: null };
+    return { results: texts || [], succeeded: [], failedCount: 0, lastError: null, lastErrorCode: null };
   }
   if (sourceLang === targetLang) {
-    return { results: texts, succeeded: texts.map(() => true), failedCount: 0, lastError: null };
+    return { results: texts, succeeded: texts.map(() => true), failedCount: 0, lastError: null, lastErrorCode: null };
   }
 
   const results = new Array(texts.length);
   const succeeded = new Array(texts.length).fill(true); // empty/cached/skipped strings count as "succeeded" (nothing to fail)
   const toTranslate = []; // { index, text }
   let lastError = null;
+  let lastErrorCode = null; // see describeTranslationError() above
 
   texts.forEach((text, index) => {
     if (!text || typeof text !== "string" || !text.trim()) {
@@ -345,8 +426,23 @@ export async function translateBatchAIDetailed(texts, sourceLang = "en", targetL
   }
 
   let failedCount = 0;
+  // Once we know it's quota exhaustion, every remaining chunk/large item in
+  // THIS call will fail for the exact same reason — stop making doomed API
+  // calls (each with its own 3-retry backoff) and just mark the rest failed
+  // immediately. Matters most on a "translate whole entity" run with many
+  // fields: without this, a single out-of-credit account turns one Auto
+  // click into a dozen-plus guaranteed-failing round trips.
+  let stopEarly = false;
 
   for (const chunk of chunks) {
+    if (stopEarly) {
+      chunk.forEach((c) => {
+        results[c.index] = c.text;
+        succeeded[c.index] = false;
+        failedCount++;
+      });
+      continue;
+    }
     try {
       const translated = await callResponsesAPI(
         chunk.map((c) => c.text),
@@ -358,11 +454,12 @@ export async function translateBatchAIDetailed(texts, sourceLang = "en", targetL
         cacheSet(c.text, sourceLang, targetLang, translated[i]);
       });
     } catch (err) {
-      lastError = err.message;
+      lastError = err.friendlyMessage || err.message;
+      lastErrorCode = err.translationErrorCode || null;
       console.error(
         `[openaiTranslationClient] Batch of ${chunk.length} → ${targetLang} failed after retries — ` +
           `these field(s) will be left untranslated (not silently substituted with English) so the ` +
-          `caller can report a real failure instead of a false "success":`,
+          `caller can report a real failure instead of a false "success" (errorCode=${lastErrorCode}):`,
         err.message,
       );
       // Fall back to the source text for this chunk (so the caller always
@@ -374,19 +471,29 @@ export async function translateBatchAIDetailed(texts, sourceLang = "en", targetL
         succeeded[c.index] = false;
         failedCount++;
       });
+      if (lastErrorCode === "quota_exceeded" || lastErrorCode === "auth" || lastErrorCode === "bad_model") {
+        stopEarly = true;
+      }
     }
   }
 
   // Large items, one call each (each is its own try/catch internally).
   for (const item of large) {
+    if (stopEarly) {
+      results[item.index] = item.text;
+      succeeded[item.index] = false;
+      failedCount++;
+      continue;
+    }
     try {
       const [translated] = await callResponsesAPI([item.text], sourceLang, targetLang);
       results[item.index] = translated;
       cacheSet(item.text, sourceLang, targetLang, translated);
     } catch (err) {
-      lastError = err.message;
+      lastError = err.friendlyMessage || err.message;
+      lastErrorCode = err.translationErrorCode || null;
       console.error(
-        `[openaiTranslationClient] Large text (${item.text.length} chars) → ${targetLang} failed after retries:`,
+        `[openaiTranslationClient] Large text (${item.text.length} chars) → ${targetLang} failed after retries (errorCode=${lastErrorCode}):`,
         err.message,
       );
       results[item.index] = item.text;
@@ -395,7 +502,7 @@ export async function translateBatchAIDetailed(texts, sourceLang = "en", targetL
     }
   }
 
-  return { results, succeeded, failedCount, lastError };
+  return { results, succeeded, failedCount, lastError, lastErrorCode };
 }
 
 /**

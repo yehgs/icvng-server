@@ -71,6 +71,8 @@ export const TRANSLATABLE_FIELDS = {
   // machine-translated no matter how many times "Auto" was clicked.
   banner: ["title", "subtitle", "linkText"],
   slider: ["title", "description"],
+  // Site-wide promotional pop-up — title/body copy/CTA button label.
+  popup: ["title", "bodyText", "ctaText"],
   fomo: ["notificationMessage"],
   notification: ["title", "message"],
   coupon: ["description"],
@@ -203,7 +205,7 @@ export async function translateSitePage({ entityId, document, sourceLang = "en",
         continue;
       }
 
-      const { results: translatedFlat, failedCount, lastError } =
+      const { results: translatedFlat, failedCount, lastError, lastErrorCode } =
         await translateBatchDetailed(strings, sourceLang, targetLang);
 
       if (failedCount === strings.length) {
@@ -216,7 +218,11 @@ export async function translateSitePage({ entityId, document, sourceLang = "en",
         );
         results[targetLang] = {
           status: "error",
-          error: `OpenAI translation failed for all ${strings.length} string(s): ${lastError}. Check server logs for [openaiTranslationClient] entries.`,
+          errorCode: lastErrorCode || "unknown",
+          error:
+            lastErrorCode && lastErrorCode !== "unknown"
+              ? `${lastError} (${strings.length} string(s) affected.)`
+              : `OpenAI translation failed for all ${strings.length} string(s): ${lastError}. Check server logs for [openaiTranslationClient] entries.`,
         };
         continue;
       }
@@ -249,6 +255,7 @@ export async function translateSitePage({ entityId, document, sourceLang = "en",
           status: "partial",
           stringsTranslated: strings.length - failedCount,
           stringsFailed: failedCount,
+          errorCode: lastErrorCode || "unknown",
           error: `${failedCount} of ${strings.length} string(s) failed to translate: ${lastError}`,
         };
       } else {
@@ -481,7 +488,7 @@ export async function translateEntity({
       }
 
       const texts = fieldsToTranslate.map((e) => e.value);
-      const { results: translated, succeeded, failedCount, lastError } =
+      const { results: translated, succeeded, failedCount, lastError, lastErrorCode } =
         await translateBatchDetailed(texts, sourceLang, targetLang);
 
       // Merge new auto-translations on top of any existing manual fields.
@@ -516,9 +523,16 @@ export async function translateEntity({
         );
         results[targetLang] = {
           status: "error",
+          errorCode: lastErrorCode || "unknown",
+          // Lead with the friendly, cause-specific message (e.g. quota
+          // exhausted) when we have one — that's what actually gets shown
+          // to the admin. The raw OpenAI text + "check server logs" pointer
+          // stays available for whoever investigates, appended after it.
           error:
-            `OpenAI translation failed for all ${fieldsToTranslate.length} field(s): ${lastError}. ` +
-            `Check server logs for [openaiTranslationClient] entries for the underlying cause.`,
+            lastErrorCode && lastErrorCode !== "unknown"
+              ? `${lastError} (${fieldsToTranslate.length} field(s) affected. See server logs for [openaiTranslationClient] entries.)`
+              : `OpenAI translation failed for all ${fieldsToTranslate.length} field(s): ${lastError}. ` +
+                `Check server logs for [openaiTranslationClient] entries for the underlying cause.`,
         };
         continue;
       }
@@ -549,6 +563,7 @@ export async function translateEntity({
           status: "partial",
           fieldsTranslated: actuallyTranslatedCount,
           fieldsFailed: failedCount,
+          errorCode: lastErrorCode || "unknown",
           error: `${failedCount} of ${fieldsToTranslate.length} field(s) failed to translate: ${lastError}`,
         };
       } else {

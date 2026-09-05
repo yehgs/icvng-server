@@ -176,6 +176,23 @@ const orderSchema = new mongoose.Schema(
       totalTax: { type: Number, default: 0 },
       grandTotal: { type: Number, default: 0 },
       itemCount: { type: Number, default: 0 },
+      // How much of a gift card (if any) was applied to this checkout —
+      // see utils/giftCardCheckout.js. grandTotal above is already NET of
+      // this amount; it's kept as its own field purely so admin order
+      // views can show "₦X paid by gift card" instead of just a smaller
+      // total with no explanation.
+      giftCardAmount: { type: Number, default: 0 },
+    },
+
+    // Set on the parent order only when a gift card was redeemed against
+    // this checkout. `code` is denormalized here (rather than requiring a
+    // GiftCard lookup) so admin order views can display it directly; the
+    // actual balance/redemption-history bookkeeping lives on the GiftCard
+    // document itself (giftCard.model.js's `redemptions` array).
+    giftCardRedemption: {
+      giftCardId: { type: mongoose.Schema.ObjectId, ref: "GiftCard", default: null },
+      code: { type: String, default: "" },
+      amount: { type: Number, default: 0 },
     },
 
     // ===== EXCHANGE RATE INFO =====

@@ -11,6 +11,7 @@ import Stripe from "../config/stripe.js";
 import { STRIPE_WEBHOOK_SECRET } from "../config/stripe.js";
 import mongoose from "mongoose";
 import crypto from "crypto";
+import { resolveGiftCardForCheckout, redeemGiftCardAmount } from "../utils/giftCardCheckout.js";
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS
@@ -316,6 +317,7 @@ export async function guestPaystackController(request, response) {
       shippingMethodId,
       shippingCost = 0,
       currency = "NGN",
+      giftCardCode,
     } = request.body;
 
     if (currency !== "NGN") {
@@ -351,7 +353,36 @@ export async function guestPaystackController(request, response) {
         (item.selectedPrice || item.price || 0) * (item.quantity || 1);
     }
     const totalAmount = subtotal + shippingCost;
-    const amountInKobo = Math.round(totalAmount * 100);
+
+    // ── Gift card (optional) ────────────────────────────────────────────
+    let giftCardApplied = null;
+    let chargeAmount = totalAmount;
+    if (giftCardCode) {
+      try {
+        const resolved = await resolveGiftCardForCheckout({
+          code: giftCardCode,
+          orderAmount: totalAmount,
+          currency: "NGN",
+          countryCode: request.countryCode || "NG",
+        });
+        giftCardApplied = { giftCardId: resolved.giftCard._id.toString(), amount: resolved.appliedAmount };
+        chargeAmount = resolved.remainderToPay;
+      } catch (gcErr) {
+        return response.status(400).json({ message: gcErr.message, error: true, success: false });
+      }
+    }
+
+    if (giftCardApplied && chargeAmount <= 0) {
+      return response.status(400).json({
+        message:
+          "GIFT_CARD_COVERS_FULL_TOTAL: this gift card fully covers the order — use the gift-card-only checkout instead of Paystack.",
+        error: true,
+        success: false,
+        data: { giftCardApplied },
+      });
+    }
+
+    const amountInKobo = Math.round(chargeAmount * 100);
 
     const paystackRes = await fetch(
       "https://api.paystack.co/transaction/initialize",
@@ -374,6 +405,11 @@ export async function guestPaystackController(request, response) {
             addressId,
             shippingMethodId: shippingMethodId || "",
             shippingCost,
+            ...(giftCardApplied && {
+              giftCardId: giftCardApplied.giftCardId,
+              giftCardAmount: giftCardApplied.amount.toString(),
+              giftCardCode: giftCardCode.trim().toUpperCase(),
+            }),
             cartItems: cartItems.map((i) => ({
               productId: i.productId || i._id,
               quantity: i.quantity,
@@ -584,6 +620,7 @@ export async function guestBankTransferController(request, response) {
       shippingMethodId,
       shippingCost = 0,
       currency = "NGN",
+      giftCardCode,
     } = request.body;
 
     if (currency !== "NGN") {
@@ -631,24 +668,60 @@ export async function guestBankTransferController(request, response) {
       });
     }
 
+    // ── Gift card (optional, partial or full) ───────────────────────────
+    // Same trust-model note as the logged-in bank transfer path: this order
+    // is created as PENDING before the transfer is actually confirmed, and
+    // redemption happens immediately alongside it — reverse via the admin
+    // Gift Card page's balance-adjustment field if a transfer never lands.
+    let giftCardResolution = null;
+    const parentOrder = orders.find((o) => o.isParentOrder) || orders[0];
+    if (giftCardCode) {
+      try {
+        giftCardResolution = await resolveGiftCardForCheckout({
+          code: giftCardCode,
+          orderAmount: parentOrder.groupTotals?.grandTotal || parentOrder.totalAmt,
+          currency,
+          countryCode: request.countryCode || "NG",
+        });
+      } catch (gcErr) {
+        return response.status(400).json({ message: gcErr.message, error: true, success: false });
+      }
+      const { giftCard, appliedAmount } = giftCardResolution;
+      parentOrder.totalAmt = Math.max(0, parentOrder.totalAmt - appliedAmount);
+      parentOrder.groupTotals = parentOrder.groupTotals || {};
+      parentOrder.groupTotals.giftCardAmount = appliedAmount;
+      parentOrder.groupTotals.grandTotal = Math.max(0, (parentOrder.groupTotals.grandTotal || 0) - appliedAmount);
+      parentOrder.giftCardRedemption = { giftCardId: giftCard._id, code: giftCard.code, amount: appliedAmount };
+    }
+
     const savedOrders = await OrderModel.insertMany(orders);
-    const parentOrder =
+    const savedParent =
       savedOrders.find((o) => o.isParentOrder) || savedOrders[0];
+
+    if (giftCardResolution && giftCardResolution.appliedAmount > 0) {
+      await redeemGiftCardAmount({
+        giftCardId: giftCardResolution.giftCard._id,
+        amount: giftCardResolution.appliedAmount,
+        orderGroupId: groupId,
+        orderId: savedParent.orderId,
+        redeemedByUser: null,
+      });
+    }
 
     return response.json({
       message: "Order placed. Please complete bank transfer to confirm.",
       success: true,
       data: {
-        orderId: parentOrder.orderId,
-        orderGroupId: parentOrder.orderGroupId,
-        grandTotal: parentOrder.groupTotals?.grandTotal || parentOrder.totalAmt,
+        orderId: savedParent.orderId,
+        orderGroupId: savedParent.orderGroupId,
+        grandTotal: savedParent.groupTotals?.grandTotal || savedParent.totalAmt,
         currency,
         bankDetails: {
           bankName: process.env.BANK_NAME || "Access Bank",
           accountName:
             process.env.ACCOUNT_NAME || "Italian Coffee Ventures Ltd",
           accountNumber: process.env.ACCOUNT_NUMBER || "0123456789",
-          narration: `Payment for order ${parentOrder.orderId}`,
+          narration: `Payment for order ${savedParent.orderId}`,
         },
       },
     });
@@ -727,11 +800,37 @@ export async function processGuestPaystackWebhook(metadata, reference) {
     });
   }
 
+  // ── Gift card redemption ─────────────────────────────────────────────
+  // Same pattern as the logged-in Paystack path — the fixed amount decided
+  // at initiation (and already reflected in what Paystack actually
+  // charged) is applied to the parent order's total here, then redeemed
+  // for real once the order is confirmed to exist.
+  const giftCardId = metadata.giftCardId;
+  const giftCardAmount = parseFloat(metadata.giftCardAmount || "0");
+  if (giftCardId && giftCardAmount > 0 && orders.length > 0) {
+    const parent = orders.find((o) => o.isParentOrder) || orders[0];
+    parent.totalAmt = Math.max(0, parent.totalAmt - giftCardAmount);
+    parent.groupTotals = parent.groupTotals || {};
+    parent.groupTotals.giftCardAmount = giftCardAmount;
+    parent.groupTotals.grandTotal = Math.max(0, (parent.groupTotals.grandTotal || 0) - giftCardAmount);
+    parent.giftCardRedemption = { giftCardId, code: metadata.giftCardCode || "", amount: giftCardAmount };
+  }
+
   if (orders.length > 0) {
     await OrderModel.insertMany(orders);
     console.log(
       `✅ Guest Paystack order created via webhook. Group: ${groupId}, Ref: ${reference}`,
     );
+    if (giftCardId && giftCardAmount > 0) {
+      const parent = orders.find((o) => o.isParentOrder) || orders[0];
+      await redeemGiftCardAmount({
+        giftCardId,
+        amount: giftCardAmount,
+        orderGroupId: groupId,
+        orderId: parent.orderId,
+        redeemedByUser: null, // guest checkout — no account
+      });
+    }
   }
 }
 

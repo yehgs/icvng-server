@@ -40,6 +40,8 @@ import { sendCountryEmail } from "../config/emailService.js";
 // helper existed and had zero call sites. A crafted request could therefore
 // open a Paystack session against a Togo/Benin/Italy storefront.
 import { isPaymentProviderEnabled, getCountryByCode } from "../config/countries/index.js";
+import { fulfillGiftCardPurchase } from "./giftCard.controller.js";
+import { resolveGiftCardForCheckout, redeemGiftCardAmount } from "../utils/giftCardCheckout.js";
 
 // Helper functions
 const getProductPrice = (product, priceOption = "regular") => {
@@ -356,7 +358,36 @@ async function createOrderFromPaystackTransaction({
   // Update group totals in first order (parent)
   orderItems[0].groupTotals = groupTotals;
 
+  // ── Gift card redemption ─────────────────────────────────────────────
+  // The amount was already fixed (and Paystack already charged net of it)
+  // at initiation time — see paystackPaymentController. Applying it here
+  // means reducing the PARENT order's recorded total by the same fixed
+  // amount, so the order's totalAmt matches what the customer actually
+  // paid across gift card + Paystack combined.
+  const giftCardId = metadata.giftCardId;
+  const giftCardAmount = parseFloat(metadata.giftCardAmount || "0");
+  if (giftCardId && giftCardAmount > 0) {
+    orderItems[0].totalAmt = Math.max(0, orderItems[0].totalAmt - giftCardAmount);
+    orderItems[0].groupTotals.giftCardAmount = giftCardAmount;
+    orderItems[0].groupTotals.grandTotal = Math.max(0, orderItems[0].groupTotals.grandTotal - giftCardAmount);
+    orderItems[0].giftCardRedemption = {
+      giftCardId,
+      code: metadata.giftCardCode || "",
+      amount: giftCardAmount,
+    };
+  }
+
   const orders = await OrderModel.insertMany(orderItems);
+
+  if (giftCardId && giftCardAmount > 0) {
+    await redeemGiftCardAmount({
+      giftCardId,
+      amount: giftCardAmount,
+      orderGroupId,
+      orderId: orders[0]?.orderId,
+      redeemedByUser: userId,
+    });
+  }
 
   // Clear cart
   await CartProductModel.deleteMany({ userId });
@@ -403,6 +434,32 @@ export async function paystackWebhookController(request, response) {
 
     if (event === "charge.success") {
       const { reference, metadata } = data;
+
+      // Gift-card purchases share Paystack's ONE dashboard-level webhook URL
+      // with regular checkout (Paystack has no per-transaction webhook), so
+      // this is where the two flows split — everything else about this
+      // handler (idempotent, ack-with-200-even-on-failure) applies equally
+      // to both.
+      if (metadata?.purpose === "GIFT_CARD_PURCHASE") {
+        try {
+          await fulfillGiftCardPurchase({ reference, metadata, provider: "PAYSTACK" });
+        } catch (err) {
+          console.error("Paystack webhook gift card fulfillment failed:", err.message);
+          await PaymentFailureModel.record({
+            reference,
+            provider: "PAYSTACK",
+            stage: "GIFT_CARD_FULFILLMENT",
+            countryCode: metadata?.countryCode || request.countryCode || "NG",
+            userId: metadata?.userId,
+            customerEmail: data?.customer?.email,
+            amount: typeof data?.amount === "number" ? data.amount / 100 : undefined,
+            currency: data?.currency || "NGN",
+            metadata,
+            error: err,
+          });
+        }
+        return response.json({ received: true });
+      }
 
       try {
         await createOrderFromPaystackTransaction({
@@ -548,6 +605,7 @@ export async function paystackPaymentController(request, response) {
       shippingCost = 0,
       shippingMethodId,
       currency = "NGN",
+      giftCardCode,
     } = request.body;
 
     // ── GATEWAY AVAILABILITY GUARD ────────────────────────────────────────
@@ -586,7 +644,44 @@ export async function paystackPaymentController(request, response) {
     }
 
     const txRef = `PSK-${Date.now()}-${userId}`;
-    const amountInKobo = Math.round(totalAmt * 100);
+
+    // ── Gift card (optional, partial or full) ───────────────────────────
+    // Resolved here (not deducted yet — see utils/giftCardCheckout.js) so
+    // the amount actually charged to Paystack is already net of it. The
+    // fixed appliedAmount is snapshotted into metadata for the webhook/
+    // verify step to redeem — same "decide now, confirm later" pattern
+    // already used for the cart snapshot below.
+    let giftCardApplied = null;
+    let chargeAmount = totalAmt;
+    if (giftCardCode) {
+      try {
+        const resolved = await resolveGiftCardForCheckout({
+          code: giftCardCode,
+          orderAmount: totalAmt,
+          currency: "NGN",
+          countryCode: request.countryCode || "NG",
+        });
+        giftCardApplied = { giftCardId: resolved.giftCard._id.toString(), amount: resolved.appliedAmount };
+        chargeAmount = resolved.remainderToPay;
+      } catch (gcErr) {
+        return response.status(400).json({ message: gcErr.message, error: true, success: false });
+      }
+    }
+
+    const amountInKobo = Math.round(chargeAmount * 100);
+
+    // A gift card covering the FULL total means there is nothing left to
+    // charge Paystack for — Paystack requires a non-zero amount, so this
+    // needs to be routed through a zero-payment order path instead.
+    if (giftCardApplied && amountInKobo <= 0) {
+      return response.status(400).json({
+        message:
+          "GIFT_CARD_COVERS_FULL_TOTAL: this gift card fully covers the order — use the gift-card-only checkout instead of Paystack.",
+        error: true,
+        success: false,
+        data: { giftCardApplied },
+      });
+    }
 
     const paymentData = {
       email: user.email,
@@ -600,6 +695,11 @@ export async function paystackPaymentController(request, response) {
         shippingMethodId: shippingMethodId || "",
         shippingCost,
         itemCount: cartItems.length,
+        ...(giftCardApplied && {
+          giftCardId: giftCardApplied.giftCardId,
+          giftCardAmount: giftCardApplied.amount.toString(),
+          giftCardCode: giftCardCode.trim().toUpperCase(),
+        }),
         // Snapshot the storefront's country HERE, where it is genuinely
         // known (the browser sent X-Storefront-Host on this call). The
         // webhook that later creates the order is called by Paystack, not
@@ -679,6 +779,34 @@ export async function webhookStripe(request, response) {
   switch (event.type) {
     case "checkout.session.completed":
       const session = event.data.object;
+
+      // Same split as the Paystack webhook above — one dashboard-level
+      // webhook URL serves both regular checkout and gift-card purchase
+      // sessions (see initiateStripeGiftCardPurchase).
+      if (session.metadata?.purpose === "GIFT_CARD_PURCHASE") {
+        try {
+          await fulfillGiftCardPurchase({
+            reference: session.payment_intent || session.id,
+            metadata: session.metadata,
+            provider: "STRIPE",
+          });
+        } catch (err) {
+          console.error("Stripe webhook gift card fulfillment failed:", err.message);
+          await PaymentFailureModel.record({
+            reference: session?.payment_intent || session?.id,
+            provider: "STRIPE",
+            stage: "GIFT_CARD_FULFILLMENT",
+            countryCode: session?.metadata?.countryCode || "NG",
+            userId: session?.metadata?.userId,
+            customerEmail: session?.customer_email,
+            amount: typeof session?.amount_total === "number" ? session.amount_total / 100 : undefined,
+            currency: session?.currency?.toUpperCase(),
+            metadata: session?.metadata,
+            error: err,
+          });
+        }
+        break;
+      }
 
       try {
         // No guest checkout path — checkout requires a logged-in account,
@@ -1110,6 +1238,7 @@ export async function DirectBankTransferOrderController(request, response) {
       shippingMethodId,
       currency = "NGN",
       bankDetails,
+      giftCardCode,
     } = request.body;
 
     // Country-scoped: which currency THIS request's storefront actually
@@ -1136,18 +1265,14 @@ export async function DirectBankTransferOrderController(request, response) {
     // be Stripe by default" — enforced here too (not just hidden in the
     // checkout UI), so this endpoint can't be hit directly to create a
     // bank-transfer order for a country IT/DIRECTOR hasn't configured one
-    // for.
+    // for. Deferred until AFTER gift card resolution below: a gift card
+    // that fully covers the order needs no bank transfer at all, so a
+    // country with no bank transfer configured (Stripe-only) can still
+    // fulfill a 100%-gift-card order through this same endpoint.
     const bankSetting = await BankTransferSettingsModel.findOne({
       countryCode: request.countryCode,
       isActive: true,
     });
-
-    if (!bankSetting) {
-      return response.status(400).json({
-        message: "Direct Bank Transfer is not available for this store — please use Stripe.",
-        error: true,
-      });
-    }
 
     // The order's recorded bank_transfer_details are OUR receiving
     // account (IT/DIRECTOR-configured, per country) — NOT trusted from
@@ -1155,13 +1280,15 @@ export async function DirectBankTransferOrderController(request, response) {
     // kept as the customer's own payment reference for staff to
     // reconcile against, since that's information only the customer has
     // (which of their own transfers this was).
-    const resolvedBankDetails = {
-      bankName: bankSetting.bankName,
-      accountName: bankSetting.accountName,
-      accountNumber: bankSetting.accountNumber,
-      sortCode: bankSetting.sortCode,
-      reference: bankDetails?.reference || "",
-    };
+    const resolvedBankDetails = bankSetting
+      ? {
+          bankName: bankSetting.bankName,
+          accountName: bankSetting.accountName,
+          accountNumber: bankSetting.accountNumber,
+          sortCode: bankSetting.sortCode,
+          reference: bankDetails?.reference || "",
+        }
+      : null;
 
     const cartItems = await CartProductModel.find({ userId }).populate(
       "productId",
@@ -1289,7 +1416,7 @@ export async function DirectBankTransferOrderController(request, response) {
         // Our own receiving-account details (IT/DIRECTOR-configured, per
         // country) — see resolvedBankDetails above. NOT the raw
         // client-submitted bankDetails.
-        bank_transfer_details: resolvedBankDetails,
+        bank_transfer_details: resolvedBankDetails || {},
 
         // Delivery (SHARED)
         delivery_address: addressId,
@@ -1304,14 +1431,89 @@ export async function DirectBankTransferOrderController(request, response) {
           : {},
 
         // Notes
-        admin_notes: `Bank Transfer - Reference: ${resolvedBankDetails.reference || "(none provided)"}`,
+        admin_notes: `Bank Transfer - Reference: ${resolvedBankDetails?.reference || "(none provided)"}`,
       };
     });
 
     // Update group totals in first order
     orderItems[0].groupTotals = groupTotals;
 
+    // ── Gift card (optional, partial or full) ───────────────────────────
+    // No init/confirm split here (unlike Paystack) — this whole flow is one
+    // synchronous request, so resolve AND redeem happen in the same call,
+    // right after the real total is known and right before the orders are
+    // persisted.
+    //
+    // NOTE ON TRUST MODEL: bank transfer orders are created immediately as
+    // PENDING_BANK_TRANSFER (payment isn't actually verified yet — that
+    // happens later, manually, by finance) — same as every other bank
+    // transfer order today, gift-card-funded or not. Redeeming the gift
+    // card here mirrors that existing trust model rather than introducing
+    // a new gap; if a transfer never arrives, reverse the redemption via
+    // the admin Gift Card page's balance-adjustment field (credits the
+    // amount back).
+    let giftCardResolution = null;
+    if (giftCardCode) {
+      try {
+        giftCardResolution = await resolveGiftCardForCheckout({
+          code: giftCardCode,
+          orderAmount: groupTotals.grandTotal,
+          currency: orderCurrency,
+          countryCode: request.countryCode || "NG",
+        });
+      } catch (gcErr) {
+        return response.status(400).json({ message: gcErr.message, error: true, success: false });
+      }
+      const { giftCard, appliedAmount } = giftCardResolution;
+      orderItems[0].totalAmt = Math.max(0, orderItems[0].totalAmt - appliedAmount);
+      orderItems[0].groupTotals.giftCardAmount = appliedAmount;
+      orderItems[0].groupTotals.grandTotal = Math.max(0, groupTotals.grandTotal - appliedAmount);
+      orderItems[0].giftCardRedemption = { giftCardId: giftCard._id, code: giftCard.code, amount: appliedAmount };
+    }
+
+    const fullyCoveredByGiftCard =
+      giftCardResolution && orderItems[0].groupTotals.grandTotal <= 0;
+
+    // Bank transfer is only actually NEEDED if something remains to be
+    // paid after the gift card — a country with no bank transfer
+    // configured (Stripe-only) can still place a 100%-gift-card order.
+    if (!fullyCoveredByGiftCard && !bankSetting) {
+      return response.status(400).json({
+        message: "Direct Bank Transfer is not available for this store — please use Stripe.",
+        error: true,
+      });
+    }
+    if (!fullyCoveredByGiftCard && !resolvedBankDetails) {
+      // Shouldn't happen (guarded above), but keeps orderItems below honest.
+      return response.status(400).json({
+        message: "Direct Bank Transfer is not available for this store.",
+        error: true,
+      });
+    }
+
+    if (fullyCoveredByGiftCard) {
+      // Nothing left to transfer — mark every order in the group PAID via
+      // GIFT_CARD instead of leaving it sitting as PENDING_BANK_TRANSFER
+      // with nothing for finance to ever confirm.
+      orderItems.forEach((item) => {
+        item.payment_status = "PAID";
+        item.payment_method = "GIFT_CARD";
+        item.bank_transfer_details = {};
+        item.admin_notes = `Fully paid via gift card ${giftCardResolution.giftCard.code}.`;
+      });
+    }
+
     const orders = await OrderModel.insertMany(orderItems);
+
+    if (giftCardResolution && giftCardResolution.appliedAmount > 0) {
+      await redeemGiftCardAmount({
+        giftCardId: giftCardResolution.giftCard._id,
+        amount: giftCardResolution.appliedAmount,
+        orderGroupId,
+        orderId: orders[0]?.orderId,
+        redeemedByUser: userId,
+      });
+    }
 
     await CartProductModel.deleteMany({ userId });
     await UserModel.updateOne({ _id: userId }, { shopping_cart: [] });
@@ -1320,44 +1522,48 @@ export async function DirectBankTransferOrderController(request, response) {
       `✅ Bank transfer: Created order group ${orderGroupId} with ${orders.length} orders`,
     );
 
-    // Country-scoped confirmation. Bank-transfer orders are PENDING, not
-    // PAID, so the customer gets the order confirmation with an "awaiting
-    // payment" badge plus an explicit awaiting-transfer payment notice —
-    // both in their country's language.
+    // Country-scoped confirmation. Bank-transfer orders are normally
+    // PENDING (not PAID), so the customer gets an "awaiting payment"
+    // notice too — except when a gift card covered the whole order, in
+    // which case it's already PAID and there is nothing to await.
     const btUser = await UserModel.findById(userId);
     await sendOrderConfirmationEmails({
       orders,
       user: btUser,
       reference: orderGroupId,
-      provider: "BANK_TRANSFER",
+      provider: fullyCoveredByGiftCard ? "GIFT_CARD" : "BANK_TRANSFER",
     });
-    try {
-      const btParent = orders.find((o) => o.isParentOrder) || orders[0];
-      const btCountry = resolveEmailCountry(btParent.countryCode);
-      if (btUser?.email) {
-        await sendCountryEmail({
-          countryCode: btCountry.code,
-          sendTo: btUser.email,
-          subject: subjectFor("paymentStatus", btCountry, {
-            orderId: btParent.orderId,
-            status: "PENDING_BANK_TRANSFER",
-          }),
-          html: paymentStatusEmail({
-            order: btParent,
-            user: btUser,
-            status: "PENDING_BANK_TRANSFER",
-            country: btCountry,
-            amount: groupTotals.grandTotal,
-            currency: btParent.currency,
-          }),
-        });
+    if (!fullyCoveredByGiftCard) {
+      try {
+        const btParent = orders.find((o) => o.isParentOrder) || orders[0];
+        const btCountry = resolveEmailCountry(btParent.countryCode);
+        if (btUser?.email) {
+          await sendCountryEmail({
+            countryCode: btCountry.code,
+            sendTo: btUser.email,
+            subject: subjectFor("paymentStatus", btCountry, {
+              orderId: btParent.orderId,
+              status: "PENDING_BANK_TRANSFER",
+            }),
+            html: paymentStatusEmail({
+              order: btParent,
+              user: btUser,
+              status: "PENDING_BANK_TRANSFER",
+              country: btCountry,
+              amount: groupTotals.grandTotal,
+              currency: btParent.currency,
+            }),
+          });
+        }
+      } catch (mailErr) {
+        console.error("[order] bank-transfer notice email failed:", mailErr.message);
       }
-    } catch (mailErr) {
-      console.error("[order] bank-transfer notice email failed:", mailErr.message);
     }
 
     return response.json({
-      message: "Bank transfer order placed successfully",
+      message: fullyCoveredByGiftCard
+        ? "Order placed and fully paid via gift card"
+        : "Bank transfer order placed successfully",
       data: orders,
       success: true,
     });
