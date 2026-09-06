@@ -330,6 +330,34 @@ export const getGiftCardPurchaseStatus = async (request, response) => {
   }
 };
 
+// ── Balance check (public, read-only) ────────────────────────────────────────
+// Deliberately returns only what a code-holder needs to know — never the
+// purchaser/recipient identity or redemption history, since anyone who
+// merely has (or guesses) the code can call this.
+export const checkGiftCardBalanceController = async (request, response) => {
+  try {
+    const { code } = request.params;
+    const giftCard = await GiftCardModel.findOne({ code: String(code).trim().toUpperCase() });
+    if (!giftCard) {
+      return response.status(404).json({ message: "Gift card not found", error: true, success: false });
+    }
+    return response.json({
+      success: true,
+      error: false,
+      data: {
+        code: giftCard.code,
+        balance: giftCard.balance,
+        initialAmount: giftCard.initialAmount,
+        currency: giftCard.currency,
+        status: giftCard.status,
+        expiryDate: giftCard.expiryDate,
+      },
+    });
+  } catch (error) {
+    return response.status(500).json({ message: error.message, error: true, success: false });
+  }
+};
+
 // ── Redemption (public, read-only) ───────────────────────────────────────────
 // Used by the checkout page to show "applied ₦X, ₦Y remaining to pay" before
 // the customer commits to a payment method. Does NOT touch the balance —

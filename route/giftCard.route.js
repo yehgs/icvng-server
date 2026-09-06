@@ -9,6 +9,7 @@ import {
   initiateStripeGiftCardPurchase,
   getGiftCardPurchaseStatus,
   validateGiftCardForCheckoutController,
+  checkGiftCardBalanceController,
   listGiftCardsAdminController,
   getGiftCardAdminController,
   issueGiftCardAdminController,
@@ -23,6 +24,9 @@ giftCardRouter.post("/purchase/paystack", optionalAuth, initiatePaystackGiftCard
 giftCardRouter.get("/purchase/paystack/verify/:reference", verifyPaystackGiftCardPurchase);
 giftCardRouter.post("/purchase/stripe", optionalAuth, initiateStripeGiftCardPurchase);
 giftCardRouter.get("/purchase/status/:reference", getGiftCardPurchaseStatus);
+
+// ── Balance check (public) ────────────────────────────────────────────────────
+giftCardRouter.get("/balance/:code", checkGiftCardBalanceController);
 
 // ── Redemption (public, read-only — see validateGiftCardForCheckoutController) ─
 giftCardRouter.post("/validate", optionalAuth, validateGiftCardForCheckoutController);

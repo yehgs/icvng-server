@@ -837,6 +837,25 @@ export async function webhookStripe(request, response) {
 
         const orders = await OrderModel.insertMany(orderProduct);
 
+        // ── Gift card redemption ─────────────────────────────────────────
+        // The discount was already applied to the actual Stripe charge via
+        // a one-time Coupon (see stripePaymentController) and groupTotals
+        // above is already net of it — this step is purely about
+        // decrementing the GiftCard document's own balance and logging the
+        // redemption, now that the order genuinely exists.
+        const giftCardId = session.metadata?.giftCardId;
+        const giftCardAmount = parseFloat(session.metadata?.giftCardAmount || "0");
+        if (giftCardId && giftCardAmount > 0) {
+          const parent = orders.find((o) => o.isParentOrder) || orders[0];
+          await redeemGiftCardAmount({
+            giftCardId,
+            amount: giftCardAmount,
+            orderGroupId: parent.orderGroupId,
+            orderId: parent.orderId,
+            redeemedByUser: userId,
+          });
+        }
+
         if (userId) {
           await UserModel.findByIdAndUpdate(userId, { shopping_cart: [] });
           await CartProductModel.deleteMany({ userId });
@@ -900,6 +919,7 @@ export async function stripePaymentController(request, response) {
       shippingMethodId,
       currency = "USD",
       paymentMethod = "stripe",
+      giftCardCode,
     } = request.body;
 
     // ── GATEWAY AVAILABILITY GUARD ────────────────────────────────────────
@@ -1007,6 +1027,53 @@ export async function stripePaymentController(request, response) {
       });
     }
 
+    // ── Gift card (optional, partial only) ──────────────────────────────
+    // Stripe Checkout has no concept of "charge a smaller amount" the way
+    // Paystack's flat amount does — a session is built from line items, so
+    // a flat discount has to be expressed as a real Stripe Coupon
+    // (amount_off) attached to the session via `discounts`. Stripe then
+    // proportionally distributes that discount across each line item
+    // itself, which means groupTotals computed downstream in
+    // getOrderProductItemsFromStripe (by summing each line item's
+    // post-discount amount_total) already comes out correctly net of the
+    // gift card — no manual "subtract from grandTotal" step needed here,
+    // unlike the Paystack/Bank Transfer paths.
+    //
+    // A gift card covering the FULL total isn't handled here — the client
+    // routes that case through the bank-transfer endpoint instead (the
+    // only one that can create a $0-payable order), matching the same
+    // "GIFT_CARD_COVERS_FULL_TOTAL" contract as paystackPaymentController.
+    let giftCardApplied = null;
+    let stripeCoupon = null;
+    if (giftCardCode) {
+      try {
+        const resolved = await resolveGiftCardForCheckout({
+          code: giftCardCode,
+          orderAmount: totalAmt,
+          currency: currency.toUpperCase(),
+          countryCode: stripeCountry,
+        });
+        if (resolved.remainderToPay <= 0) {
+          return response.status(400).json({
+            message:
+              "GIFT_CARD_COVERS_FULL_TOTAL: this gift card fully covers the order — use the gift-card-only checkout instead of Stripe.",
+            error: true,
+            success: false,
+            data: { giftCardApplied: { giftCardId: resolved.giftCard._id.toString(), amount: resolved.appliedAmount } },
+          });
+        }
+        giftCardApplied = { giftCardId: resolved.giftCard._id.toString(), amount: resolved.appliedAmount };
+        stripeCoupon = await Stripe.coupons.create({
+          amount_off: Math.round(resolved.appliedAmount * 100),
+          currency: currency.toLowerCase(),
+          duration: "once",
+          name: `Gift card ${giftCardCode.trim().toUpperCase()}`,
+        });
+      } catch (gcErr) {
+        return response.status(400).json({ message: gcErr.message, error: true, success: false });
+      }
+    }
+
     const params = {
       submit_type: "pay",
       mode: "payment",
@@ -1024,6 +1091,11 @@ export async function stripePaymentController(request, response) {
         originalShippingNGN: originalAmounts.shippingCost.toString(),
         originalTotalNGN: originalAmounts.totalAmt.toString(),
         itemCount: cartItems.length.toString(),
+        ...(giftCardApplied && {
+          giftCardId: giftCardApplied.giftCardId,
+          giftCardAmount: giftCardApplied.amount.toString(),
+          giftCardCode: giftCardCode.trim().toUpperCase(),
+        }),
         // Item #7: the Stripe webhook that later creates the Order docs
         // has no Host header from the customer's browser to detect country
         // from (Stripe calls our server directly) — it can only read this
@@ -1033,6 +1105,7 @@ export async function stripePaymentController(request, response) {
         countryCode: request.countryCode || "NG",
       },
       line_items: line_items,
+      ...(stripeCoupon && { discounts: [{ coupon: stripeCoupon.id }] }),
       success_url: `${process.env.FRONTEND_URL}/success`,
       cancel_url: `${process.env.FRONTEND_URL}/cancel`,
     };
@@ -1222,6 +1295,21 @@ async function getOrderProductItemsFromStripe({
   // Update group totals in first order
   if (productList.length > 0) {
     productList[0].groupTotals = groupTotals;
+    // Display-only — grandTotal above is already net of the gift card
+    // (Stripe's Coupon distributed the discount across line items before
+    // this function ever summed them), so this doesn't change any math,
+    // it just records what happened for admin order views. The actual
+    // balance deduction happens in the webhook, right after insertMany.
+    const giftCardId = session.metadata?.giftCardId;
+    const giftCardAmount = parseFloat(session.metadata?.giftCardAmount || "0");
+    if (giftCardId && giftCardAmount > 0) {
+      productList[0].groupTotals.giftCardAmount = giftCardAmount;
+      productList[0].giftCardRedemption = {
+        giftCardId,
+        code: session.metadata?.giftCardCode || "",
+        amount: giftCardAmount,
+      };
+    }
   }
 
   return productList;
