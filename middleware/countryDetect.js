@@ -19,7 +19,7 @@ import {
   DEFAULT_COUNTRY,
   COUNTRY_CONFIG,
 } from "../config/countries/index.js";
-import { syncByDomain, syncByCode } from "../services/countryService.js";
+import { syncByDomain, syncByCode, resolveByCode } from "../services/countryService.js";
 
 /**
  * PHASE 1 SECURITY: verify that the caller presenting X-Country-Code is a
@@ -62,6 +62,15 @@ async function isTrustedCountryOverride(req) {
  */
 const TRUSTED_OVERRIDE_HEADER = "x-country-code";
 const STOREFRONT_HOST_HEADER = "x-storefront-host";
+// Native/mobile clients have no meaningful hostname to send, so they can't
+// use the storefront-host lookup above. This header lets them self-report
+// their selected market instead. It is deliberately NOT admin-gated like
+// TRUSTED_OVERRIDE_HEADER — it carries the same trust level as the
+// storefront-host lookup: the caller names a country, and the server only
+// honors it if that country actually resolves to a real, ACTIVE entry.
+// It grants no more power than a web visitor already has by simply
+// visiting the corresponding country's real domain.
+const APP_COUNTRY_HEADER = "x-app-country";
 
 const countryDetect = async (req, res, next) => {
   try {
@@ -95,7 +104,26 @@ const countryDetect = async (req, res, next) => {
       return next();
     }
 
-    // ── 3. Derive from Host header (fallback, e.g. direct API hits) ──────────
+    // ── 3. Explicit app-country header (native/mobile clients) ───────────────
+    // No storefront hostname was sent (step 2 above is web-SPA-only), so a
+    // mobile app identifies its market this way instead. Only accepted when
+    // it resolves to a real, ACTIVE country — an unknown or inactive code
+    // falls through to the Host-header fallback below rather than erroring,
+    // so a stale/misconfigured app build degrades gracefully instead of
+    // breaking requests.
+    const appCountryCode = req.headers[APP_COUNTRY_HEADER];
+    if (appCountryCode) {
+      const requested = String(appCountryCode).toUpperCase();
+      const resolved = await resolveByCode(requested);
+      if (resolved && resolved.code === requested && resolved.status !== "INACTIVE") {
+        req.country = resolved;
+        req.countryCode = resolved.code;
+        return next();
+      }
+      // Unknown/inactive code → ignore and fall through below.
+    }
+
+    // ── 4. Derive from Host header (fallback, e.g. direct API hits) ──────────
     const host = req.headers.host || "";
     const country = syncByDomain(host);
 

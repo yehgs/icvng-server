@@ -104,7 +104,7 @@ app.options("*", (req, res) => {
   );
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type,Authorization,X-Requested-With,x-auth-token,token,x-access-token,x-csrf-token,x-storefront-host,x-country-code,x-language",
+    "Content-Type,Authorization,X-Requested-With,x-auth-token,token,x-access-token,x-csrf-token,x-storefront-host,x-country-code,x-language,x-app-country",
   );
   res.sendStatus(204);
 });
@@ -124,6 +124,7 @@ app.use(
       "x-storefront-host",
       "x-country-code",
       "x-language",
+      "x-app-country",
     ],
     exposedHeaders: ["Content-Disposition", "Content-Type"],
     origin: (origin, callback) => {
