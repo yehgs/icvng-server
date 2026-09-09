@@ -35,6 +35,12 @@ const contactMessageSchema = new mongoose.Schema(
     businessType: { type: String, default: "" },
     productCategories: { type: String, default: "" },
 
+    // Item 13 (icvng-mobile follow-up request): which surface a
+    // submission came from, so admin triage can tell mobile-app
+    // submissions apart from web ones without a separate table. Same
+    // shape as subscriber.model.js's existing `source` field.
+    source: { type: String, enum: ["web", "mobile-app"], default: "web" },
+
     // Triage — lets admins mark progress without leaving the panel.
     status: {
       type: String,

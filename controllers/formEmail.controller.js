@@ -115,6 +115,10 @@ export async function formEmailController(req, res) {
         productCategories: emailData.productCategories,
         countryCode: req.countryCode,
         submittedLanguage: req.body.language || "en",
+        // Item 13: same source-tagging pattern subscriber.controller.js
+        // already uses — "mobile-app" when icvng-mobile's InquiryForm.js
+        // sends it, defaulting to "web" (the schema default) otherwise.
+        source: req.body.source === "mobile-app" ? "mobile-app" : "web",
       });
     } catch (dbErr) {
       console.error("Failed to save ContactMessage to DB:", dbErr.message);

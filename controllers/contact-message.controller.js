@@ -21,11 +21,12 @@ import { buildCountryFilter } from "../middleware/countryScope.js";
 // GET /api/admin/contact-messages
 export async function listContactMessagesController(req, res) {
   try {
-    const { formType, status, page = 1, limit = 25 } = req.query;
+    const { formType, status, source, page = 1, limit = 25 } = req.query;
 
     const filter = { ...buildCountryFilter(req) };
     if (formType && ["contact", "partner"].includes(formType)) filter.formType = formType;
     if (status) filter.status = status;
+    if (source && ["web", "mobile-app"].includes(source)) filter.source = source;
 
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
