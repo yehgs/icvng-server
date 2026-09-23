@@ -71,6 +71,11 @@ export const ROLE_DEFINITIONS = {
       "logistics.view", "logistics.manage",
       "shipping.view", "shipping.manage",
       "scraper.use", "scraper.admin",
+      // Country-scoped indigenous payment gateway (CinetPay etc.) — a
+      // MANAGER can add/edit their OWN country's keys/webhook only; the
+      // route layer (countryScope + assertCountryAccess) is what actually
+      // enforces the "own country" part, not this permission grant alone.
+      "payments.view", "payments.manageCountry",
       // Intentionally NO "users.view"/"users.manage" — MANAGER (HQ or
       // country/"foreign" scoped) must not see or touch User Management.
       // That stays with IT, DIRECTOR (full) and HR (bounded). See item #8.

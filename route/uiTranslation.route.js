@@ -16,13 +16,32 @@ uiTranslationRouter.get("/merged", ...guardPublic(), getMergedUiTranslationsCont
 
 // Admin browse/edit — same permissions as the rest of the translation
 // system (translations.view/.manage — EDITOR/MANAGER/IT/DIRECTOR).
+//
+// FIX: this used to also pass hqOnly: true, which inserts
+// blockCountryScopedAdmins into the guard chain — that hard-blocks ANY
+// country-scoped admin regardless of permissions held, contradicting (a)
+// translations.view/.manage's own hqOnly: false in config/permissions.js,
+// (b) route/translation.route.js (DB-content translations for products/
+// categories/etc.), which already lets a country-scoped MANAGER through
+// with no scope restriction at all, and (c) App.jsx's frontend route,
+// which already lists MANAGER in allowedSubRoles. A Togo/Benin MANAGER
+// needs this to translate their own storefront's UI copy — hqOnly here was
+// blocking that with a 403 despite everything else in the app already
+// intending to allow it.
+//
+// Worth noting plainly: uiTranslation.model.js has no countryCode field —
+// rows are keyed by (app, key, language), not by country — so this grants
+// the same UNSCOPED write access to UI copy that translation.route.js
+// already grants for content translations, not a per-country-isolated
+// version of it. A Togo MANAGER editing "fr" affects Benin's storefront
+// too (both default to fr); there is no per-country UI-copy isolation to
+// enforce here, only per-language, which isn't the same thing.
 const view = () =>
   guard({
     permissions: ["translations.view", "translations.manage"],
     mode: "any",
-    hqOnly: true,
   });
-const manage = () => guard({ permissions: "translations.manage", hqOnly: true });
+const manage = () => guard({ permissions: "translations.manage" });
 
 uiTranslationRouter.get("/namespaces", ...view(), getUiTranslationNamespacesController);
 uiTranslationRouter.get("/", ...view(), listUiTranslationsController);

@@ -23,7 +23,7 @@ import { localizeOne } from "../utils/translationService.js";
 export async function getCountryConfig(req, res) {
   try {
     const country = req.country;
-    const payment = getPublicPaymentInfo(req.countryCode);
+    const payment = await getPublicPaymentInfo(req.countryCode);
 
     // Preheader message + contact address are content-managed per country
     // (Admin → Settings → Countries) and editable per language (Admin →

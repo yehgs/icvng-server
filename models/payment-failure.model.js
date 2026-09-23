@@ -35,7 +35,7 @@ const paymentFailureSchema = new mongoose.Schema(
 
     provider: {
       type: String,
-      enum: ["PAYSTACK", "STRIPE", "BANK_TRANSFER"],
+      enum: ["PAYSTACK", "STRIPE", "CINETPAY", "BANK_TRANSFER"],
       required: true,
       index: true,
     },

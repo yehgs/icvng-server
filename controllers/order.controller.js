@@ -42,6 +42,20 @@ import { sendCountryEmail } from "../config/emailService.js";
 import { isPaymentProviderEnabled, getCountryByCode } from "../config/countries/index.js";
 import { fulfillGiftCardPurchase } from "./giftCard.controller.js";
 import { resolveGiftCardForCheckout, redeemGiftCardAmount } from "../utils/giftCardCheckout.js";
+// Dynamic per-country indigenous gateway (CinetPay for Togo/Benin today —
+// see config/paymentRouter.js's own comment on why this is DB-backed
+// rather than a COUNTRY_CONFIG boolean like paystack/stripe above).
+import { getCinetPayConfig } from "../config/paymentRouter.js";
+import { initiateCinetPayPayment, verifyCinetPayTransaction, roundForCinetPay } from "../config/cinetpay.js";
+import PaymentIntentModel from "../models/paymentIntent.model.js";
+
+// Order-ID prefix per gateway — kept in one place so
+// createOrderFromGatewayTransaction and each provider's initiation
+// controller always agree.
+const ORDER_ID_PREFIX = {
+  PAYSTACK: "PSK",
+  CINETPAY: "CTP",
+};
 
 // Helper functions
 const getProductPrice = (product, priceOption = "regular") => {
@@ -128,21 +142,28 @@ async function sendOrderConfirmationEmails({ orders, user, reference, provider }
   }
 }
 
-// ===== Shared: create a logged-in user's order(s) from a confirmed Paystack charge =====
-// Used by BOTH the server-to-server webhook (paystackWebhookController) and the
-// browser-redirect verification endpoint (verifyPaystackController) — the app
-// relies on the latter for order creation (the customer is always logged in
-// before checkout; there's no anonymous/guest path in this flow), so this
-// logic must not live only inside the webhook handler.
+// ===== Shared: create a logged-in user's order(s) from a confirmed gateway charge =====
+// Used by BOTH each provider's server-to-server webhook (paystackWebhookController,
+// cinetpayWebhookController) and its browser-redirect verification endpoint
+// (verifyPaystackController, verifyCinetpayController) — the app relies on
+// the latter for order creation (the customer is always logged in before
+// checkout; there's no anonymous/guest path in this flow), so this logic
+// must not live only inside a webhook handler.
+//
+// Generalized from the original Paystack-only createOrderFromPaystackTransaction
+// to also serve CinetPay (and any future gateway) via the `provider` param —
+// everything else about building the order group is genuinely
+// gateway-agnostic; only payment_method and the orderId prefix differ.
 //
 // Idempotent: if an order already exists for this reference (e.g. the
 // webhook already created it before the browser redirect arrived, or vice
 // versa), returns the existing order group instead of creating a duplicate.
-async function createOrderFromPaystackTransaction({
+async function createOrderFromGatewayTransaction({
   reference,
   metadata,
   countryCode,
   currencyCode,
+  provider = "PAYSTACK",
 }) {
   // Idempotency — whichever of (webhook, verify-on-redirect) runs first wins;
   // the other just returns what's already there.
@@ -278,7 +299,8 @@ async function createOrderFromPaystackTransaction({
 
     // First order is parent
     const isParent = index === 0;
-    const firstOrderId = `PSK-${Date.now()}-${Math.random()
+    const idPrefix = ORDER_ID_PREFIX[provider] || "PSK";
+    const firstOrderId = `${idPrefix}-${Date.now()}-${Math.random()
       .toString(36)
       .substr(2, 9)}`;
 
@@ -286,7 +308,7 @@ async function createOrderFromPaystackTransaction({
       // Individual order ID
       orderId: isParent
         ? firstOrderId
-        : `PSK-${Date.now()}-${index}-${Math.random()
+        : `${idPrefix}-${Date.now()}-${index}-${Math.random()
             .toString(36)
             .substr(2, 9)}`,
 
@@ -335,7 +357,7 @@ async function createOrderFromPaystackTransaction({
       // Payment (SHARED across all orders in group)
       paymentId: reference,
       payment_status: "PAID",
-      payment_method: "PAYSTACK",
+      payment_method: provider,
 
       // Delivery (SHARED)
       delivery_address: metadata.addressId,
@@ -394,7 +416,7 @@ async function createOrderFromPaystackTransaction({
   await UserModel.updateOne({ _id: userId }, { shopping_cart: [] });
 
   console.log(
-    `✅ Paystack: Created order group ${orderGroupId} with ${orders.length} orders (${resolvedCountry})`,
+    `✅ ${provider}: Created order group ${orderGroupId} with ${orders.length} orders (${resolvedCountry})`,
   );
 
   // If a previous attempt on this reference was recorded as failed (e.g. the
@@ -409,11 +431,18 @@ async function createOrderFromPaystackTransaction({
     orders,
     user,
     reference,
-    provider: "PAYSTACK",
+    provider,
   });
 
   return { orders, orderGroupId, alreadyExisted: false };
 }
+
+// Backward-compatible name — every existing call site in this file
+// (paystackWebhookController, verifyPaystackController) still calls this;
+// keeping the old name avoids a diff at those two call sites while the
+// underlying logic is now shared with CinetPay via the `provider` param.
+const createOrderFromPaystackTransaction = (args) =>
+  createOrderFromGatewayTransaction({ ...args, provider: "PAYSTACK" });
 
 // ===== PAYSTACK WEBHOOK =====
 export async function paystackWebhookController(request, response) {
@@ -753,6 +782,332 @@ export async function paystackPaymentController(request, response) {
     return response.status(500).json({
       message: error.message,
       error: true,
+    });
+  }
+}
+
+// ===== CINETPAY PAYMENT INITIATION =====
+// Indigenous CFA-zone gateway for Togo/Benin, added per country by that
+// country's own MANAGER (or by IT/DIRECTOR for any country) — see
+// controllers/paymentGateway.controller.js. Structurally this mirrors
+// paystackPaymentController above; the two real differences are (1) the
+// availability check is a DB read (getCinetPayConfig), not a config-file
+// boolean, and (2) CinetPay doesn't round-trip our metadata object the way
+// Paystack does, so a PaymentIntent row carries it instead — see
+// models/paymentIntent.model.js's own comment.
+export async function cinetpayPaymentController(request, response) {
+  try {
+    const userId = request.userId;
+    const {
+      totalAmt,
+      addressId,
+      shippingCost = 0,
+      shippingMethodId,
+      currency,
+      giftCardCode,
+    } = request.body;
+
+    const initCountry = request.countryCode || "NG";
+    const { enabled, credentials } = await getCinetPayConfig(initCountry);
+    if (!enabled) {
+      const meta = getCountryByCode(initCountry);
+      return response.status(400).json({
+        message: `CinetPay is not available in ${meta?.name || initCountry}. Please use another payment method.`,
+        error: true,
+        success: false,
+      });
+    }
+
+    // Resolve THIS country's own storefront domain for the return_url —
+    // deliberately NOT process.env.FRONTEND_URL, which is Nigeria's
+    // frontend only (see the same env var's use in paystackPaymentController
+    // and stripePaymentController above: harmless for Paystack, which is
+    // NG-only, but a latent bug for Stripe, which serves every country yet
+    // always redirects back to i-coffee.ng regardless — pre-existing and out
+    // of scope here). CinetPay exists specifically FOR Togo/Benin, so
+    // reproducing that bug would visibly break the return flow for exactly
+    // the customers this feature is for. config/countries/index.js already
+    // has the per-country domain; use it. Falls back to FRONTEND_URL only
+    // for local dev, where a country's production domain isn't reachable.
+    const initCountryMeta = getCountryByCode(initCountry);
+    const returnBaseUrl =
+      process.env.NODE_ENV === "production" && initCountryMeta?.domain
+        ? `https://${initCountryMeta.domain}`
+        : process.env.FRONTEND_URL;
+
+    const resolvedCurrency = currency || request.country?.currency?.code || "XOF";
+
+    const user = await UserModel.findById(userId);
+    const cartItems = await CartProductModel.find({ userId }).populate("productId");
+
+    if (cartItems.length === 0) {
+      return response.status(400).json({
+        message: "No items in cart",
+        error: true,
+      });
+    }
+
+    const txRef = `CTP-${Date.now()}-${userId}`;
+
+    // ── Gift card (optional, partial or full) — same pattern as Paystack ──
+    let giftCardApplied = null;
+    let chargeAmount = totalAmt;
+    if (giftCardCode) {
+      try {
+        const resolved = await resolveGiftCardForCheckout({
+          code: giftCardCode,
+          orderAmount: totalAmt,
+          currency: resolvedCurrency,
+          countryCode: initCountry,
+        });
+        giftCardApplied = { giftCardId: resolved.giftCard._id.toString(), amount: resolved.appliedAmount };
+        chargeAmount = resolved.remainderToPay;
+      } catch (gcErr) {
+        return response.status(400).json({ message: gcErr.message, error: true, success: false });
+      }
+    }
+
+    const roundedAmount = roundForCinetPay(Math.round(chargeAmount), resolvedCurrency);
+
+    if (giftCardApplied && roundedAmount <= 0) {
+      return response.status(400).json({
+        message:
+          "GIFT_CARD_COVERS_FULL_TOTAL: this gift card fully covers the order — use the gift-card-only checkout instead of CinetPay.",
+        error: true,
+        success: false,
+        data: { giftCardApplied },
+      });
+    }
+
+    // Same metadata shape Paystack's `metadata` argument carries — stored
+    // here instead of handed to the gateway, since CinetPay's check/webhook
+    // response won't hand it back to us the way Paystack's does. Read back
+    // by cinetpayWebhookController / verifyCinetpayController.
+    const metadata = {
+      userId: userId.toString(),
+      addressId,
+      shippingMethodId: shippingMethodId || "",
+      shippingCost,
+      itemCount: cartItems.length,
+      ...(giftCardApplied && {
+        giftCardId: giftCardApplied.giftCardId,
+        giftCardAmount: giftCardApplied.amount.toString(),
+        giftCardCode: giftCardCode.trim().toUpperCase(),
+      }),
+      countryCode: initCountry,
+      currencyCode: resolvedCurrency,
+      cartItemsJSON: JSON.stringify(
+        cartItems.map((item) => ({
+          productId: item.productId?._id?.toString() || item.productId,
+          quantity: item.quantity,
+          priceOption: item.priceOption || "regular",
+        })),
+      ),
+    };
+
+    await PaymentIntentModel.create({
+      reference: txRef,
+      provider: "CINETPAY",
+      countryCode: initCountry,
+      currencyCode: resolvedCurrency,
+      metadata,
+    });
+
+    const { paymentUrl } = await initiateCinetPayPayment({
+      apiKey: credentials.apiKey,
+      siteId: credentials.siteId,
+      transactionId: txRef,
+      amount: roundedAmount,
+      currency: resolvedCurrency,
+      description: `I-Coffee order — ${cartItems.length} item(s)`,
+      notifyUrl: `${process.env.SERVER_BASE_URL}/api/order/cinetpay-webhook/${initCountry}`,
+      returnUrl: `${returnBaseUrl}/payment/cinetpay/callback?reference=${txRef}`,
+      customer: {
+        name: user.name?.split(" ")?.[0] || "Customer",
+        surname: user.name?.split(" ")?.slice(1).join(" ") || "-",
+        email: user.email,
+        phone: user.mobile || "",
+      },
+    });
+
+    return response.json({
+      success: true,
+      paymentUrl,
+      reference: txRef,
+    });
+  } catch (error) {
+    console.error("CinetPay payment error:", error);
+    return response.status(500).json({
+      message: error.message,
+      error: true,
+    });
+  }
+}
+
+// ===== CINETPAY WEBHOOK (notify_url) =====
+// CinetPay's notification is NOT signed — its body only carries
+// cpm_trans_id. Per CinetPay's own integration docs, a merchant MUST call
+// the "Check Payment Status" API server-to-server before trusting a
+// notification; this handler does exactly that and never acts on the
+// webhook body's own status field. The country comes from the URL itself
+// (:countryCode), not from request.countryCode — CinetPay's servers call
+// this directly, so there is no storefront host to detect country from,
+// exactly the same problem Paystack's webhook has (see
+// createOrderFromGatewayTransaction's country-resolution comment) — except
+// here we sidestep it entirely by giving each country its own notify_url.
+export async function cinetpayWebhookController(request, response) {
+  try {
+    const { countryCode } = request.params;
+    const transactionId = request.body?.cpm_trans_id || request.body?.transaction_id;
+
+    if (!transactionId) {
+      return response.status(400).json({ message: "Missing transaction id", error: true });
+    }
+
+    const { enabled, credentials } = await getCinetPayConfig(countryCode);
+    if (!enabled) {
+      console.error(`CinetPay webhook for ${countryCode} but no active gateway configured`);
+      return response.json({ received: true }); // ack anyway — nothing we can verify against
+    }
+
+    const verification = await verifyCinetPayTransaction({
+      apiKey: credentials.apiKey,
+      siteId: credentials.siteId,
+      transactionId,
+    });
+
+    if (!verification.accepted) {
+      return response.json({ received: true }); // not a success — nothing to create yet
+    }
+
+    const intent = await PaymentIntentModel.findOne({ reference: transactionId });
+    if (!intent) {
+      console.error(`CinetPay webhook: no PaymentIntent found for ${transactionId}`);
+      return response.json({ received: true });
+    }
+
+    try {
+      await createOrderFromGatewayTransaction({
+        reference: transactionId,
+        metadata: intent.metadata,
+        countryCode: intent.countryCode,
+        currencyCode: intent.currencyCode,
+        provider: "CINETPAY",
+      });
+      intent.status = "CONFIRMED";
+      await intent.save();
+    } catch (err) {
+      console.error("CinetPay webhook order creation failed:", err.message);
+      await PaymentFailureModel.record({
+        reference: transactionId,
+        provider: "CINETPAY",
+        stage: "ORDER_CREATION",
+        countryCode: intent.countryCode,
+        userId: intent.metadata?.userId,
+        amount: verification.amount,
+        currency: verification.currency,
+        metadata: intent.metadata,
+        error: err,
+      });
+    }
+
+    return response.json({ received: true });
+  } catch (error) {
+    console.error("CinetPay webhook error:", error);
+    return response.status(500).json({ message: error.message, error: true });
+  }
+}
+
+// ===== CINETPAY VERIFY (called by the browser after CinetPay redirects back) =====
+// Primary order-creation path, same role verifyPaystackController plays —
+// the webhook is the backup in case the browser never returns (closed tab,
+// network drop, etc.).
+export async function verifyCinetpayController(request, response) {
+  try {
+    const { reference } = request.params;
+    if (!reference) {
+      return response.status(400).json({
+        message: "Transaction reference is required",
+        error: true,
+        success: false,
+      });
+    }
+
+    const intent = await PaymentIntentModel.findOne({ reference });
+    if (!intent) {
+      return response.status(404).json({
+        message: "Unknown transaction reference",
+        error: true,
+        success: false,
+      });
+    }
+
+    const { enabled, credentials } = await getCinetPayConfig(intent.countryCode);
+    if (!enabled) {
+      return response.status(400).json({
+        message: "CinetPay is no longer configured for this country",
+        error: true,
+        success: false,
+      });
+    }
+
+    const verification = await verifyCinetPayTransaction({
+      apiKey: credentials.apiKey,
+      siteId: credentials.siteId,
+      transactionId: reference,
+    });
+
+    if (!verification.accepted) {
+      return response.status(400).json({
+        message: "Payment was not successful",
+        error: true,
+        success: false,
+      });
+    }
+
+    let result;
+    try {
+      result = await createOrderFromGatewayTransaction({
+        reference,
+        metadata: intent.metadata,
+        countryCode: intent.countryCode,
+        currencyCode: intent.currencyCode,
+        provider: "CINETPAY",
+      });
+      intent.status = "CONFIRMED";
+      await intent.save();
+    } catch (creationError) {
+      await PaymentFailureModel.record({
+        reference,
+        provider: "CINETPAY",
+        stage: "ORDER_CREATION",
+        countryCode: intent.countryCode,
+        userId: intent.metadata?.userId,
+        amount: verification.amount,
+        currency: verification.currency,
+        metadata: intent.metadata,
+        error: creationError,
+      });
+      throw creationError;
+    }
+
+    return response.json({
+      message: "Payment verified and order placed",
+      success: true,
+      error: false,
+      data: {
+        reference,
+        amount: verification.amount,
+        currency: verification.currency,
+        orderGroupId: result.orderGroupId,
+      },
+    });
+  } catch (error) {
+    console.error("CinetPay verify error:", error);
+    return response.status(500).json({
+      message: error.message,
+      error: true,
+      success: false,
     });
   }
 }

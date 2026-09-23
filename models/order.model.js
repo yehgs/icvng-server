@@ -235,7 +235,7 @@ const orderSchema = new mongoose.Schema(
     },
     payment_method: {
       type: String,
-      enum: ["STRIPE", "PAYSTACK", "BANK_TRANSFER", "CASH", "CARD", "ONLINE"],
+      enum: ["STRIPE", "PAYSTACK", "CINETPAY", "BANK_TRANSFER", "CASH", "CARD", "ONLINE"],
       default: "CASH",
       index: true,
     },

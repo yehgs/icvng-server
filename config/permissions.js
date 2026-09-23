@@ -52,6 +52,7 @@ export const MODULES = {
   ACTIVITY_LOGS: "activityLogs",
   PASSWORD_VAULT: "passwordVault",
   SETTINGS: "settings",
+  PAYMENTS: "payments", // indigenous payment gateway settings (CinetPay etc.)
 };
 
 /**
@@ -183,6 +184,14 @@ export const PERMISSIONS = [
 
   { key: "settings.view", module: MODULES.SETTINGS, description: "View settings", hqOnly: true },
   { key: "settings.manage", module: MODULES.SETTINGS, description: "Manage settings", hqOnly: true },
+
+  // Payment gateways — deliberately NOT hqOnly. Unlike settings.manage
+  // (bank transfer, email provider — always centrally managed), a
+  // country's indigenous gateway (CinetPay for TG/BJ) is the one setting a
+  // country-scoped MANAGER is meant to own for their own market. IT/DIRECTOR
+  // hold both via WILDCARD regardless and can manage every country's.
+  { key: "payments.view", module: MODULES.PAYMENTS, description: "View payment gateway settings", hqOnly: false },
+  { key: "payments.manageCountry", module: MODULES.PAYMENTS, description: "Add/edit indigenous payment gateway keys & webhooks for own country", hqOnly: false },
 ];
 
 export const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
