@@ -1,10 +1,45 @@
 // controllers/uiTranslation.controller.js
 import UiTranslationModel from "../models/uiTranslation.model.js";
+import { getCountryByCode } from "../config/countries/index.js";
 
 const APPS = ["admin", "client"];
 
 function escapeRegExp(str) {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * A country-scoped admin (a Togo/Benin MANAGER, say) may only browse/edit
+ * their own country's PRIMARY language — Togo and Benin managers get
+ * "fr", Italy's gets "it", Nigeria's gets "en". Deliberately the country's
+ * `language.default`, NOT its full `language.supported` list: Togo's
+ * storefront also offers English as a reach/accessibility option for
+ * shoppers (see config/countries/index.js), but that's a shopper-facing
+ * choice, not a signal that a Togo content manager is the right person to
+ * certify English copy site-wide — English there is presumably a base
+ * value, not usually specific to Togo (though nothing forces this, so if
+ * the intent expands to "manager certifies EVERY language their storefront
+ * offers", swap language.default for language.supported below).
+ *
+ * A GLOBAL admin (IT/DIRECTOR, or an HQ-scoped MANAGER/EDITOR) gets `null`
+ * — no restriction, every language.
+ *
+ * @returns {string[] | null}
+ */
+function getAllowedLanguagesForRequest(request) {
+  if (!request.countryScope) return null;
+  const country = getCountryByCode(request.countryScope);
+  if (!country?.language?.default) return null; // unknown scope — fail open to "no restriction" rather than lock the admin out entirely on a config gap
+  return [country.language.default];
+}
+
+/** Shared 403 shape for the two checks below. */
+function languageNotAllowedResponse(response, language, allowed) {
+  return response.status(403).json({
+    message: `You can only manage the "${allowed.join(", ")}" translation(s) for your country — "${language}" is outside your scope.`,
+    error: true,
+    success: false,
+  });
 }
 
 // Public — called by the live admin/client apps on boot and on language
@@ -96,6 +131,18 @@ export const listUiTranslationsController = async (request, response) => {
       });
     }
 
+    const targetLang = String(language).toLowerCase();
+    const allowedLanguages = getAllowedLanguagesForRequest(request);
+    // "en" always readable regardless of scope — it's the canonical/base
+    // column every row of this table already shows alongside the target
+    // language (see the `en` field built into each row below), so a
+    // country-scoped manager browsing needs it visible even though they
+    // can't edit it (upsertUiTranslationController already refuses "en"
+    // edits for everyone, scoped or not).
+    if (allowedLanguages && targetLang !== "en" && !allowedLanguages.includes(targetLang)) {
+      return languageNotAllowedResponse(response, targetLang, allowedLanguages);
+    }
+
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
 
@@ -112,7 +159,6 @@ export const listUiTranslationsController = async (request, response) => {
       .limit(limitNum)
       .lean();
 
-    const targetLang = String(language).toLowerCase();
     const keys = enRows.map((r) => r.key);
     const targetRows =
       targetLang === "en"
@@ -176,6 +222,11 @@ export const upsertUiTranslationController = async (request, response) => {
         error: true,
         success: false,
       });
+    }
+
+    const allowedLanguages = getAllowedLanguagesForRequest(request);
+    if (allowedLanguages && !allowedLanguages.includes(normalizedLang)) {
+      return languageNotAllowedResponse(response, normalizedLang, allowedLanguages);
     }
 
     const doc = await UiTranslationModel.findOneAndUpdate(

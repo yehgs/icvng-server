@@ -1,23 +1,43 @@
 // controllers/bankTransferSettings.controller.js
 import BankTransferSettingsModel from "../models/bankTransferSettings.model.js";
 import { ALL_COUNTRY_CODES, getCountryByCode } from "../config/countries/index.js";
+import { buildCountryFilter } from "../middleware/countryScope.js";
 
-// ── HQ (IT/DIRECTOR) management ─────────────────────────────────────────
+// ── Admin management (IT/DIRECTOR any country, country-scoped MANAGER own country only) ──
+//
+// FIX: this used to be truly HQ-only (see route/bankTransferSettings.route.js's
+// old blockCountryScopedAdmins) — none of the three functions below did any
+// scoping at all because nothing but a GLOBAL admin could ever reach them.
+// Now that a country-scoped MANAGER can too (payments.manageCountry — same
+// permission controllers/paymentGateway.controller.js uses for CinetPay,
+// since a country's receiving bank account is the same category of
+// "payment settings a MANAGER should self-serve" the user asked for
+// alongside CinetPay), each function scopes explicitly, mirroring
+// paymentGateway.controller.js's pattern exactly.
 
 /**
  * GET all countries' bank transfer settings, plus which countries have
  * none configured yet — so the settings UI can show every country
- * (configured or not) in one list.
+ * (configured or not) in one list. Country-scoped automatically:
+ * buildCountryFilter(request) returns {} for a GLOBAL admin (sees every
+ * country) and { countryCode: request.countryScope } for a COUNTRY-scoped
+ * MANAGER, so a Togo manager's list only ever contains Togo's row.
  */
 export const getAllBankTransferSettings = async (request, response) => {
   try {
-    const settings = await BankTransferSettingsModel.find({}).populate(
+    const settings = await BankTransferSettingsModel.find(buildCountryFilter(request)).populate(
       "updatedBy",
       "name email",
     );
     const byCountry = new Map(settings.map((s) => [s.countryCode, s]));
 
-    const rows = ALL_COUNTRY_CODES.map((code) => {
+    // A country-scoped admin only ever sees their own country in this list
+    // (the query above already restricted it), so the "every country"
+    // scaffold only applies to GLOBAL admins — same as
+    // paymentGateway.controller.js#listCinetPaySettings.
+    const codes = request.countryScope ? [request.countryScope] : ALL_COUNTRY_CODES;
+
+    const rows = codes.map((code) => {
       const country = getCountryByCode(code);
       const existing = byCountry.get(code);
       return {
@@ -45,9 +65,13 @@ export const getAllBankTransferSettings = async (request, response) => {
 };
 
 /**
- * Add/edit/update the bank transfer settings for ONE country — IT/DIRECTOR
- * only (see route). Upsert: creating for a country with no existing
- * document, or updating one that already exists, are the same call.
+ * Add/edit/update the bank transfer settings for ONE country. Upsert:
+ * creating for a country with no existing document, or updating one that
+ * already exists, are the same call. Route-level
+ * assertCountryAccess("body.countryCode") already rejects a MANAGER trying
+ * to write another country's row before this ever runs; the explicit check
+ * below is a second, defense-in-depth layer directly on the request, same
+ * belt-and-suspenders approach as paymentGateway.controller.js's upsert.
  */
 export const upsertBankTransferSettings = async (request, response) => {
   try {
@@ -67,6 +91,14 @@ export const upsertBankTransferSettings = async (request, response) => {
     if (!ALL_COUNTRY_CODES.includes(code)) {
       return response.status(400).json({
         message: `Invalid countryCode: ${countryCode}`,
+        error: true,
+        success: false,
+      });
+    }
+
+    if (request.countryScope && request.countryScope !== code) {
+      return response.status(403).json({
+        message: `Access denied: you can only manage ${request.countryScope}'s bank transfer settings`,
         error: true,
         success: false,
       });
@@ -126,12 +158,22 @@ export const upsertBankTransferSettings = async (request, response) => {
 /**
  * Delete a country's bank transfer settings entirely (as opposed to
  * isActive: false, which is the usual/reversible way to disable it).
+ * Scoped the same way as the upsert above.
  */
 export const deleteBankTransferSettings = async (request, response) => {
   try {
-    const { countryCode } = request.params;
+    const code = (request.params.countryCode || "").toUpperCase();
+
+    if (request.countryScope && request.countryScope !== code) {
+      return response.status(403).json({
+        message: `Access denied: you can only manage ${request.countryScope}'s bank transfer settings`,
+        error: true,
+        success: false,
+      });
+    }
+
     const deleted = await BankTransferSettingsModel.findOneAndDelete({
-      countryCode: (countryCode || "").toUpperCase(),
+      countryCode: code,
     });
 
     if (!deleted) {

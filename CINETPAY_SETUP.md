@@ -134,6 +134,13 @@ environment at checkout time, never written to Mongo.
   row and can add/edit it — nobody else's. This is enforced server-side
   (`route/paymentGateway.route.js`), not just hidden in the UI.
 
+The same `payments.view`/`payments.manageCountry` permissions also govern
+**Settings → Bank Transfer Settings** (that country's receiving bank
+account for Direct Bank Transfer) — a country-scoped MANAGER manages both
+their own country's CinetPay keys and their own country's bank details
+from the same permission grant; IT/DIRECTOR manage every country's of
+both. See `route/bankTransferSettings.route.js`.
+
 Per country:
 
 1. **Active** — offers CinetPay at checkout for this country. Leave off
@@ -204,8 +211,20 @@ cache entry immediately, so in practice it's closer to instant).
 - **No per-country UI-copy isolation** — unrelated to CinetPay itself, but
   worth knowing if a country manager also edits UI Copy Translations: those
   rows are keyed by language, not country, so a Togo manager editing French
-  copy affects Benin's storefront too (both default to French). There's no
-  per-country translation isolation to enforce there.
+  copy affects Benin's storefront too (both default to French). A
+  country-scoped admin IS now restricted to only their own country's
+  primary language (see `uiTranslation.controller.js`'s
+  `getAllowedLanguagesForRequest`) — that keeps them out of languages that
+  aren't theirs at all (Italian, English), it just can't separate two
+  countries that happen to share one.
+
+- **`EDITOR` cannot be country-scoped** — a deliberate, pre-existing
+  constraint (`config/roles.js`'s `HQ_ONLY_SUBROLES`, plus the admin's own
+  user-creation form actively prevents assigning `EDITOR` a country) left
+  untouched here. If a "foreign Editor" role is wanted for UI Copy
+  Translations, that requires removing `EDITOR` from `HQ_ONLY_SUBROLES` in
+  both `config/roles.js` and `CreateUserModal.jsx` — a bigger change than
+  this feature, done separately and deliberately.
 
 ## 8. Files touched (reference for future changes)
 
@@ -216,7 +235,12 @@ cache entry immediately, so in practice it's closer to instant).
 cinetpayWebhookController / verifyCinetpayController +
 generalized createOrderFromGatewayTransaction), `route/order.route.js`,
 `config/permissions.js`, `config/roles.js`, `models/order.model.js`,
-`models/payment-failure.model.js`.
+`models/payment-failure.model.js`,
+`controllers/bankTransferSettings.controller.js`,
+`route/bankTransferSettings.route.js` (opened to country-scoped MANAGER —
+previously HQ-only), `controllers/uiTranslation.controller.js`,
+`route/uiTranslation.route.js` (country-scoped language restriction +
+the earlier hqOnly fix).
 
 **Shared package** (`@yehgs/icvng-core`, bumped to 0.9.4):
 `src/checkout/gatewayOrder.js`, `src/api/endpoints.js`.
@@ -226,7 +250,9 @@ generalized createOrderFromGatewayTransaction), `route/order.route.js`,
 
 **Mobile:** `screens/CheckoutScreen.js`, `i18n/locales/*.js`.
 
-**Admin:** `pages/settings/PaymentGatewaySettings.jsx`, `utils/api.js`,
+**Admin:** `pages/settings/PaymentGatewaySettings.jsx`,
+`pages/settings/BankTransferSettings.jsx`,
+`pages/settings/UiTranslationsManagement.jsx`, `utils/api.js`,
 `components/layout/AdminSidebar.jsx`, `App.jsx`,
 `pages/order/WebsiteOrderManagement.jsx`,
 `components/order/OrderDetailsModal.jsx`,

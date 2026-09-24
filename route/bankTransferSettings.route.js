@@ -1,16 +1,24 @@
 // route/bankTransferSettings.route.js
 //
-// Direct Bank Transfer settings — country-scoped receiving-account details,
-// managed exclusively by HQ IT/DIRECTOR (settings.manage/view, which those
-// two subRoles hold via the WILDCARD permission — see config/roles.js).
+// Direct Bank Transfer settings — country-scoped receiving-account details.
 // `GET /available` stays PUBLIC — the storefront checkout page depends on
 // it to decide whether to show a Bank Transfer option at all.
+//
+// FIX: this used to be genuinely HQ-only (blockCountryScopedAdmins +
+// settings.manage/view, which only IT/DIRECTOR hold via WILDCARD). Per the
+// explicit request, a country's own bank account details are the same
+// category of "payment settings a MANAGER should self-serve" as CinetPay —
+// IT/DIRECTOR manage every country's financial details (payment keys AND
+// bank details); a country-scoped MANAGER manages only their own. So this
+// now uses the SAME payments.view/payments.manageCountry permissions and
+// countryScope + assertCountryAccess pattern as
+// route/paymentGateway.route.js, instead of blockCountryScopedAdmins.
 
 import { Router } from "express";
 import auth from "../middleware/auth.js";
 import adminAuth from "../middleware/adminAuth.js";
 import { requirePermission } from "../middleware/requirePermission.js";
-import { countryScope, blockCountryScopedAdmins } from "../middleware/countryScope.js";
+import { countryScope, assertCountryAccess } from "../middleware/countryScope.js";
 import {
   getAllBankTransferSettings,
   upsertBankTransferSettings,
@@ -23,20 +31,26 @@ const bankTransferSettingsRouter = Router();
 // PUBLIC — storefront checkout availability check
 bankTransferSettingsRouter.get("/available", getAvailablePaymentMethods);
 
-// Everything below is HQ (IT/DIRECTOR) territory — a country-scoped
-// Logistics/Manager/etc admin never sees or edits another country's (or
-// even their own country's) receiving bank account; this is deliberately
-// centrally managed, same as exchange rates.
-bankTransferSettingsRouter.use(
-  auth,
-  adminAuth,
-  countryScope,
-  blockCountryScopedAdmins,
-  requirePermission(["settings.view", "settings.manage"]),
+bankTransferSettingsRouter.use(auth, adminAuth, countryScope);
+
+bankTransferSettingsRouter.get(
+  "/",
+  requirePermission(["payments.view", "payments.manageCountry"]),
+  getAllBankTransferSettings,
 );
 
-bankTransferSettingsRouter.get("/", getAllBankTransferSettings);
-bankTransferSettingsRouter.post("/", upsertBankTransferSettings);
-bankTransferSettingsRouter.delete("/:countryCode", deleteBankTransferSettings);
+bankTransferSettingsRouter.post(
+  "/",
+  requirePermission("payments.manageCountry"),
+  assertCountryAccess("body.countryCode"),
+  upsertBankTransferSettings,
+);
+
+bankTransferSettingsRouter.delete(
+  "/:countryCode",
+  requirePermission("payments.manageCountry"),
+  assertCountryAccess("params.countryCode"),
+  deleteBankTransferSettings,
+);
 
 export default bankTransferSettingsRouter;

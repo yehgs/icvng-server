@@ -30,12 +30,16 @@ uiTranslationRouter.get("/merged", ...guardPublic(), getMergedUiTranslationsCont
 // intending to allow it.
 //
 // Worth noting plainly: uiTranslation.model.js has no countryCode field —
-// rows are keyed by (app, key, language), not by country — so this grants
-// the same UNSCOPED write access to UI copy that translation.route.js
-// already grants for content translations, not a per-country-isolated
-// version of it. A Togo MANAGER editing "fr" affects Benin's storefront
-// too (both default to fr); there is no per-country UI-copy isolation to
-// enforce here, only per-language, which isn't the same thing.
+// rows are keyed by (app, key, language), not by country. A country-scoped
+// admin is now restricted to their own country's PRIMARY language only
+// (see getAllowedLanguagesForRequest in the controller — enforced on both
+// the list/browse and the upsert endpoints), which narrows their blast
+// radius considerably, but it is still not full per-country isolation:
+// Togo and Benin both default to "fr", so a Togo MANAGER editing "fr"
+// still affects Benin's storefront too. There is no way to separate those
+// two within a single shared language, only to keep a manager out of
+// languages that aren't theirs at all (e.g. a Togo manager can't touch
+// "it" or "en").
 const view = () =>
   guard({
     permissions: ["translations.view", "translations.manage"],
