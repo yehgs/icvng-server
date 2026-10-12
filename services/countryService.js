@@ -54,7 +54,6 @@ function normalise(doc) {
     branding: o.branding || {},
     contacts: o.contacts || {},
     content: o.content || {},
-    tawk: o.tawk || {},
     seo: o.seo || {},
     featureFlags: o.featureFlags || {},
     invoiceSeries: o.invoiceSeries || { prefix: "INV", nextNumber: 1 },

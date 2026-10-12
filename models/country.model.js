@@ -112,14 +112,6 @@ const countrySchema = new mongoose.Schema(
       preheaderMessage: { type: String, default: "" },
     },
 
-    // Per-country Tawk.to live-chat widget. Each market can run its own
-    // Tawk.to property (e.g. a Togo agent queue for i-coffee.tg) instead of
-    // sharing a single hardcoded widget across every domain.
-    tawk: {
-      propertyId: { type: String, default: "" },
-      widgetId: { type: String, default: "" },
-    },
-
     seo: {
       siteName: { type: String, default: "" },
       tld: { type: String, default: "" },

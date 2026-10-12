@@ -56,7 +56,6 @@ export async function getCountryConfig(req, res) {
         // country serves — no static text, no deploy.
         contacts: localizedCountry.contacts || {},
         content: localizedCountry.content || {},
-        tawk: localizedCountry.tawk || {},
       },
     });
   } catch (err) {

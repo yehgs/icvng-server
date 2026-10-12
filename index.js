@@ -84,6 +84,9 @@ import couponRouter from "./route/coupon.route.js";
 import orderRequestAuthRouter from "./route/order-request-auth.route.js";
 import invoiceRouter from "./route/invoice.route.js";
 import notificationRouter from "./route/notification.route.js";
+import catalogueRouter from "./route/catalogue.route.js";
+import chatRouter from "./route/chat.route.js";
+import chatAdminRouter from "./route/chat-admin.route.js";
 import supportTicketRouter from "./route/support-ticket.route.js";
 import passwordVaultRouter from "./route/password-vault.route.js";
 import financeRouter from "./route/finance.route.js";
@@ -105,7 +108,7 @@ app.options("*", (req, res) => {
   );
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type,Authorization,X-Requested-With,x-auth-token,token,x-access-token,x-csrf-token,x-storefront-host,x-country-code,x-language,x-app-country",
+    "Content-Type,Authorization,X-Requested-With,x-auth-token,token,x-access-token,x-csrf-token,x-storefront-host,x-country-code,x-language,x-app-country,x-chat-token",
   );
   res.sendStatus(204);
 });
@@ -126,6 +129,7 @@ app.use(
       "x-country-code",
       "x-language",
       "x-app-country",
+      "x-chat-token",
     ],
     exposedHeaders: ["Content-Disposition", "Content-Type"],
     origin: (origin, callback) => {
@@ -320,6 +324,9 @@ app.use("/api/btb-auth", orderRequestAuthRouter);
 app.use("/api/invoices", invoiceRouter);
 app.use("/api/activity-logs", activityLogRouter);
 app.use("/api/admin/notifications", notificationRouter);
+app.use("/api/admin/catalogue", catalogueRouter);
+app.use("/api/chat", chatRouter);
+app.use("/api/admin/chat", chatAdminRouter);
 app.use("/api/admin/support-tickets", supportTicketRouter);
 app.use("/api/admin/password-vault", passwordVaultRouter);
 app.use("/api/admin/finance", financeRouter);

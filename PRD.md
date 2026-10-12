@@ -5,7 +5,7 @@ Update this whenever a rule, role, or module changes; it's the fastest way for
 Claude (or a new engineer) to get oriented without re-reading the whole codebase.
 
 **Repos covered:** `icvng-server` (API), `icvng-admin` (internal admin panel),
-`icvng-client` (customer-facing storefront). One product, three codebases.
+`icvng-client` (customer-facing storefront), plus `icvng-mobile` (Expo app) and `icvng-core` (shared package).
 
 ---
 
@@ -512,6 +512,13 @@ Non-exhaustive map of `server/controllers` by domain:
   requests + order-request auth, contact messages, CRM leads.
 - **Platform** — country management/config, translations (AI-assisted —
   see §8), notifications, file/image upload, scraper tool + quota.
+- **Catalogue PDF** — `services/catalogue/*`, `/api/admin/catalogue`
+  (SALES/SALES_MANAGER/MANAGER/IT/DIRECTOR; foreign managers locked to their
+  country's language + currency). See Addendum 3 §9e.
+- **AI chat** — `services/chat/*`, public `/api/chat` + admin `/api/admin/chat`;
+  OpenAI assistant → human desks (sales/manager/IT/director), country-scoped,
+  short-polling realtime, SLA alarm + notifications. Replaces Tawk.to.
+  See Addendum 3 §9f.
 
 ---
 
@@ -573,11 +580,30 @@ Non-exhaustive map of `server/controllers` by domain:
   for up to 5 minutes (this was previously missing — the most common way
   to hit it: create a subcategory, then immediately go create a product
   using it).
+- **Chat is country-scoped, not role-scoped only**: IT/DIRECTOR see every
+  country; COUNTRY-scoped admins only their `assignedCountry`; other HQ roles
+  only the HQ country. Out-of-scope conversation ids return 404. Never widen
+  `chatScopeFilter` without updating Addendum 3 §9f.
+- **Chat realtime is stateless polling** (Cloud Run = many instances, no
+  websockets). Do not add in-process state that another instance would need
+  (SLA claim is atomic via `escalation.overdueNotifiedAt`).
+- **Catalogue prices come from `ExchangeRateModel`**; a missing rate is a 422,
+  never a silent NGN fallback. `btbPrice` never reaches foreign admins.
+- **UI copy must go through `t()`**: any new literal in the storefront/admin
+  needs a key in `en/fr/it` and, after deploy, `translateUiLocales.js` +
+  `seedUiTranslations.js` so it is editable in Translate Site.
+- **No third-party chat widgets** (Tawk.to removed) — support chat is the
+  in-house widget.
 
 ---
 
 ## 11. Open items / near-term roadmap
 
+- Chat follow-ups: socket.io + Redis adapter (and a global rate limiter),
+  attachments, order-status lookup for logged-in users, extracting the chat
+  API client into `@yehgs/icvng-core`, translating the new `chat`/`catalogue`
+  keys into es/pt/nl/ar/hi/zh (run `translateUiLocales.js` + `seedUiTranslations.js`).
+- Catalogue follow-ups: non-Latin-script PDF fonts (ar/hi/zh), ₦ glyph via an embedded font.
 - Phase 2.x departments (sub-groupings within a subRole) — not started.
 - Consider migrating `AdminSidebar`/`CountryScopeBanner` off the
   login-cached `localStorage` user object and onto the already-normalized
@@ -590,6 +616,21 @@ Non-exhaustive map of `server/controllers` by domain:
 
 ## 12. Change log (high-signal only — not every commit)
 
+- **Catalogue PDF, AI chat, i18n audit, menu cue, Tawk.to removal** —
+  (1) Admin *Product Catalogue* page + `/api/admin/catalogue` generate a
+  printable/downloadable PDF with every filter and per-field toggles (all on,
+  images included, by default); foreign managers are locked to their
+  country's language and currency (Togo → French + CFA). (2) AI chat system:
+  storefront `ChatWidget`, mobile `ChatLauncher`, admin `ChatConsole`;
+  OpenAI answers, collects WhatsApp/email, escalates to sales/manager/IT/
+  director, shows the responder's role and image, keeps history, raises an
+  SLA alarm + notifications, country-scoped and replying in the visitor's
+  language. (3) Hardcoded storefront text (contact page etc.) moved to i18n
+  keys so it is editable in Translate Site. (4) Animated overflow cue on the
+  storefront menu. (5) Tawk.to widget/logic/config removed from client, admin
+  and server. New permissions `catalogue.download`, `chat.view`,
+  `chat.manage`, `chat.settings`. New env `OPENAI_CHAT_MODEL`. Full detail:
+  `server/PRD_ADDENDUM_3_catalogue_chat_i18n.md`.
 - **UI-copy locale files (i18n folder content, both apps) made
   DB-editable via a new admin CRUD** — previously the only way to change
   one of the ~2,300 admin / ~750 client hardcoded strings in

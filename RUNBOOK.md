@@ -163,3 +163,34 @@ Called out so it isn't mistaken for finished work.
   would have caught this in minutes and is the highest-value follow-up.
 - **`OfflineOrderManagement.jsx`** has no country column at all; manual orders
   are scoped server-side but a director can't see which country they came from.
+
+---
+
+## 6. Addendum — catalogue PDF, AI chat, Tawk.to removal (deploy + recovery)
+
+**Deploy order:** server → admin → client → mobile build. The server must be live first
+(new routes `/api/admin/catalogue`, `/api/chat`, `/api/admin/chat`; CORS now allows `x-chat-token`).
+
+**Env:** reuses `OPENAI_API_KEY`; optional `OPENAI_CHAT_MODEL` (default `gpt-5-mini`).
+
+**After deploy (once):**
+1. `node scripts/translateUiLocales.js` then `node scripts/seedUiTranslations.js --app=client`
+   and `--app=admin` — makes new `chat.*`, `catalogue.*`, contact-page keys editable in Translate Site.
+2. Roles: no migration needed; permissions come from `config/roles.js`. Users must re-login to refresh cached capabilities.
+3. Optional cleanup: `db.countries.updateMany({}, {$unset:{tawk:""}})`.
+
+**Verify:**
+- Admin (Sales/Manager) → *Product Catalogue* → Download: PDF opens, images present.
+- Foreign manager (e.g. Togo): language/currency pickers locked; PDF in French, prices in CFA.
+- Storefront: chat bubble visible; send a message → AI reply; press "Talk to a person" →
+  admin console alarm within ~5 s for that country's desk, IT and Director.
+- A Togo-scoped admin must NOT see an NG conversation (404 on its id).
+
+**Recovery:**
+- Chat misbehaving → Admin → Chat → Settings: turn off `aiEnabled` (humans only) or `enabled`
+  (hides the widget), or add the country to `disabledCountries`. No redeploy needed.
+- OpenAI outage → visitors get the "unavailable" message and the chat auto-escalates to SALES.
+- Catalogue 413 → narrow filters or untick images. 422 `NO_EXCHANGE_RATE` → add a MANUAL rate NGN→currency.
+- Rollback: the widgets are additive; reverting client/mobile removes the bubble, server routes are inert.
+
+**Test:** `TEST_MONGO_URI=… node tests/chat_catalogue_int.mjs` (needs `supertest`).

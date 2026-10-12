@@ -53,6 +53,8 @@ export const MODULES = {
   PASSWORD_VAULT: "passwordVault",
   SETTINGS: "settings",
   PAYMENTS: "payments", // indigenous payment gateway settings (CinetPay etc.)
+  CATALOGUE: "catalogue", // printable product catalogue (PDF)
+  CHAT: "chat", // AI chatbot + live-agent chat console
 };
 
 /**
@@ -193,6 +195,17 @@ export const PERMISSIONS = [
   // regardless and can manage every country's.
   { key: "payments.view", module: MODULES.PAYMENTS, description: "View payment gateway & bank transfer settings", hqOnly: false },
   { key: "payments.manageCountry", module: MODULES.PAYMENTS, description: "Add/edit indigenous payment gateway keys, webhooks, and bank transfer details for own country", hqOnly: false },
+
+  // ── Product catalogue PDF ──
+  { key: "catalogue.download", module: MODULES.CATALOGUE, description: "Generate / print the product catalogue PDF (country language + currency applied for country-scoped managers)", hqOnly: false },
+
+  // ── AI chat + live-agent console ──
+  // chat.view   → open the chat console (conversations of your own country scope)
+  // chat.manage → reply, take over from the AI, escalate, close, assign
+  // chat.settings → configure the chatbot (persona, working hours, alarm) — HQ only
+  { key: "chat.view", module: MODULES.CHAT, description: "View chat conversations in your scope", hqOnly: false },
+  { key: "chat.manage", module: MODULES.CHAT, description: "Reply to, take over, escalate and close chat conversations in your scope", hqOnly: false },
+  { key: "chat.settings", module: MODULES.CHAT, description: "Configure the AI chatbot (persona, hours, escalation, alarm)", hqOnly: true },
 ];
 
 export const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);

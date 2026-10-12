@@ -17,6 +17,7 @@ const activityLogSchema = new mongoose.Schema(
         "PRODUCT_UPDATE",
         "PRODUCT_DELETE",
         "PRODUCT_RESTORE",
+        "CATALOGUE_PDF",
         // Stock
         "STOCK_ADD",
         "STOCK_UPDATE",

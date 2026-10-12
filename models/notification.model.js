@@ -53,6 +53,7 @@ const notificationSchema = new mongoose.Schema(
         'USER_REGISTRATION',
         'PASSWORD_RESET',
         'PRODUCT',
+        'CHAT',
         'STOCK',
         'PRICING',
         'PURCHASE_ORDER',

@@ -570,3 +570,10 @@ export async function detectLanguageAI(text) {
     return "en";
   }
 }
+
+// ── Shared accessors for other AI features (chat assistant) ─────────────────
+// One OpenAI client + key for the whole server; features pick their own model.
+export { getClient as getOpenAIClient };
+export function getChatModel() {
+  return process.env.OPENAI_CHAT_MODEL || getModel();
+}

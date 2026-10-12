@@ -1,0 +1,148 @@
+/**
+ * services/catalogue/catalogueStrings.js
+ *
+ * Static labels printed on the catalogue PDF. The PDF is rendered with the
+ * built-in Helvetica font (WinAnsi), so only Latin-script languages are
+ * offered; any other language falls back to English (see resolveCatalogueLanguage).
+ * Product/category/tag text itself is translated through the Translation
+ * collection (utils/translationService.js) — only the chrome lives here.
+ */
+
+export const CATALOGUE_LANGUAGES = ["en", "fr", "it", "es", "pt", "nl"];
+
+const S = {
+  en: {
+    title: "Product Catalogue",
+    generated: "Generated",
+    currency: "Prices in",
+    products: "products",
+    page: "Page",
+    of: "of",
+    sku: "SKU",
+    brand: "Brand",
+    category: "Category",
+    subCategory: "Sub-category",
+    productType: "Type",
+    price: "Price",
+    delivery3: "3-week delivery",
+    delivery5: "5-week delivery",
+    btbPrice: "B2B price",
+    discount: "Discount",
+    availability: "Availability",
+    inStock: "In stock",
+    onRequest: "On request",
+    stockQty: "Stock",
+    unit: "Unit",
+    packaging: "Packaging",
+    weight: "Weight",
+    roastLevel: "Roast",
+    blend: "Blend",
+    origin: "Origin",
+    intensity: "Intensity",
+    aroma: "Aroma",
+    tags: "Tags",
+    rating: "Rating",
+    noImage: "No image",
+    empty: "No products match the selected filters.",
+    uncategorised: "Other",
+    types: { COFFEE: "Coffee", MACHINE: "Machines", ACCESSORIES: "Accessories", COFFEE_BEANS: "Coffee beans", TEA: "Tea", DRINKS: "Drinks" },
+    roast: { LIGHT: "Light", MEDIUM: "Medium", DARK: "Dark" },
+  },
+  fr: {
+    title: "Catalogue produits",
+    generated: "Généré le",
+    currency: "Prix en",
+    products: "produits",
+    page: "Page",
+    of: "sur",
+    sku: "Réf.",
+    brand: "Marque",
+    category: "Catégorie",
+    subCategory: "Sous-catégorie",
+    productType: "Type",
+    price: "Prix",
+    delivery3: "Livraison 3 semaines",
+    delivery5: "Livraison 5 semaines",
+    btbPrice: "Prix B2B",
+    discount: "Remise",
+    availability: "Disponibilité",
+    inStock: "En stock",
+    onRequest: "Sur demande",
+    stockQty: "Stock",
+    unit: "Unité",
+    packaging: "Conditionnement",
+    weight: "Poids",
+    roastLevel: "Torréfaction",
+    blend: "Mélange",
+    origin: "Origine",
+    intensity: "Intensité",
+    aroma: "Arôme",
+    tags: "Étiquettes",
+    rating: "Note",
+    noImage: "Pas d'image",
+    empty: "Aucun produit ne correspond aux filtres sélectionnés.",
+    uncategorised: "Autres",
+    types: { COFFEE: "Café", MACHINE: "Machines", ACCESSORIES: "Accessoires", COFFEE_BEANS: "Café en grains", TEA: "Thé", DRINKS: "Boissons" },
+    roast: { LIGHT: "Légère", MEDIUM: "Moyenne", DARK: "Foncée" },
+  },
+  it: {
+    title: "Catalogo prodotti",
+    generated: "Generato il",
+    currency: "Prezzi in",
+    products: "prodotti",
+    page: "Pagina",
+    of: "di",
+    sku: "Cod.",
+    brand: "Marca",
+    category: "Categoria",
+    subCategory: "Sottocategoria",
+    productType: "Tipo",
+    price: "Prezzo",
+    delivery3: "Consegna 3 settimane",
+    delivery5: "Consegna 5 settimane",
+    btbPrice: "Prezzo B2B",
+    discount: "Sconto",
+    availability: "Disponibilità",
+    inStock: "Disponibile",
+    onRequest: "Su richiesta",
+    stockQty: "Scorte",
+    unit: "Unità",
+    packaging: "Confezione",
+    weight: "Peso",
+    roastLevel: "Tostatura",
+    blend: "Miscela",
+    origin: "Origine",
+    intensity: "Intensità",
+    aroma: "Aroma",
+    tags: "Tag",
+    rating: "Valutazione",
+    noImage: "Nessuna immagine",
+    empty: "Nessun prodotto corrisponde ai filtri selezionati.",
+    uncategorised: "Altro",
+    types: { COFFEE: "Caffè", MACHINE: "Macchine", ACCESSORIES: "Accessori", COFFEE_BEANS: "Caffè in grani", TEA: "Tè", DRINKS: "Bevande" },
+    roast: { LIGHT: "Chiara", MEDIUM: "Media", DARK: "Scura" },
+  },
+};
+
+// es / pt / nl: only the headline chrome is translated; everything else falls
+// back to English per key (cat() below).
+S.es = { title: "Catálogo de productos", generated: "Generado", currency: "Precios en", products: "productos", page: "Página", of: "de", price: "Precio", brand: "Marca", category: "Categoría", empty: "Ningún producto coincide con los filtros." };
+S.pt = { title: "Catálogo de produtos", generated: "Gerado em", currency: "Preços em", products: "produtos", page: "Página", of: "de", price: "Preço", brand: "Marca", category: "Categoria", empty: "Nenhum produto corresponde aos filtros." };
+S.nl = { title: "Productcatalogus", generated: "Gegenereerd", currency: "Prijzen in", products: "producten", page: "Pagina", of: "van", price: "Prijs", brand: "Merk", category: "Categorie", empty: "Geen producten voldoen aan de filters." };
+
+/** Label bundle for a language, English per-key fallback. */
+export function catalogueStrings(language = "en") {
+  const base = S.en;
+  const l = S[language] || {};
+  return {
+    ...base,
+    ...l,
+    types: { ...base.types, ...(l.types || {}) },
+    roast: { ...base.roast, ...(l.roast || {}) },
+  };
+}
+
+/** PDF font cannot render non-Latin scripts → fall back to English. */
+export function resolveCatalogueLanguage(language = "en") {
+  return CATALOGUE_LANGUAGES.includes(language) ? language : "en";
+}
