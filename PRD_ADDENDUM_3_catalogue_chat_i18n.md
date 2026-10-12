@@ -224,3 +224,41 @@ enum had no XOF/XAF.
   `vite:preloadError`: after a deploy, a tab holding old chunk names reloads once (15 s guard) instead of
   showing "Failed to fetch dynamically imported module".
 - Test: `tests/giftcard_cinetpay_int.mjs`.
+
+---
+
+## 9j. Catalogue — customer-facing Brochure export
+
+A second export type next to the internal catalogue list, on the same admin page
+(`/dashboard/catalogue`, **Document type → Brochure**). Same access rules, country/language/currency
+rules and filters as §9e; different content rules because it is handed to customers.
+
+**Content**
+- Cover (brand colour, logo, title, optional *Prepared for*, company details, named sales contact with
+  photo/role/phone/email), image-led product pages (2-up, 3-up or list layout, optional category/brand
+  sections), closing page ("Thank you", contact again, price/availability note).
+- Company details come from the print country's settings (`contacts`, `branding`, domain; logo falls
+  back to HQ). They can be overridden per brochure in the UI.
+- Sales contact: defaults to the requesting admin when they are SALES / SALES_MANAGER / MANAGER; the admin may pick
+  any active sales-type admin of the print country (HQ country → GLOBAL admins; foreign → that country's
+  COUNTRY-scoped admins), edit any printed value, or print no named person.
+- **Customer-safe fields only** (`BROCHURE_FIELD_DEFS`): image, brand, category, SKU, short description,
+  description, price, discount, availability, unit, packaging, weight, coffee details, tags, rating.
+  B2B price, stock quantity, delivery-tier prices, product type and SEO are never offered.
+- **Minimal defaults**: image, brand, short description, price (product name always prints). Everything else is opt-in.
+- Language/currency exactly as the catalogue (foreign manager → own country language + currency).
+
+**API:** `POST /api/admin/catalogue/brochure` (attachment, logged as `CATALOGUE_PDF`) and
+`.../brochure?inline=1` (same PDF, inline, not logged - used by the on-page preview).
+Body: `filters, fields, country, language, groupBy, sort, contactUserId, contact{name,phone,whatsapp,email|none},
+brochure{title,subtitle,preparedFor,layout,cover,backCover,color,company{...}}`.
+`GET /options` now also returns `brochure{fields,layouts,company,contacts,defaultContactId}`.
+Errors: 400 `BAD_CONTACT` (contact not in the print country), 413/422 as the catalogue.
+
+**UI:** Catalogue/Brochure switch; brochure mode shows settings on the left and a live PDF preview (iframe) on the right,
+auto-generated on first open, with a "settings changed - refresh" hint; Print and Download use the same endpoint.
+
+**Files:** `services/catalogue/brochurePdf.js`, additions in `catalogueService.js` / `catalogueStrings.js` /
+`controllers/catalogue.controller.js` / `route/catalogue.route.js`; admin `pages/catalogue/ProductCatalogue.jsx`;
+admin locale keys `catalogue.*` (en/fr/it; other languages fall back to English until the translate + seed scripts are run).
+**Limits:** Latin-script languages only (Helvetica); same product caps as 9e.

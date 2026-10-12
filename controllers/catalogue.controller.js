@@ -19,10 +19,16 @@ import {
   resolveFields,
   loadCatalogueRows,
   CatalogueError,
+  BROCHURE_FIELD_DEFS,
+  BROCHURE_LAYOUTS,
+  resolveBrochureFields,
+  loadSalesContacts,
+  resolveBrochureContact,
   MAX_PRODUCTS,
   MAX_PRODUCTS_WITH_IMAGES,
 } from "../services/catalogue/catalogueService.js";
 import { renderCataloguePdf } from "../services/catalogue/cataloguePdf.js";
+import { renderBrochurePdf } from "../services/catalogue/brochurePdf.js";
 import { catalogueStrings } from "../services/catalogue/catalogueStrings.js";
 import { logActivity } from "../utils/activityLogger.js";
 
@@ -44,10 +50,14 @@ export async function getCatalogueOptions(req, res) {
       country: req.query.country,
       language: req.query.language,
     });
-    const [filters, countries] = await Promise.all([
+    const [filters, countries, contacts] = await Promise.all([
       loadFilterOptions(),
       printableCountries(req.countryScope),
+      loadSalesContacts(ctx),
     ]);
+    const me = ["SALES", "SALES_MANAGER", "MANAGER"].includes(req.user?.subRole)
+      ? contacts.find((c) => c.id === String(req.user._id)) || null
+      : null;
     return res.json({
       success: true,
       error: false,
@@ -55,6 +65,13 @@ export async function getCatalogueOptions(req, res) {
         filters,
         countries,
         fields: fieldDefsFor(ctx.isCountryScoped),
+        brochure: {
+          fields: BROCHURE_FIELD_DEFS,
+          layouts: BROCHURE_LAYOUTS,
+          company: ctx.company,
+          contacts,
+          defaultContactId: me?.id || "",
+        },
         limits: { maxProducts: MAX_PRODUCTS, maxProductsWithImages: MAX_PRODUCTS_WITH_IMAGES },
         context: {
           countryCode: ctx.countryCode,
@@ -126,6 +143,59 @@ export async function downloadCataloguePdf(req, res) {
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", pdf.length);
+    res.setHeader("X-Catalogue-Count", String(rows.length));
+    return res.end(pdf);
+  } catch (err) {
+    return fail(res, err);
+  }
+}
+
+// ── Brochure (customer-facing) ───────────────────────────────────────────────
+//   POST /api/admin/catalogue/brochure          → PDF attachment
+//   POST /api/admin/catalogue/brochure?inline=1 → same PDF, inline (on-page preview)
+export async function brochurePdf(req, res) {
+  try {
+    const body = req.body || {};
+    const ctx = await resolveCatalogueContext({ countryScope: req.countryScope, country: body.country, language: body.language });
+    const fields = resolveBrochureFields(body.fields);
+    const { rows } = await loadCatalogueRows({ filters: body.filters || {}, fields, ctx, sort: body.sort });
+    const contact = await resolveBrochureContact({
+      ctx,
+      contactUserId: body.contactUserId,
+      override: body.contact || {},
+      requester: req.user,
+    });
+    const b = body.brochure || {};
+    const options = {
+      title: String(b.title || "").slice(0, 80),
+      subtitle: String(b.subtitle || "").slice(0, 120),
+      preparedFor: String(b.preparedFor || "").slice(0, 80),
+      layout: BROCHURE_LAYOUTS.includes(b.layout) ? b.layout : "grid2",
+      cover: b.cover !== false,
+      backCover: b.backCover !== false,
+      groupBy: ["category", "brand", "none"].includes(body.groupBy) ? body.groupBy : "category",
+      color: b.color,
+      company: Object.fromEntries(
+        ["name", "address", "phone", "whatsapp", "email", "website"].map((k) => [k, String(b.company?.[k] || "").slice(0, 200)]),
+      ),
+    };
+    const pdf = await renderBrochurePdf({ rows, fields, ctx, options, contact });
+    const stamp = new Date().toISOString().slice(0, 10);
+    const inline = req.query.inline === "1";
+
+    if (!inline) {
+      logActivity({
+        userId: req.user?._id,
+        action: "CATALOGUE_PDF",
+        description: `Brochure: ${rows.length} products, ${ctx.countryCode}/${ctx.language}/${ctx.currency.code}`,
+        resourceType: "Other",
+        resourceName: "Product brochure",
+        req,
+      }).catch(() => {});
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="brochure-${ctx.countryCode}-${ctx.language}-${stamp}.pdf"`);
     res.setHeader("Content-Length", pdf.length);
     res.setHeader("X-Catalogue-Count", String(rows.length));
     return res.end(pdf);

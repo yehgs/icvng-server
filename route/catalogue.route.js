@@ -9,6 +9,7 @@ import {
   getCatalogueOptions,
   previewCatalogue,
   downloadCataloguePdf,
+  brochurePdf,
 } from "../controllers/catalogue.controller.js";
 
 const catalogueRouter = Router();
@@ -17,5 +18,6 @@ catalogueRouter.use(auth, adminAuth, countryScope, requirePermission("catalogue.
 catalogueRouter.get("/options", getCatalogueOptions);
 catalogueRouter.post("/preview", previewCatalogue);
 catalogueRouter.post("/pdf", downloadCataloguePdf);
+catalogueRouter.post("/brochure", brochurePdf);
 
 export default catalogueRouter;

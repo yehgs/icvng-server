@@ -79,6 +79,24 @@ assert.equal(r.body.data.context.currency.code, "XOF"); assert.equal(r.body.data
 r = await request(app).post("/api/admin/catalogue/preview").set(it.h).send({ country: "IT" });
 assert.equal(r.status, 422); assert.equal(r.body.code, "NO_EXCHANGE_RATE");
 console.log("catalogue ✓");
+// ── brochure ─────────────────────────────────────────────────────────────────
+const bin = (res, cb) => { const c = []; res.on("data", (d) => c.push(d)); res.on("end", () => cb(null, Buffer.concat(c))); };
+r = await request(app).get("/api/admin/catalogue/options").set(tgMgr.h);
+assert.ok(r.body.data.brochure.fields.every((f) => !["btbPrice", "stockQty", "deliveryPrices", "productType"].includes(f.key)), "internal fields never offered in brochure");
+assert.deepEqual(r.body.data.brochure.fields.filter((f) => f.default).map((f) => f.key).sort(), ["brand", "image", "price", "shortDescription"], "minimal defaults");
+assert.ok(r.body.data.brochure.contacts.some((c) => c.id === String(tgMgr.u._id)), "TG manager is a TG sales contact");
+assert.equal(r.body.data.brochure.defaultContactId, String(tgMgr.u._id));
+assert.ok(!r.body.data.brochure.contacts.some((c) => c.id === String(hqSales.u._id)), "HQ sales is not a TG contact");
+r = await request(app).post("/api/admin/catalogue/brochure?inline=1").set(tgMgr.h).send({ country: "NG", brochure: { title: "Hôtel offer", preparedFor: "Hôtel Le Lac" } }).buffer().parse(bin);
+assert.equal(r.status, 200, r.body.toString().slice(0, 200)); assert.equal(r.body.slice(0, 4).toString(), "%PDF");
+assert.match(r.headers["content-disposition"], /^inline; filename="brochure-TG-fr-/); assert.equal(r.headers["x-catalogue-count"], "1");
+r = await request(app).post("/api/admin/catalogue/brochure").set(tgMgr.h).send({ contactUserId: String(hqSales.u._id) });
+assert.equal(r.status, 400); assert.equal(r.body.code, "BAD_CONTACT");
+r = await request(app).post("/api/admin/catalogue/brochure").set(tgSales.h).send({}); assert.equal(r.status, 403);
+r = await request(app).post("/api/admin/catalogue/brochure").set(hqSales.h).send({ contact: { none: true }, brochure: { layout: "list", cover: false, backCover: false }, fields: { image: false, price: false } }).buffer().parse(bin);
+assert.equal(r.status, 200); assert.match(r.headers["content-disposition"], /^attachment; filename="brochure-NG-/); assert.equal(r.headers["x-catalogue-count"], "2");
+console.log("brochure ✓");
+
 
 // ── chat ─────────────────────────────────────────────────────────────────────
 const ai = getOpenAIClient();

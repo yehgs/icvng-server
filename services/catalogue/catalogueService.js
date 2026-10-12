@@ -31,6 +31,8 @@ import ExchangeRateModel from "../../models/exchange-rate.model.js";
 import { computeEffectivePrices } from "../../utils/mergeDirectPricing.js";
 import { getEffectiveOnlineStock } from "../../utils/manualOrderValidation.js";
 import { localizeList } from "../../utils/translationService.js";
+import UserModel from "../../models/user.model.js";
+import { getCountryByCode } from "../../config/countries/index.js";
 import { getHQCountry, syncByCode, listCountries } from "../countryService.js";
 import { resolveCatalogueLanguage } from "./catalogueStrings.js";
 
@@ -141,6 +143,20 @@ export async function resolveCatalogueContext({ countryScope, country, language 
   };
   const rate = await getRate(currency.code);
 
+  // Company block for brochures (country's own details; logo falls back to HQ).
+  const hq = await getHQCountry();
+  const hex = (v) => (/^#[0-9a-f]{6}$/i.test(String(v || "")) ? v : "");
+  const company = {
+    name: c.seo?.siteName || `I-Coffee ${c.name}`,
+    logo: c.branding?.logo || hq?.branding?.logo || "",
+    primaryColor: hex(c.branding?.primaryColor) || "#4a2c17",
+    email: c.contacts?.email || "",
+    phone: c.contacts?.phone || "",
+    whatsapp: c.contacts?.whatsapp || "",
+    address: c.contacts?.address || "",
+    website: getCountryByCode(code)?.domain || "",
+  };
+
   return {
     isCountryScoped,
     countryCode: code,
@@ -152,6 +168,7 @@ export async function resolveCatalogueContext({ countryScope, country, language 
     currency,
     rate,
     brandName: c.seo?.siteName || `I-Coffee ${c.name}`,
+    company,
   };
 }
 
@@ -400,4 +417,93 @@ export async function loadFilterOptions() {
     productTypes: ["COFFEE", "COFFEE_BEANS", "MACHINE", "ACCESSORIES", "TEA", "DRINKS"],
     roastLevels: ["LIGHT", "MEDIUM", "DARK"],
   };
+}
+
+// ── 4. Brochure (customer-facing) ────────────────────────────────────────────
+//
+// Same product rows as the catalogue, but a different, customer-safe field
+// list. Internal data (B2B price, stock quantity, delivery-tier prices,
+// product type, SEO) is never offered. Default selection is deliberately
+// minimal: image, brand, short description, price (product name always prints).
+
+export const BROCHURE_FIELD_DEFS = [
+  { key: "image", group: "media", default: true },
+  { key: "brand", group: "identity", default: true },
+  { key: "category", group: "identity", default: false },
+  { key: "sku", group: "identity", default: false },
+  { key: "shortDescription", group: "text", default: true },
+  { key: "description", group: "text", default: false },
+  { key: "price", group: "pricing", default: true },
+  { key: "discount", group: "pricing", default: false },
+  { key: "availability", group: "stock", default: false },
+  { key: "unit", group: "specs", default: false },
+  { key: "packaging", group: "specs", default: false },
+  { key: "weight", group: "specs", default: false },
+  { key: "coffeeDetails", group: "specs", default: false },
+  { key: "tags", group: "specs", default: false },
+  { key: "rating", group: "specs", default: false },
+];
+
+export function resolveBrochureFields(requested) {
+  const out = {};
+  for (const f of BROCHURE_FIELD_DEFS) {
+    out[f.key] = requested && f.key in requested ? !!requested[f.key] : f.default;
+  }
+  // The catalogue renderer's keys that brochures never expose:
+  out.btbPrice = false; out.stockQty = false; out.deliveryPrices = false; out.productType = false; out.subCategory = false;
+  return out;
+}
+
+export const BROCHURE_LAYOUTS = ["grid2", "grid3", "list"];
+export const CONTACT_ROLES = ["SALES", "SALES_MANAGER", "MANAGER"];
+
+const fmtPhone = (n) => {
+  if (n === null || n === undefined || n === "") return "";
+  const t = String(n).trim();
+  return t.startsWith("+") || t.length < 10 ? t : `+${t}`;
+};
+
+function contactFromUser(u) {
+  if (!u) return null;
+  return {
+    id: String(u._id),
+    name: u.name || "",
+    role: u.subRole || "",
+    phone: fmtPhone(u.mobile),
+    whatsapp: "",
+    email: u.email || "",
+    avatar: u.avatar || "",
+  };
+}
+
+/** Active sales-type admins who "belong" to the print country (HQ country → GLOBAL admins). */
+export async function loadSalesContacts(ctx) {
+  const hq = await getHQCountry();
+  const isHQ = hq?.code === ctx.countryCode;
+  const q = { role: "ADMIN", subRole: { $in: CONTACT_ROLES }, status: "Active" };
+  if (isHQ) q.scope = "GLOBAL";
+  else Object.assign(q, { scope: "COUNTRY", assignedCountry: ctx.countryCode });
+  const users = await UserModel.find(q, "name email mobile avatar subRole").sort({ name: 1 }).limit(100).lean();
+  return users.map(contactFromUser);
+}
+
+/**
+ * Who the brochure names as the sales contact.
+ *   contactUserId → that admin (must be one of the print country's sales contacts)
+ *   otherwise     → the requesting admin if they are a sales-type role
+ *   override      → free-text fields applied on top ({name, role, phone, whatsapp, email}); override.none=true omits the person
+ */
+export async function resolveBrochureContact({ ctx, contactUserId, override = {}, requester }) {
+  if (override?.none === true) return null;
+  let base = null;
+  if (contactUserId) {
+    const list = await loadSalesContacts(ctx);
+    base = list.find((c) => c.id === String(contactUserId));
+    if (!base) throw new CatalogueError("That sales contact does not belong to the selected country.", 400, "BAD_CONTACT");
+  } else if (requester && CONTACT_ROLES.includes(requester.subRole)) {
+    base = contactFromUser(requester);
+  }
+  const o = Object.fromEntries(Object.entries(override || {}).filter(([k, v]) => k !== "none" && typeof v === "string" && v.trim()));
+  if (!base && !Object.keys(o).length) return null;
+  return { id: "", name: "", role: "", phone: "", whatsapp: "", email: "", avatar: "", ...(base || {}), ...o };
 }
