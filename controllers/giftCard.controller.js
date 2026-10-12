@@ -5,9 +5,26 @@ import Stripe from "../config/stripe.js";
 import { resolveGiftCardForCheckout } from "../utils/giftCardCheckout.js";
 import { sendCountryEmail, wrapEmailTemplate } from "../config/emailService.js";
 import { getCountryByCode, isPaymentProviderEnabled } from "../config/countries/index.js";
+import { getCinetPayConfig } from "../config/paymentRouter.js";
+import {
+  initiateCinetPayPayment,
+  verifyCinetPayTransaction,
+  roundForCinetPay,
+} from "../config/cinetpay.js";
+import PaymentIntentModel from "../models/paymentIntent.model.js";
 
-const MIN_AMOUNT = 1000; // ₦1,000 / $1 / etc. floor — prevents a throwaway 1-unit "gift card"
-const MAX_AMOUNT = 1000000;
+// Per-currency purchase limits (min, max). A single flat 1,000–1,000,000 range
+// was only sensible for NGN: it made every EUR/USD card (presets 10–100)
+// impossible to buy, and 1,000 XOF is under €2.
+const AMOUNT_LIMITS = {
+  NGN: [1000, 1000000],
+  XOF: [2000, 2000000],
+  XAF: [2000, 2000000],
+  EUR: [5, 5000],
+  USD: [5, 5000],
+  GBP: [5, 5000],
+};
+export const giftCardLimitsFor = (currency) => AMOUNT_LIMITS[currency] || [1, 1000000];
 
 const generateCode = () => {
   // e.g. GC-7F3K-9QX2-P1M4 — grouped for readability when read aloud/typed in
@@ -121,9 +138,11 @@ function buildPurchaseMetadata(body, request) {
 
   if (!recipientEmail) throw new Error("Recipient email is required");
   const numAmount = Number(amount);
-  if (!numAmount || numAmount < MIN_AMOUNT || numAmount > MAX_AMOUNT) {
+  const cur = request.country?.currency?.code || "NGN";
+  const [minAmt, maxAmt] = giftCardLimitsFor(cur);
+  if (!numAmount || numAmount < minAmt || numAmount > maxAmt) {
     throw new Error(
-      `Amount must be between ${MIN_AMOUNT.toLocaleString()} and ${MAX_AMOUNT.toLocaleString()}`,
+      `Amount must be between ${minAmt.toLocaleString()} and ${maxAmt.toLocaleString()} ${cur}`,
     );
   }
 
@@ -253,6 +272,136 @@ export const verifyPaystackGiftCardPurchase = async (request, response) => {
   }
 };
 
+
+// ── Purchase: CinetPay (Togo / Benin — same gateway orders use there) ───────
+// CinetPay doesn't echo our metadata back, so (exactly like orders) the
+// purchase snapshot is stored in a PaymentIntent keyed by our transaction id.
+// Fulfilment is idempotent (fulfillGiftCardPurchase) and reachable from both
+// the browser verify call and the server-to-server webhook.
+export const initiateCinetPayGiftCardPurchase = async (request, response) => {
+  try {
+    const country = request.countryCode || "NG";
+    const { enabled, credentials } = await getCinetPayConfig(country);
+    if (!enabled) {
+      const meta = getCountryByCode(country);
+      return response.status(400).json({
+        message: `CinetPay is not available in ${meta?.name || country}. Please use another payment method.`,
+        error: true,
+        success: false,
+      });
+    }
+
+    const metadata = buildPurchaseMetadata(request.body, request);
+    if (!metadata.purchaserEmail) {
+      return response.status(400).json({ message: "Purchaser email is required", error: true, success: false });
+    }
+    const currency = metadata.currencyCode || "XOF";
+    // CinetPay needs XOF in multiples of 5; the card is issued for the
+    // rounded amount so the value paid and the value issued always match.
+    const amount = roundForCinetPay(Math.round(Number(metadata.giftCardPurchaseAmount)), currency);
+    metadata.giftCardPurchaseAmount = String(amount);
+
+    const txRef = `GCCTP-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await PaymentIntentModel.create({
+      reference: txRef,
+      provider: "CINETPAY",
+      countryCode: country,
+      currencyCode: currency,
+      metadata,
+    });
+
+    const meta = getCountryByCode(country);
+    const returnBaseUrl =
+      process.env.NODE_ENV === "production" && meta?.domain
+        ? `https://${meta.domain}`
+        : process.env.FRONTEND_URL;
+
+    const { paymentUrl } = await initiateCinetPayPayment({
+      apiKey: credentials.apiKey,
+      siteId: credentials.siteId,
+      transactionId: txRef,
+      amount,
+      currency,
+      description: `I-Coffee gift card — ${amount} ${currency}`,
+      notifyUrl: `${process.env.SERVER_BASE_URL}/api/gift-card/purchase/cinetpay/webhook/${country}`,
+      returnUrl: `${returnBaseUrl}/gift-cards/cinetpay/callback?reference=${txRef}`,
+      customer: {
+        name: metadata.purchaserName?.split(" ")?.[0] || "Customer",
+        surname: metadata.purchaserName?.split(" ")?.slice(1).join(" ") || "-",
+        email: metadata.purchaserEmail,
+        phone: "",
+      },
+    });
+
+    return response.json({ success: true, error: false, data: { paymentUrl, reference: txRef } });
+  } catch (error) {
+    return response.status(400).json({ message: error.message, error: true, success: false });
+  }
+};
+
+async function confirmCinetPayGiftCard(reference) {
+  const intent = await PaymentIntentModel.findOne({ reference });
+  if (!intent || intent.metadata?.purpose !== "GIFT_CARD_PURCHASE") return { status: 404 };
+  const { enabled, credentials } = await getCinetPayConfig(intent.countryCode);
+  if (!enabled) return { status: 400, message: "CinetPay is no longer configured for this country" };
+  const verification = await verifyCinetPayTransaction({
+    apiKey: credentials.apiKey,
+    siteId: credentials.siteId,
+    transactionId: reference,
+  });
+  if (!verification.accepted) return { status: 400, message: "Payment was not successful" };
+  const giftCard = await fulfillGiftCardPurchase({
+    reference,
+    metadata: intent.metadata,
+    provider: "CINETPAY",
+  });
+  if (intent.status !== "CONFIRMED") {
+    intent.status = "CONFIRMED";
+    await intent.save();
+  }
+  return { status: 200, giftCard };
+}
+
+export const verifyCinetPayGiftCardPurchase = async (request, response) => {
+  try {
+    const result = await confirmCinetPayGiftCard(request.params.reference);
+    if (result.status !== 200) {
+      return response.status(result.status).json({
+        message: result.message || "Unknown transaction reference",
+        error: true,
+        success: false,
+      });
+    }
+    const gc = result.giftCard;
+    return response.json({
+      success: true,
+      error: false,
+      data: {
+        code: gc.code,
+        amount: gc.initialAmount,
+        currency: gc.currency,
+        recipientEmail: gc.recipientEmail,
+        deliveredAt: gc.deliveredAt,
+      },
+    });
+  } catch (error) {
+    return response.status(500).json({ message: error.message, error: true, success: false });
+  }
+};
+
+// CinetPay's notify_url is unsigned — confirmCinetPayGiftCard re-checks
+// with CinetPay server-to-server and never trusts the body. Always 200 so
+// CinetPay doesn't retry forever on a non-gift-card / failed payment.
+export const cinetpayGiftCardWebhook = async (request, response) => {
+  try {
+    const ref = request.body?.cpm_trans_id || request.body?.transaction_id;
+    if (ref) await confirmCinetPayGiftCard(ref);
+  } catch (error) {
+    console.error("[giftCard] CinetPay webhook error:", error.message);
+  }
+  return response.json({ received: true });
+};
+
 // ── Purchase: Stripe (every other market) ────────────────────────────────────
 export const initiateStripeGiftCardPurchase = async (request, response) => {
   try {
@@ -338,7 +487,10 @@ export const checkGiftCardBalanceController = async (request, response) => {
   try {
     const { code } = request.params;
     const giftCard = await GiftCardModel.findOne({ code: String(code).trim().toUpperCase() });
-    if (!giftCard) {
+    // Country-scoped like orders: a card issued for another market is
+    // reported as "not found" on this storefront (no cross-market probing).
+    const here = request.countryCode || "NG";
+    if (!giftCard || (giftCard.countryCode && giftCard.countryCode !== here)) {
       return response.status(404).json({ message: "Gift card not found", error: true, success: false });
     }
     return response.json({

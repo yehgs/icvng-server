@@ -192,3 +192,35 @@ are ignored (harmless; can be `$unset`). Support chat is now §9f.
 - Added AI chat system with web + mobile widgets and admin console (§9f).
 - Storefront hardcoded-text audit + menu overflow cue (§9g).
 - Removed Tawk.to (§9h).
+
+---
+
+## 9i. Gift cards — country-scoped purchase via CinetPay (Togo/Benin) + stale-chunk recovery
+
+**Problem:** gift cards were stored per country (`countryScopedPlugin`) but the buy flow only knew
+Paystack (NGN) and Stripe. On Togo/Benin storefronts neither is enabled, so a purchase could not
+complete; preset amounts (10–100) were also below the flat 1,000 minimum, and the card `currency`
+enum had no XOF/XAF.
+
+**Now (mirrors how orders work):**
+- `GiftCard.currency` enum += `XOF`, `XAF`; `paymentProvider` enum += `CINETPAY`.
+- Per-currency purchase limits (`giftCardLimitsFor`): NGN 1,000–1,000,000; XOF/XAF 2,000–2,000,000;
+  EUR/USD/GBP 5–5,000. Limits follow the storefront country's currency.
+- `POST /api/gift-card/purchase/cinetpay` (optionalAuth): requires CinetPay active for the country
+  (`getCinetPayConfig`), rounds XOF to a multiple of 5 (the card is issued for the rounded amount),
+  stores the purchase snapshot in a `PaymentIntent` (`metadata.purpose = GIFT_CARD_PURCHASE`) and
+  returns the hosted `paymentUrl`. Return URL = the country's own domain
+  `/gift-cards/cinetpay/callback?reference=…`.
+- `GET /api/gift-card/purchase/cinetpay/verify/:reference` (browser) and
+  `POST /api/gift-card/purchase/cinetpay/webhook/:countryCode` (CinetPay notify, unsigned) both call
+  CinetPay's check API server-to-server and then the idempotent `fulfillGiftCardPurchase`.
+- `GET /balance/:code` now returns 404 for a card issued in another country.
+- Redemption already enforced currency + `countryCode` (`resolveGiftCardForCheckout`).
+- Admin "Issue gift card" currency list += XOF, XAF.
+- Storefront: `GiftCardBuyPage` uses CinetPay when `hasCinetPay` and the currency is not NGN;
+  new `GiftCardCinetpayCallbackPage`; endpoints are declared in `client/src/common/SummaryApi.js`
+  (no core release needed). Mobile gift-card screen is still Paystack/NGN-only (follow-up).
+- **Stale-chunk recovery:** all 59 `lazy()` routes use `utils/lazyRetry.js`, and `main.jsx` handles
+  `vite:preloadError`: after a deploy, a tab holding old chunk names reloads once (15 s guard) instead of
+  showing "Failed to fetch dynamically imported module".
+- Test: `tests/giftcard_cinetpay_int.mjs`.

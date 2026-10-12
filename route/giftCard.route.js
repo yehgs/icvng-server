@@ -7,6 +7,9 @@ import {
   initiatePaystackGiftCardPurchase,
   verifyPaystackGiftCardPurchase,
   initiateStripeGiftCardPurchase,
+  initiateCinetPayGiftCardPurchase,
+  verifyCinetPayGiftCardPurchase,
+  cinetpayGiftCardWebhook,
   getGiftCardPurchaseStatus,
   validateGiftCardForCheckoutController,
   checkGiftCardBalanceController,
@@ -23,6 +26,9 @@ const giftCardRouter = Router();
 giftCardRouter.post("/purchase/paystack", optionalAuth, initiatePaystackGiftCardPurchase);
 giftCardRouter.get("/purchase/paystack/verify/:reference", verifyPaystackGiftCardPurchase);
 giftCardRouter.post("/purchase/stripe", optionalAuth, initiateStripeGiftCardPurchase);
+giftCardRouter.post("/purchase/cinetpay", optionalAuth, initiateCinetPayGiftCardPurchase);
+giftCardRouter.get("/purchase/cinetpay/verify/:reference", verifyCinetPayGiftCardPurchase);
+giftCardRouter.post("/purchase/cinetpay/webhook/:countryCode", cinetpayGiftCardWebhook);
 giftCardRouter.get("/purchase/status/:reference", getGiftCardPurchaseStatus);
 
 // ── Balance check (public) ────────────────────────────────────────────────────

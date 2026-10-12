@@ -43,7 +43,7 @@ const giftCardSchema = new mongoose.Schema(
     },
     currency: {
       type: String,
-      enum: ["NGN", "USD", "EUR", "GBP"],
+      enum: ["NGN", "USD", "EUR", "GBP", "XOF", "XAF"],
       required: true,
       default: "NGN",
     },
@@ -67,7 +67,7 @@ const giftCardSchema = new mongoose.Schema(
     purchaserName: { type: String, default: "" },
     paymentProvider: {
       type: String,
-      enum: ["PAYSTACK", "STRIPE", null],
+      enum: ["PAYSTACK", "STRIPE", "CINETPAY", null],
       default: null,
     },
     paymentReference: { type: String, default: "" },
