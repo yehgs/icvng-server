@@ -86,6 +86,7 @@ import invoiceRouter from "./route/invoice.route.js";
 import notificationRouter from "./route/notification.route.js";
 import catalogueRouter from "./route/catalogue.route.js";
 import chatRouter from "./route/chat.route.js";
+import bookingRequestRouter from "./route/booking-request.route.js";
 import chatAdminRouter from "./route/chat-admin.route.js";
 import supportTicketRouter from "./route/support-ticket.route.js";
 import passwordVaultRouter from "./route/password-vault.route.js";
@@ -158,10 +159,15 @@ app.use(
         "https://app.i-coffee.tg",
         "https://app.i-coffee.bj",
         "https://app.i-coffee.it",
+
+        "https://www.app.i-coffee.ng",
+        "https://www.app.i-coffee.tg",
+        "https://www.app.i-coffee.bj",
+        "https://www.app.i-coffee.it",
         // Vercel deployment URLs
-        "https://icvng-client.vercel.app",
-        "https://icvng-admin.vercel.app",
-        "https://italiancoffeeng.vercel.app",
+        // "https://icvng-client.vercel.app",
+        // "https://icvng-admin.vercel.app",
+        // "https://italiancoffeeng.vercel.app",
         // Local development
         "http://localhost:5173",
         "http://localhost:5174",
@@ -326,6 +332,7 @@ app.use("/api/activity-logs", activityLogRouter);
 app.use("/api/admin/notifications", notificationRouter);
 app.use("/api/admin/catalogue", catalogueRouter);
 app.use("/api/chat", chatRouter);
+app.use("/api/booking-requests", bookingRequestRouter);
 app.use("/api/admin/chat", chatAdminRouter);
 app.use("/api/admin/support-tickets", supportTicketRouter);
 app.use("/api/admin/password-vault", passwordVaultRouter);
@@ -359,7 +366,10 @@ connectDB().then(() => {
   }
   // PHASE 3: warm the country cache from DB (falls back to config if unseeded)
   refreshCountryCache().catch((e) =>
-    console.warn("Country cache warm failed (using config fallback):", e.message),
+    console.warn(
+      "Country cache warm failed (using config fallback):",
+      e.message,
+    ),
   );
   app.listen(PORT, () => {
     console.log("✅ Server is running on port:", PORT);
