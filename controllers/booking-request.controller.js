@@ -1,8 +1,10 @@
 // controllers/booking-request.controller.js
 // PUBLIC endpoint for the banner landing pages (barista training / machine rental).
-// Nothing is stored: the request is validated and emailed through Resend
-// (via the existing sendCountryEmail) to the recipient array from env.
+// The request is validated, SAVED (so Nigeria's Sales / Manager / IT / Director
+// can respond from the admin panel) and emailed through Resend (via the existing
+// sendCountryEmail) to the recipient array from env.
 import { sendCountryEmail, wrapEmailTemplate } from "../config/emailService.js";
+import BookingRequestModel, { BOOKING_COUNTRY } from "../models/booking-request.model.js";
 
 const SERVICES = {
   training: { subject: "New Barista Training Registration", envKey: "BOOKING_RECIPIENTS_TRAINING" },
@@ -69,46 +71,84 @@ export async function submitBookingRequestController(req, res) {
       .map((x) => ({ label: clean(x?.label, 60), value: clean(x?.value, 1000) }))
       .filter((x) => x.label && x.value);
 
+    // Both services belong to the Nigerian business: always stamp NG (and use the
+    // NG email branding) no matter which storefront the visitor was on.
+    const countryCode = BOOKING_COUNTRY;
     const to = recipientsFor(service);
-    if (!to.length) {
-      console.error(`[booking] No recipients configured for "${service}" (set BOOKING_RECIPIENTS)`);
-      return res.status(503).json({ success: false, error: true, message: "Booking is temporarily unavailable. Please call us." });
+
+    // 1) Save — this is what the admin "Booking Requests" page reads.
+    let saved = null;
+    try {
+      saved = await BookingRequestModel.create({
+        service,
+        name,
+        email,
+        phone,
+        whatsapp,
+        contactMode,
+        preferredDate: date,
+        timeSlot,
+        extras,
+        submittedLanguage: clean(b.language, 5).toLowerCase() || "en",
+        countryCode,
+      });
+    } catch (e) {
+      console.error("[booking] save failed:", e.message);
     }
 
-    const rows = [
-      ["Name", name],
-      ["Email", email],
-      ["Phone", phone],
-      ["WhatsApp", whatsapp],
-      ["Preferred contact mode", contactMode],
-      ["Preferred date", date],
-      ["Time of day", timeSlot],
-      ...extras.map((x) => [x.label, x.value]),
-      ["Submitted", new Date().toISOString()],
-    ];
+    // 2) Email the recipient array (unchanged behaviour).
+    let emailed = false;
+    if (!to.length) {
+      console.error(`[booking] No recipients configured for "${service}" (set BOOKING_RECIPIENTS)`);
+    } else {
+      const rows = [
+        ["Name", name],
+        ["Email", email],
+        ["Phone", phone],
+        ["WhatsApp", whatsapp],
+        ["Preferred contact mode", contactMode],
+        ["Preferred date", date],
+        ["Time of day", timeSlot],
+        ...extras.map((x) => [x.label, x.value]),
+        ["Submitted", new Date().toISOString()],
+      ];
 
-    const table = rows
-      .map(
-        ([k, v]) =>
-          `<tr><td style="padding:8px 12px;border-bottom:1px solid #eee;color:#6D4C41;font-weight:bold;white-space:nowrap;vertical-align:top;">${esc(k)}</td>` +
-          `<td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;">${esc(v)}</td></tr>`,
-      )
-      .join("");
+      const table = rows
+        .map(
+          ([k, v]) =>
+            `<tr><td style="padding:8px 12px;border-bottom:1px solid #eee;color:#6D4C41;font-weight:bold;white-space:nowrap;vertical-align:top;">${esc(k)}</td>` +
+            `<td style="padding:8px 12px;border-bottom:1px solid #eee;color:#333;">${esc(v)}</td></tr>`,
+        )
+        .join("");
 
-    const body =
-      `<h2 style="color:#4B2E2B;margin:0 0 12px;">${esc(SERVICES[service].subject)}</h2>` +
-      `<p style="color:#444;">A new request was submitted by <strong>${esc(name)}</strong>.</p>` +
-      `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px;">${table}</table>` +
-      `<p style="margin-top:20px;"><a href="mailto:${esc(email)}" style="background:#9B2226;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:bold;">Reply to ${esc(name)}</a></p>`;
+      const body =
+        `<h2 style="color:#4B2E2B;margin:0 0 12px;">${esc(SERVICES[service].subject)}</h2>` +
+        `<p style="color:#444;">A new request was submitted by <strong>${esc(name)}</strong>.</p>` +
+        `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px;">${table}</table>` +
+        `<p style="margin-top:20px;"><a href="mailto:${esc(email)}" style="background:#9B2226;color:#fff;padding:10px 22px;border-radius:6px;text-decoration:none;font-weight:bold;">Reply to ${esc(name)}</a></p>`;
 
-    const countryCode = req.countryCode || "NG";
-    await sendCountryEmail({
-      countryCode,
-      sendTo: to, // array -> Resend delivers to all recipients
-      subject: `${SERVICES[service].subject} - ${name}`,
-      html: wrapEmailTemplate(countryCode, body),
-      replyTo: email,
-    });
+      try {
+        await sendCountryEmail({
+          countryCode,
+          sendTo: to, // array -> Resend delivers to all recipients
+          subject: `${SERVICES[service].subject} - ${name}`,
+          html: wrapEmailTemplate(countryCode, body),
+          replyTo: email,
+        });
+        emailed = true;
+      } catch (e) {
+        console.error("[booking] email failed:", e.message);
+      }
+    }
+
+    if (saved && emailed) {
+      await BookingRequestModel.updateOne({ _id: saved._id }, { $set: { emailSent: true } }).catch(() => {});
+    }
+
+    // Lost only if BOTH the save and the email failed.
+    if (!saved && !emailed) {
+      return res.status(503).json({ success: false, error: true, message: "Booking is temporarily unavailable. Please call us." });
+    }
 
     return res.json({ success: true, message: "Request received" });
   } catch (error) {

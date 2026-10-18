@@ -26,6 +26,7 @@ export const MODULES = {
   COUPONS: "coupons",
   CONTENT: "content", // banners, sliders, fomo
   CONTACT: "contact", // contact/partner form submissions + newsletter subscribers
+  BOOKINGS: "bookings", // barista-training + coffee-machine-rental requests (Nigeria only)
   BLOG: "blog",
   CRM: "crm",
   PRODUCT_REQUESTS: "productRequests",
@@ -106,6 +107,12 @@ export const PERMISSIONS = [
   // sees only their own country's messages/subscribers via countryScope.
   { key: "contact.view", module: MODULES.CONTACT, description: "View contact/partner form submissions and newsletter subscribers", hqOnly: false },
   { key: "contact.manage", module: MODULES.CONTACT, description: "Update contact message status (triage)", hqOnly: false },
+
+  // Bookings — barista training / machine rental requests from the storefront.
+  // Nigeria-only: the routes also carry nigeriaOnly, so a foreign
+  // (country-scoped, non-NG) admin is refused even if they hold these keys.
+  { key: "bookings.view", module: MODULES.BOOKINGS, description: "View barista-training / machine-rental requests (Nigeria)", hqOnly: false },
+  { key: "bookings.manage", module: MODULES.BOOKINGS, description: "Respond to and update barista-training / machine-rental requests (Nigeria)", hqOnly: false },
 
   // Blog
   { key: "blog.view", module: MODULES.BLOG, description: "View blog", hqOnly: false },

@@ -7,7 +7,7 @@
 import {
   ChatError, startConversation, resumeForUser, authVisitor, touchPresence, getMessages, publicView,
   handleVisitorMessage, visitorRequestsHuman, saveContact, rateConversation, closeConversation,
-  getSettings, resolveLanguage, EMAIL_RX,
+  getSettings, resolveLanguage, setConversationLanguage, EMAIL_RX,
 } from "../services/chat/chatService.js";
 import { chatStrings, fmt } from "../services/chat/chatStrings.js";
 import { syncByCode } from "../services/countryService.js";
@@ -22,6 +22,8 @@ const ok = (res, data) => res.json({ success: true, error: false, data });
 async function visitorConv(req) {
   const conv = await authVisitor(req.params.id, req.headers["x-chat-token"]);
   if (!conv) throw new ChatError("Conversation not found", 404, "NOT_FOUND");
+  // follow the storefront language (widget sends it on every call)
+  await setConversationLanguage(conv, req.headers["x-language"] || req.body?.language || req.query?.language);
   return conv;
 }
 
@@ -51,6 +53,7 @@ export async function createOrResume(req, res) {
     if (b.resume?.id && b.resume?.token) {
       const conv = await authVisitor(b.resume.id, b.resume.token);
       if (conv && conv.status !== "closed") {
+        await setConversationLanguage(conv, b.language);
         await touchPresence(conv);
         return ok(res, { conversation: publicView(conv), token: b.resume.token, messages: await getMessages(conv, { after: 0 }) });
       }
@@ -58,6 +61,7 @@ export async function createOrResume(req, res) {
     // 2) logged-in customer with an open conversation
     const resumed = await resumeForUser(req.user && req.user.role !== "ADMIN" ? req.user : null, country.code);
     if (resumed) {
+      await setConversationLanguage(resumed.conversation, b.language);
       await touchPresence(resumed.conversation);
       return ok(res, { conversation: publicView(resumed.conversation), token: resumed.token, messages: await getMessages(resumed.conversation, { after: 0 }) });
     }

@@ -223,7 +223,7 @@ export async function startConversation({ country, language, channel = "web", vi
   });
   const S = chatStrings(lang);
   const greeting = settings.welcome?.[lang] || fmt(S.welcome, { brand: brandFor(country) });
-  await addMessage(conv, { senderType: "ai", sender: { name: brandFor(country) }, text: greeting, language: lang });
+  await addMessage(conv, { senderType: "ai", sender: { name: brandFor(country) }, text: greeting, kind: "greeting", language: lang });
   return { conversation: conv, token };
 }
 
@@ -248,10 +248,36 @@ export async function touchPresence(conv) {
   await ChatConversation.updateOne({ _id: conv._id }, { $set: { visitorLastSeenAt: new Date() } });
 }
 
+/**
+ * Keep the conversation in the language the visitor is browsing in NOW.
+ * The language is fixed when a chat is created, but the storefront language can
+ * change afterwards (language switch = page reload → chat is resumed). Without
+ * this, AI replies and system messages stay in the original language.
+ * Returns true if the language changed.
+ */
+export async function setConversationLanguage(conv, requested) {
+  const lang = String(requested || "").toLowerCase();
+  if (!lang || !ALL_SUPPORTED_LANGUAGES.includes(lang) || lang === conv.language) return false;
+  await ChatConversation.updateOne({ _id: conv._id }, { $set: { language: lang } });
+  conv.language = lang;
+  return true;
+}
+
+// The greeting is stored text, so it would stay in the language the chat was
+// opened in. For visitors we re-render it in the conversation's CURRENT language
+// (kind "greeting"; older chats stored it as the first AI text message).
+const isGreeting = (m) => m.kind === "greeting" || (m.seq === 1 && m.senderType === "ai" && m.kind === "text");
+
 export async function getMessages(conv, { after = 0, admin = false, limit = 200 } = {}) {
   const q = { conversation: conv._id, seq: { $gt: Number(after) || 0 } };
   if (!admin) q.internal = { $ne: true };
   const msgs = await ChatMessage.find(q).sort({ seq: 1 }).limit(limit).lean();
+  if (!admin && msgs.some(isGreeting)) {
+    const country = syncByCode(conv.countryCode);
+    const settings = await getSettings();
+    const welcome = settings.welcome?.[conv.language] || fmt(chatStrings(conv.language).welcome, { brand: brandFor(country) });
+    for (const m of msgs) if (isGreeting(m)) m.text = welcome;
+  }
   return msgs.map((m) => messageView(m, { admin }));
 }
 

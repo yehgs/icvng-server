@@ -13,7 +13,7 @@ const messageSchema = new mongoose.Schema(
       image: { type: String, default: "" },
     },
     text: { type: String, required: true, maxlength: 4000 },
-    kind: { type: String, enum: ["text", "escalation", "handoff", "joined", "closed", "contact_request"], default: "text" },
+    kind: { type: String, enum: ["text", "escalation", "handoff", "joined", "closed", "contact_request", "greeting"], default: "text" },
     internal: { type: Boolean, default: false }, // admin-only note, never sent to the visitor
     language: { type: String, default: "" },
   },
