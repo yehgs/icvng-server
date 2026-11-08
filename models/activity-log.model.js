@@ -12,6 +12,17 @@ const activityLogSchema = new mongoose.Schema(
       type: String,
       required: true,
       enum: [
+        // Seasonal campaigns
+        "CAMPAIGN_CREATE",
+        "CAMPAIGN_UPDATE",
+        "CAMPAIGN_PUBLISH",
+        "CAMPAIGN_PAUSE",
+        "CAMPAIGN_RESUME",
+        "CAMPAIGN_END",
+        "CAMPAIGN_ARCHIVE",
+        "CAMPAIGN_DELETE",
+        "CAMPAIGN_RULE_CHANGE",
+        "CAMPAIGN_BLOCK_CHANGE",
         // Products
         "PRODUCT_CREATE",
         "PRODUCT_UPDATE",
@@ -108,6 +119,7 @@ const activityLogSchema = new mongoose.Schema(
         "Setting",
         "Blog",
         "Warehouse",
+        "Campaign",
         "Other",
       ],
       default: "Other",

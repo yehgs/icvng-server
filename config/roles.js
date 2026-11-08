@@ -88,6 +88,9 @@ export const ROLE_DEFINITIONS = {
       "notifications.view", "notifications.manage",
       "activityLogs.view",
       "catalogue.download", "chat.view", "chat.manage",
+      // Seasonal campaigns — full lifecycle, within the manager's own country
+      // (enforced by utils/campaignScope.js, not by this grant).
+      "campaigns.view", "campaigns.manage", "campaigns.publish",
     ],
     isSystem: true,
     hqOnly: false,
@@ -114,6 +117,7 @@ export const ROLE_DEFINITIONS = {
       "support.view", "support.manage",
       "notifications.view",
       "catalogue.download", "chat.view", "chat.manage",
+      "campaigns.view",
     ],
     isSystem: true,
     hqOnly: false,
@@ -140,6 +144,7 @@ export const ROLE_DEFINITIONS = {
       "support.view",
       "notifications.view",
       "catalogue.download", "chat.view", "chat.manage",
+      "campaigns.view",
     ],
     isSystem: true,
     hqOnly: false,
@@ -168,6 +173,7 @@ export const ROLE_DEFINITIONS = {
       "reports.view",
       "notifications.view",
       "activityLogs.view",
+      "campaigns.view",
     ],
     isSystem: true,
     hqOnly: true,
@@ -201,6 +207,8 @@ export const ROLE_DEFINITIONS = {
       "scraper.use",
       "translations.view", "translations.manage",
       "notifications.view",
+      // Seasonal campaigns: drafts only (no campaigns.publish) — a manager publishes.
+      "campaigns.view", "campaigns.manage",
     ],
     isSystem: true,
     hqOnly: true,

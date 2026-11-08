@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { getCampaignContext, priceProductLine } from "../services/campaignPricing.js";
 
 const cartProductSchema = new mongoose.Schema(
   {
@@ -27,6 +28,13 @@ const cartProductSchema = new mongoose.Schema(
     selectedPrice: {
       type: Number,
       default: 0,
+    },
+    // Server-computed campaign pricing for this line (null when no campaign
+    // discount applies). Refreshed every time the cart is read/validated/changed,
+    // so it can never show a badge for a campaign that has ended or been paused.
+    campaignPricing: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
     },
     // Store any additional options or customizations
     customizations: {
@@ -80,8 +88,18 @@ cartProductSchema.virtual("deliveryTimeDescription").get(function () {
   return descriptions[this.priceOption] || "Standard delivery";
 });
 
-// Instance method to update price based on current product pricing
-cartProductSchema.methods.updatePriceFromProduct = async function () {
+// Instance method to update price based on current product pricing.
+//
+// Delegates to the campaign pricing engine (services/campaignPricing.js) — the
+// same function the order-creation paths use, so the cart price, the checkout
+// total and the recorded order price can never disagree. With no campaign the
+// result is the product's own standing discount using the same Math.ceil rule
+// orders always used (previously the cart used an unrounded float here, which
+// could differ from the order price by under ₦1).
+//
+// `countryCode` is the SHOPPER'S storefront country (req.countryCode); without
+// it no campaign can apply and the legacy price is used.
+cartProductSchema.methods.updatePriceFromProduct = async function (opts = {}) {
   await this.populate("productId");
 
   if (!this.productId) {
@@ -89,39 +107,18 @@ cartProductSchema.methods.updatePriceFromProduct = async function () {
   }
 
   const priceOption = this.priceOption || "regular";
-  let price;
+  const product = this.productId.toObject ? this.productId.toObject() : this.productId;
+  const ctx = opts.countryCode
+    ? await getCampaignContext(opts.countryCode)
+    : { countryCode: null, campaigns: new Map(), rules: [], now: new Date() };
 
-  // Get base price based on price option
-  switch (priceOption) {
-    case "3weeks":
-      price =
-        this.productId.price3weeksDelivery ||
-        this.productId.btcPrice ||
-        this.productId.price;
-      break;
-    case "5weeks":
-      price =
-        this.productId.price5weeksDelivery ||
-        this.productId.btcPrice ||
-        this.productId.price;
-      break;
-    case "regular":
-    default:
-      // For regular, use btcPrice first, then price
-      price =
-        this.productId.btcPrice && this.productId.btcPrice > 0
-          ? this.productId.btcPrice
-          : this.productId.price;
-      break;
-  }
+  const pricing = priceProductLine(ctx, product, {
+    priceOption,
+    quantity: this.quantity || 1,
+  });
 
-  // Apply discount if any
-  if (this.productId.discount > 0) {
-    const discountAmount = (price * this.productId.discount) / 100;
-    price = price - discountAmount;
-  }
-
-  this.selectedPrice = price;
+  this.selectedPrice = pricing.finalPrice;
+  this.campaignPricing = pricing.source === "CAMPAIGN" ? pricing : null;
   return this.save();
 };
 

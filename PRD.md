@@ -154,6 +154,13 @@ never cause a data leak or a broken dashboard: on login
 
 ---
 
+### Seasonal campaign access (Addendum 4)
+
+Permissions `campaigns.view` / `campaigns.manage` / `campaigns.publish`. IT & DIRECTOR: all three, every country.
+**MANAGER: all three, assigned country only** (COUNTRY-scoped; a non-COUNTRY manager is Nigeria-only). EDITOR: view + manage
+(drafts only). SALES_MANAGER / SALES / ACCOUNTANT: view only. WAREHOUSE: none. Country is enforced server-side by
+`utils/campaignScope.js` (out-of-territory → 404, wrong-country write → 403) — stricter than the generic `countryScope`.
+
 ## 7. Pricing architecture
 
 Three price fields drive what a customer can actually buy — see
@@ -200,6 +207,14 @@ existing DirectPricing-managed values are restored instead, so they can
 never accidentally zero out an Accountant-set price.
 
 ---
+
+### Campaign pricing (Addendum 4)
+
+Seasonal discounts are computed **only** by `services/campaignPricing.js` (integer kobo, percentage rounded up, best single
+rule wins, never stacked with the product's standing `discount` — whichever is cheaper applies). Special-order (3/5-week)
+and out-of-stock prices are excluded unless a rule opts in. The API attaches `campaignPricing` to products and cart rows;
+clients only display it. Checkout re-prices the cart and answers 409 `PRICE_CHANGED` on a stale subtotal; orders keep an
+immutable `campaignSnapshot`.
 
 ## 8. Content translation (AI-assisted)
 
@@ -616,6 +631,16 @@ Non-exhaustive map of `server/controllers` by domain:
 
 ## 12. Change log (high-signal only — not every commit)
 
+- **Seasonal Campaigns (Black Friday / Christmas / custom) + MANAGER country-scoped access + create-product partner-stock fix** —
+  Reusable, country-scoped campaign engine: admin CRUD (`/dashboard/campaigns`: general, schedule/timezone, validated theme
+  + contrast, banners/content blocks, discount rules, preview, publish/pause/resume/end/archive, audit history), server-authoritative
+  pricing in integer kobo (best single rule, no stacking, special-order/out-of-stock excluded unless opted in), campaign
+  pricing on product/cart/checkout/orders with an immutable per-order `campaignSnapshot`, HTTP 409 `PRICE_CHANGED` on stale
+  carts, storefront + mobile badges/strikethrough/countdown/landing page/snowfall (reduced-motion safe). New permissions
+  `campaigns.view|manage|publish`; MANAGER gets all three for **their assigned country only**; IT/DIRECTOR global.
+  Shared package bumped to `@yehgs/icvng-core` **0.10.0** (`/campaigns` subpath). Also fixed: admin *Create Product* now
+  persists `partnerStock` and `colors`, as Edit always did. Full detail, API contract, permission matrix, rollback and
+  limitations: `PRD_ADDENDUM_4_seasonal_campaigns.md`.
 - **Catalogue PDF, AI chat, i18n audit, menu cue, Tawk.to removal** —
   (1) Admin *Product Catalogue* page + `/api/admin/catalogue` generate a
   printable/downloadable PDF with every filter and per-field toggles (all on,

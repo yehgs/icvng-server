@@ -140,6 +140,31 @@ const orderSchema = new mongoose.Schema(
       required: true,
     },
 
+    // ===== SEASONAL CAMPAIGN SNAPSHOT =====
+    // Immutable record of the campaign discount applied to THIS line at order
+    // time (null when none). Orders never re-read campaign settings, so editing
+    // or ending a campaign later cannot change a historical order.
+    campaignSnapshot: {
+      type: new mongoose.Schema(
+        {
+          campaignId: { type: mongoose.Schema.ObjectId, ref: "Campaign", index: true },
+          campaignName: String,
+          campaignType: String,
+          ruleId: { type: mongoose.Schema.ObjectId, ref: "CampaignDiscountRule" },
+          ruleName: String,
+          discountType: String,
+          discountValue: Number,
+          originalUnitPrice: Number, // NGN base
+          discountPerUnit: Number, // NGN base
+          finalUnitPrice: Number, // NGN base
+          currency: { type: String, default: "NGN" },
+          appliedAt: Date,
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
+
     // ===== PRICING =====
     subTotalAmt: {
       type: Number,

@@ -56,6 +56,7 @@ export const MODULES = {
   PAYMENTS: "payments", // indigenous payment gateway settings (CinetPay etc.)
   CATALOGUE: "catalogue", // printable product catalogue (PDF)
   CHAT: "chat", // AI chatbot + live-agent chat console
+  CAMPAIGNS: "campaigns", // seasonal campaigns (Black Friday, Christmas, custom)
 };
 
 /**
@@ -213,6 +214,16 @@ export const PERMISSIONS = [
   { key: "chat.view", module: MODULES.CHAT, description: "View chat conversations in your scope", hqOnly: false },
   { key: "chat.manage", module: MODULES.CHAT, description: "Reply to, take over, escalate and close chat conversations in your scope", hqOnly: false },
   { key: "chat.settings", module: MODULES.CHAT, description: "Configure the AI chatbot (persona, hours, escalation, alarm)", hqOnly: true },
+
+  // Seasonal campaigns. Capability only — WHOSE campaigns is decided by
+  // utils/campaignScope.js (IT/Director global; Manager & other country-scoped
+  // roles their assigned country; non-scoped HQ roles Nigeria only).
+  //   campaigns.view    → list/read campaigns, rules, content, performance
+  //   campaigns.manage  → create/edit DRAFT campaigns, themes, rules, content
+  //   campaigns.publish → publish/pause/resume/end/archive/delete and edit live ones
+  { key: "campaigns.view", module: MODULES.CAMPAIGNS, description: "View seasonal campaigns, discount rules and performance in your scope", hqOnly: false },
+  { key: "campaigns.manage", module: MODULES.CAMPAIGNS, description: "Create and edit draft seasonal campaigns, themes, discount rules and content", hqOnly: false },
+  { key: "campaigns.publish", module: MODULES.CAMPAIGNS, description: "Publish, pause, end, archive and delete seasonal campaigns", hqOnly: false },
 ];
 
 export const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);

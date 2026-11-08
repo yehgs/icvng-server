@@ -48,6 +48,13 @@ import { resolveGiftCardForCheckout, redeemGiftCardAmount } from "../utils/giftC
 import { getCinetPayConfig } from "../config/paymentRouter.js";
 import { initiateCinetPayPayment, verifyCinetPayTransaction, roundForCinetPay } from "../config/cinetpay.js";
 import PaymentIntentModel from "../models/paymentIntent.model.js";
+import {
+  priceCartLines,
+  checkSubtotalMatches,
+  buildLockedCartLines,
+  serverSubtotalNgn,
+  priceChangedBody,
+} from "../services/campaignPricing.js";
 
 // Order-ID prefix per gateway — kept in one place so
 // createOrderFromGatewayTransaction and each provider's initiation
@@ -72,6 +79,78 @@ const getProductPrice = (product, priceOption = "regular") => {
 const pricewithDiscount = (price, dis = 0) => {
   const discountAmount = Math.ceil((Number(price) * Number(dis)) / 100);
   return Number(price) - discountAmount;
+};
+
+/**
+ * Resolve the unit price + campaign snapshot for ONE order line.
+ *
+ * Payments are priced at INITIATION (campaign engine, server-side) and the
+ * result is locked into the payment metadata as `unit` (NGN) and `cs`
+ * (campaign snapshot). Order creation after the webhook must honour exactly
+ * what the customer was charged, even if the campaign ended or was edited in
+ * between — so a locked `unit` always wins. Transactions initiated before
+ * campaigns shipped carry no `unit` and keep the legacy product-discount math.
+ */
+// Stripe product metadata: flat string values, ≤500 chars each. The campaign
+// snapshot rides on the line's product so the webhook can store it on the order.
+const stripeCampaignMetadata = (snapshot) =>
+  snapshot
+    ? {
+        cs_campaignId: String(snapshot.campaignId),
+        cs_campaignName: String(snapshot.campaignName || "").slice(0, 120),
+        cs_campaignType: String(snapshot.campaignType || ""),
+        cs_ruleId: String(snapshot.ruleId),
+        cs_ruleName: String(snapshot.ruleName || "").slice(0, 120),
+        cs_discountType: String(snapshot.discountType || ""),
+        cs_discountValue: String(snapshot.discountValue ?? ""),
+        cs_original: String(snapshot.originalUnitPrice ?? ""),
+        cs_discount: String(snapshot.discountPerUnit ?? ""),
+        cs_final: String(snapshot.finalUnitPrice ?? ""),
+      }
+    : {};
+
+const campaignSnapshotFromStripeMetadata = (md = {}) =>
+  md.cs_campaignId && mongoose.Types.ObjectId.isValid(md.cs_campaignId)
+    ? {
+        campaignId: md.cs_campaignId,
+        campaignName: md.cs_campaignName,
+        campaignType: md.cs_campaignType,
+        ruleId: mongoose.Types.ObjectId.isValid(md.cs_ruleId) ? md.cs_ruleId : undefined,
+        ruleName: md.cs_ruleName,
+        discountType: md.cs_discountType,
+        discountValue: Number(md.cs_discountValue),
+        originalUnitPrice: Number(md.cs_original),
+        discountPerUnit: Number(md.cs_discount),
+        finalUnitPrice: Number(md.cs_final),
+        currency: "NGN",
+        appliedAt: new Date(),
+      }
+    : null;
+
+const resolveLineUnit = (item) => {
+  const hasLock =
+    item.lockedUnit !== undefined &&
+    item.lockedUnit !== null &&
+    Number.isFinite(Number(item.lockedUnit)) &&
+    Number(item.lockedUnit) >= 0;
+  if (hasLock) {
+    const cs = item.lockedCampaign;
+    return {
+      finalPrice: Number(item.lockedUnit),
+      campaignSnapshot:
+        cs && cs.campaignId
+          ? { ...cs, appliedAt: cs.appliedAt ? new Date(cs.appliedAt) : new Date() }
+          : null,
+    };
+  }
+  const priceOption = item.priceOption || "regular";
+  return {
+    finalPrice: pricewithDiscount(
+      getProductPrice(item.productId, priceOption),
+      item.productId.discount,
+    ),
+    campaignSnapshot: null,
+  };
 };
 
 /**
@@ -216,6 +295,8 @@ async function createOrderFromGatewayTransaction({
         productId: productMap.get(i.productId),
         quantity: i.quantity,
         priceOption: i.priceOption || "regular",
+        lockedUnit: i.unit,
+        lockedCampaign: i.cs || null,
       }))
       .filter((i) => i.productId); // drop any product deleted since checkout
   } else {
@@ -285,11 +366,7 @@ async function createOrderFromGatewayTransaction({
   // ✅ Create orders - ONE ORDER PER PRODUCT, but GROUPED
   const orderItems = cartItems.map((item, index) => {
     const priceOption = item.priceOption || "regular";
-    const productPrice = getProductPrice(item.productId, priceOption);
-    const finalPrice = pricewithDiscount(
-      productPrice,
-      item.productId.discount,
-    );
+    const { finalPrice, campaignSnapshot } = resolveLineUnit(item);
     const itemSubtotal = finalPrice * item.quantity;
     const itemTotal = itemSubtotal + shippingCostPerItem;
 
@@ -337,6 +414,7 @@ async function createOrderFromGatewayTransaction({
       },
       quantity: item.quantity,
       unitPrice: finalPrice,
+      campaignSnapshot,
 
       // Individual pricing
       subTotalAmt: itemSubtotal,
@@ -674,6 +752,19 @@ export async function paystackPaymentController(request, response) {
 
     const txRef = `PSK-${Date.now()}-${userId}`;
 
+    // ── Authoritative pricing (seasonal campaigns) ───────────────────────
+    // Prices are recomputed HERE from the database and the campaign engine;
+    // the client's totalAmt is only used to detect a stale cart. The amount
+    // actually charged is the server's, and the locked per-line prices go into
+    // the metadata so the order created after the webhook matches the charge.
+    const pricedCart = await priceCartLines(cartItems, request.countryCode || "NG");
+    const priceCheck = checkSubtotalMatches(Number(totalAmt) - Number(shippingCost || 0), pricedCart);
+    if (!priceCheck.ok) {
+      return response.status(409).json(priceChangedBody(priceCheck));
+    }
+    const lockedCartLines = buildLockedCartLines(pricedCart);
+    const authoritativeTotal = serverSubtotalNgn(pricedCart) + Number(shippingCost || 0);
+
     // ── Gift card (optional, partial or full) ───────────────────────────
     // Resolved here (not deducted yet — see utils/giftCardCheckout.js) so
     // the amount actually charged to Paystack is already net of it. The
@@ -681,12 +772,12 @@ export async function paystackPaymentController(request, response) {
     // verify step to redeem — same "decide now, confirm later" pattern
     // already used for the cart snapshot below.
     let giftCardApplied = null;
-    let chargeAmount = totalAmt;
+    let chargeAmount = authoritativeTotal;
     if (giftCardCode) {
       try {
         const resolved = await resolveGiftCardForCheckout({
           code: giftCardCode,
-          orderAmount: totalAmt,
+          orderAmount: authoritativeTotal,
           currency: "NGN",
           countryCode: request.countryCode || "NG",
         });
@@ -744,13 +835,7 @@ export async function paystackPaymentController(request, response) {
         // cart changes or gets cleared in between, the order used to be
         // lost with zero record of it anywhere. Same pattern the guest
         // checkout flow already uses successfully.
-        cartItemsJSON: JSON.stringify(
-          cartItems.map((item) => ({
-            productId: item.productId?._id?.toString() || item.productId,
-            quantity: item.quantity,
-            priceOption: item.priceOption || "regular",
-          })),
-        ),
+        cartItemsJSON: JSON.stringify(lockedCartLines),
       },
     };
 
@@ -805,6 +890,7 @@ export async function cinetpayPaymentController(request, response) {
       shippingMethodId,
       currency,
       giftCardCode,
+      originalAmounts,
     } = request.body;
 
     const initCountry = request.countryCode || "NG";
@@ -848,6 +934,15 @@ export async function cinetpayPaymentController(request, response) {
     }
 
     const txRef = `CTP-${Date.now()}-${userId}`;
+
+    // Authoritative pricing (seasonal campaigns): reprice the cart server-side,
+    // reject a stale cart, and lock the charged unit prices into the intent.
+    const pricedCart = await priceCartLines(cartItems, initCountry);
+    const priceCheck = checkSubtotalMatches(originalAmounts?.subTotalAmt, pricedCart);
+    if (!priceCheck.ok) {
+      return response.status(409).json(priceChangedBody(priceCheck));
+    }
+    const lockedCartLines = buildLockedCartLines(pricedCart);
 
     // ── Gift card (optional, partial or full) — same pattern as Paystack ──
     let giftCardApplied = null;
@@ -896,13 +991,7 @@ export async function cinetpayPaymentController(request, response) {
       }),
       countryCode: initCountry,
       currencyCode: resolvedCurrency,
-      cartItemsJSON: JSON.stringify(
-        cartItems.map((item) => ({
-          productId: item.productId?._id?.toString() || item.productId,
-          quantity: item.quantity,
-          priceOption: item.priceOption || "regular",
-        })),
-      ),
+      cartItemsJSON: JSON.stringify(lockedCartLines),
     };
 
     await PaymentIntentModel.create({
@@ -1332,16 +1421,21 @@ export async function stripePaymentController(request, response) {
 
     const line_items = [];
 
-    for (const item of cartItems) {
-      const priceOption = item.priceOption || "regular";
-      const productPrice = getProductPrice(item.productId, priceOption);
-      const finalPriceNGN = pricewithDiscount(
-        productPrice,
-        item.productId.discount,
-      );
+    // Authoritative pricing (seasonal campaigns): the NGN price of each line is
+    // computed by the server engine, the client's NGN subtotal only serves to
+    // detect a stale cart, and the proportion denominator is the SERVER subtotal.
+    const pricedCart = await priceCartLines(cartItems, stripeCountry);
+    const priceCheck = checkSubtotalMatches(originalAmounts?.subTotalAmt, pricedCart);
+    if (!priceCheck.ok) {
+      return response.status(409).json(priceChangedBody(priceCheck));
+    }
+    const serverSubtotalNGN = serverSubtotalNgn(pricedCart);
 
-      const itemProportion =
-        (finalPriceNGN * item.quantity) / originalAmounts.subTotalAmt;
+    for (const { item, pricing, snapshot } of pricedCart) {
+      const priceOption = item.priceOption || "regular";
+      const finalPriceNGN = pricing.finalPrice;
+
+      const itemProportion = (finalPriceNGN * item.quantity) / serverSubtotalNGN;
       const itemPriceConverted = (subTotalAmt * itemProportion) / item.quantity;
 
       line_items.push({
@@ -1353,6 +1447,7 @@ export async function stripePaymentController(request, response) {
             metadata: {
               productId: item.productId._id.toString(),
               priceOption: priceOption,
+              ...stripeCampaignMetadata(snapshot),
             },
           },
           unit_amount: Math.round(itemPriceConverted * 100),
@@ -1442,7 +1537,7 @@ export async function stripePaymentController(request, response) {
         fromCurrency: exchangeRateInfo.fromCurrency,
         toCurrency: exchangeRateInfo.toCurrency,
         rateSource: exchangeRateInfo.rateSource,
-        originalSubtotalNGN: originalAmounts.subTotalAmt.toString(),
+        originalSubtotalNGN: serverSubtotalNGN.toString(),
         originalShippingNGN: originalAmounts.shippingCost.toString(),
         originalTotalNGN: originalAmounts.totalAmt.toString(),
         itemCount: cartItems.length.toString(),
@@ -1601,6 +1696,7 @@ async function getOrderProductItemsFromStripe({
       },
       quantity: item.quantity,
       unitPrice: amountInTargetCurrency / item.quantity,
+      campaignSnapshot: campaignSnapshotFromStripeMetadata(product.metadata),
 
       // Pricing
       subTotalAmt: amountInTargetCurrency,
@@ -1682,6 +1778,7 @@ export async function DirectBankTransferOrderController(request, response) {
       currency = "NGN",
       bankDetails,
       giftCardCode,
+      subTotalAmt: clientSubTotalAmt,
     } = request.body;
 
     // Country-scoped: which currency THIS request's storefront actually
@@ -1754,6 +1851,14 @@ export async function DirectBankTransferOrderController(request, response) {
       }
     }
 
+    // Authoritative pricing (seasonal campaigns): recompute every line from the
+    // database + campaign engine, reject a stale cart, snapshot the discount.
+    const pricedCart = await priceCartLines(cartItems, request.countryCode || "NG");
+    const priceCheck = checkSubtotalMatches(clientSubTotalAmt, pricedCart);
+    if (!priceCheck.ok) {
+      return response.status(409).json(priceChangedBody(priceCheck));
+    }
+
     let shippingMethod = null;
     if (shippingMethodId) {
       shippingMethod = await ShippingMethodModel.findById(shippingMethodId);
@@ -1793,11 +1898,8 @@ export async function DirectBankTransferOrderController(request, response) {
 
     const orderItems = cartItems.map((item, index) => {
       const priceOption = item.priceOption || "regular";
-      const productPrice = getProductPrice(item.productId, priceOption);
-      const finalPrice = pricewithDiscount(
-        productPrice,
-        item.productId.discount,
-      );
+      const finalPrice = pricedCart[index].pricing.finalPrice;
+      const campaignSnapshot = pricedCart[index].snapshot;
       const itemSubtotal = finalPrice * item.quantity;
       const itemTotal = itemSubtotal + shippingCostPerItem;
 
@@ -1838,6 +1940,7 @@ export async function DirectBankTransferOrderController(request, response) {
         },
         quantity: item.quantity,
         unitPrice: finalPrice,
+        campaignSnapshot,
 
         // Pricing
         subTotalAmt: itemSubtotal,

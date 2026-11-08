@@ -80,7 +80,7 @@ export const addToCartItemController = async (request, response) => {
       checkItemCart.quantity = newQuantity;
 
       // Update selected price based on current product pricing
-      await checkItemCart.updatePriceFromProduct();
+      await checkItemCart.updatePriceFromProduct({ countryCode: request.countryCode });
 
       const updatedItem = await checkItemCart.save();
 
@@ -101,7 +101,7 @@ export const addToCartItemController = async (request, response) => {
     });
 
     // Update selected price from product
-    await cartItem.updatePriceFromProduct();
+    await cartItem.updatePriceFromProduct({ countryCode: request.countryCode });
 
     const save = await cartItem.save();
 
@@ -177,7 +177,7 @@ export const getCartItemController = async (request, response) => {
     // Update prices for all cart items to reflect current product pricing
     for (const item of validCartItems) {
       try {
-        await item.updatePriceFromProduct();
+        await item.updatePriceFromProduct({ countryCode: request.countryCode });
       } catch (error) {
         console.error('Error updating cart item price:', error);
       }
@@ -283,7 +283,7 @@ export const updateCartItemQtyController = async (request, response) => {
 
     // Update quantity and price
     cartItem.quantity = qty;
-    await cartItem.updatePriceFromProduct();
+    await cartItem.updatePriceFromProduct({ countryCode: request.countryCode });
     const updatedItem = await cartItem.save();
 
     return response.json({
@@ -410,7 +410,7 @@ export const validateCartController = async (request, response) => {
 
       // Update price to reflect current pricing
       try {
-        await item.updatePriceFromProduct();
+        await item.updatePriceFromProduct({ countryCode: request.countryCode });
         await item.save();
       } catch (error) {
         console.error('Error updating item price during validation:', error);
@@ -508,7 +508,7 @@ export const migrateGuestCartController = async (request, response) => {
         if (existingItem) {
           // Update quantity
           existingItem.quantity += quantity;
-          await existingItem.updatePriceFromProduct();
+          await existingItem.updatePriceFromProduct({ countryCode: request.countryCode });
           await existingItem.save();
         } else {
           // Create new cart item
@@ -519,7 +519,7 @@ export const migrateGuestCartController = async (request, response) => {
             priceOption: priceOption,
           });
 
-          await newCartItem.updatePriceFromProduct();
+          await newCartItem.updatePriceFromProduct({ countryCode: request.countryCode });
           await newCartItem.save();
 
           // Add to user's shopping cart

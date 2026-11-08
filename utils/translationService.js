@@ -86,6 +86,10 @@ export const TRANSLATABLE_FIELDS = {
   tag: ["name"],
   attribute: ["name"],
   color: ["name"],
+  // Seasonal campaigns (customer-facing copy only).
+  campaign: ["name", "tagline", "description"],
+  campaignRule: ["label"],
+  campaignBlock: ["heading", "subtitle", "ctaLabel"],
 };
 
 // PHASE 6: SitePage (`page` entityType) content is a free-form, admin-grown

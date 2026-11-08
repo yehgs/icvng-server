@@ -242,7 +242,7 @@ previously HQ-only), `controllers/uiTranslation.controller.js`,
 `route/uiTranslation.route.js` (country-scoped language restriction +
 the earlier hqOnly fix).
 
-**Shared package** (`@yehgs/icvng-core`, bumped to 0.9.4):
+**Shared package** (`@yehgs/icvng-core`, bumped to 0.9.4 for this work; now 0.10.0 — see PRD_ADDENDUM_4_seasonal_campaigns.md):
 `src/checkout/gatewayOrder.js`, `src/api/endpoints.js`.
 
 **Client:** `context/CountryContext.jsx`, `pages/CheckoutPage.jsx`,

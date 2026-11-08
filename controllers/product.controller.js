@@ -131,7 +131,7 @@ const buildPurchasableOr = async () => {
 // STRICT — for every listing endpoint (home, shop, search, carousel,
 // category pages, related products, featured, etc.). A discontinued
 // product never appears here even if its pricing happens to still qualify.
-const buildClientVisibilityFilter = async () => ({
+export const buildClientVisibilityFilter = async () => ({
   publish: "PUBLISHED",
   productAvailability: { $ne: false },
   $or: await buildPurchasableOr(),
@@ -222,6 +222,30 @@ const PRICING_FIELDS = [
 // warehouseStock.onlineStock is nested, so it's handled separately from the
 // flat PRICING_FIELDS list wherever it's stripped/sanitized.
 
+// Builds the partnerStock sub-document persisted on CREATE. Mirrors the rules
+// updateProductDetails applies on edit, so a product behaves identically whether
+// partner stock was set when it was created or added later:
+//   - only Nigeria-scoped / global admins may set it (canManagePartnerStock);
+//   - supplier "" / undefined -> null (the form's default is "");
+//   - quantity is coerced to a non-negative number, and forced to 0 when the
+//     toggle is off so a stale value can't leak into the online stock.
+// Previously createProductController never persisted partnerStock at all (it
+// only fed it to the purchasability check), so it silently vanished on create.
+export const buildPartnerStockForCreate = (input, user, countryScope) => {
+  const canManage = !countryScope || countryScope === "NG";
+  const enabled = canManage && input?.enabled === true;
+  const qty = Number(input?.quantity);
+  const supplier = input?.supplier?._id || input?.supplier || null;
+  return {
+    enabled,
+    quantity: enabled && Number.isFinite(qty) && qty > 0 ? qty : 0,
+    supplier: enabled && supplier ? supplier : null,
+    notes: enabled && typeof input?.notes === "string" ? input.notes : "",
+    lastUpdated: new Date(),
+    updatedBy: user?._id,
+  };
+};
+
 export const createProductController = async (request, response) => {
   try {
     const {
@@ -266,6 +290,7 @@ export const createProductController = async (request, response) => {
       seoDescription,
       publish,
       relatedProducts,
+      colors,
       slug,
     } = request.body;
 
@@ -333,7 +358,12 @@ export const createProductController = async (request, response) => {
     // created with 0 pricing, which will also force it to DRAFT below) —
     // UNLESS this product is toggled as a partner/supplier product, in
     // which case pricing is supplier-driven and any role may set it.
-    const isPartnerProduct = request.body.partnerStock?.enabled === true;
+    const partnerStock = buildPartnerStockForCreate(
+      request.body.partnerStock,
+      request.user,
+      request.countryScope,
+    );
+    const isPartnerProduct = partnerStock.enabled === true;
     const allowPricing = canSetPricing(request.user, isPartnerProduct);
     const effectiveBtbPrice = allowPricing ? btbPrice || 0 : 0;
     const effectiveBtcPrice = allowPricing ? btcPrice || 0 : 0;
@@ -355,7 +385,7 @@ export const createProductController = async (request, response) => {
         btcPrice: effectiveBtcPrice,
         stock: stock || 0,
         warehouseStock: { enabled: false }, // not settable from this form; falls back to `stock`
-        partnerStock: request.body.partnerStock,
+        partnerStock,
         price3weeksDelivery: effectivePrice3weeks,
         price5weeksDelivery: effectivePrice5weeks,
       },
@@ -398,7 +428,9 @@ export const createProductController = async (request, response) => {
         ? attributes.filter((v) => v && v !== "")
         : attributes,
       unit,
+      colors: Array.isArray(colors) ? colors.filter((v) => v && v !== "") : [],
       stock: stock || 0,
+      partnerStock,
       productAvailability:
         productAvailability !== undefined ? productAvailability : true,
       price: price || 0,
