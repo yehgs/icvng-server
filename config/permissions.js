@@ -57,6 +57,8 @@ export const MODULES = {
   CATALOGUE: "catalogue", // printable product catalogue (PDF)
   CHAT: "chat", // AI chatbot + live-agent chat console
   CAMPAIGNS: "campaigns", // seasonal campaigns (Black Friday, Christmas, custom)
+  MARKETING: "marketing", // bulk email marketing to customers (country-scoped)
+  HR: "hr", // staff records, attendance, leave, appraisals, payroll (country-scoped)
 };
 
 /**
@@ -224,6 +226,27 @@ export const PERMISSIONS = [
   { key: "campaigns.view", module: MODULES.CAMPAIGNS, description: "View seasonal campaigns, discount rules and performance in your scope", hqOnly: false },
   { key: "campaigns.manage", module: MODULES.CAMPAIGNS, description: "Create and edit draft seasonal campaigns, themes, discount rules and content", hqOnly: false },
   { key: "campaigns.publish", module: MODULES.CAMPAIGNS, description: "Publish, pause, end, archive and delete seasonal campaigns", hqOnly: false },
+  //   campaigns.discounts → add/edit/pause/remove DISCOUNT RULES only (the Discounts tab),
+  //                         on campaigns in the holder's country — including live ones.
+  //                         Cannot create/edit/publish the campaign, theme or content.
+  { key: "campaigns.discounts", module: MODULES.CAMPAIGNS, description: "Create, edit, pause and remove discount rules of seasonal campaigns in your country (Discounts tab only)", hqOnly: false },
+
+  // Email marketing. Capability only — WHOSE customers is decided by
+  // utils/featureScope.js (IT/Director global; Manager/Sales/Editor their own country).
+  //   marketing.view   → list/read email campaigns, preview, delivery stats
+  //   marketing.manage → create/edit/duplicate/cancel DRAFT email campaigns, test-send
+  //   marketing.send   → send to the audience (bulk)
+  { key: "marketing.view", module: MODULES.MARKETING, description: "View email marketing campaigns and delivery stats in your country", hqOnly: false },
+  { key: "marketing.manage", module: MODULES.MARKETING, description: "Create and edit email marketing campaigns and send test emails", hqOnly: false },
+  { key: "marketing.send", module: MODULES.MARKETING, description: "Send email marketing campaigns to customers in your country", hqOnly: false },
+
+  // Human resources. Sensitive: personal, health, bank and salary data.
+  //   hr.view    → fetch/search staff records, attendance, leave, appraisals, offices
+  //   hr.manage  → create/edit staff, offices, holidays, leave decisions, appraisals
+  //   hr.payroll → payroll runs, payslips, payroll settings (logo + signature)
+  { key: "hr.view", module: MODULES.HR, description: "View and search staff records, attendance, leave and appraisals in your country", hqOnly: false },
+  { key: "hr.manage", module: MODULES.HR, description: "Create and edit staff records, offices, holidays, leave and appraisals", hqOnly: false },
+  { key: "hr.payroll", module: MODULES.HR, description: "Create, preview, download and send payroll and payslips; manage payroll settings", hqOnly: false },
 ];
 
 export const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);

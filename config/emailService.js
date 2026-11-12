@@ -124,7 +124,7 @@ function resendApiKey(settings, countryApiKey) {
  * POST, and this keeps the dependency surface — and the install step for
  * whoever deploys — at zero. Node 18+ ships fetch.
  */
-async function sendViaResend({ apiKey, from, to, subject, html, replyTo }) {
+async function sendViaResend({ apiKey, from, to, subject, html, replyTo, attachments }) {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -137,6 +137,9 @@ async function sendViaResend({ apiKey, from, to, subject, html, replyTo }) {
       subject,
       html,
       ...(replyTo ? { reply_to: replyTo } : {}),
+      ...(attachments?.length
+        ? { attachments: attachments.map((a) => ({ filename: a.filename, content: Buffer.from(a.content).toString("base64") })) }
+        : {}),
     }),
   });
 
@@ -189,7 +192,7 @@ function getTransporter(settings, countryCode, fromEmail) {
 }
 
 async function sendViaSmtp({
-  settings, countryCode, from, fromEmail, to, subject, html, replyTo,
+  settings, countryCode, from, fromEmail, to, subject, html, replyTo, attachments,
 }) {
   const transporter = getTransporter(settings, countryCode, fromEmail);
   if (!transporter) {
@@ -201,6 +204,9 @@ async function sendViaSmtp({
     subject,
     html,
     ...(replyTo ? { replyTo } : {}),
+    ...(attachments?.length
+      ? { attachments: attachments.map((a) => ({ filename: a.filename, content: Buffer.from(a.content), contentType: a.contentType })) }
+      : {}),
   });
   return { messageId: info.messageId, provider: "SMTP" };
 }
@@ -230,6 +236,7 @@ async function recordResult({ ok, provider, error }) {
  *   html: string,
  *   replyTo?: string,
  *   forceProvider?: "RESEND" | "SMTP",   // test-send only
+ *   attachments?: Array<{ filename: string, content: Buffer, contentType?: string }>,
  * }} options
  */
 export async function sendCountryEmail({
@@ -239,6 +246,7 @@ export async function sendCountryEmail({
   html,
   replyTo,
   forceProvider,
+  attachments, // optional: [{ filename, content: Buffer, contentType? }] (payslips etc.)
 }) {
   const settings = await loadSettings();
 
@@ -283,7 +291,7 @@ export async function sendCountryEmail({
         );
       }
       return sendViaResend({
-        apiKey, from, to: sendTo, subject, html, replyTo: finalReplyTo,
+        apiKey, from, to: sendTo, subject, html, replyTo: finalReplyTo, attachments,
       });
     }
     return sendViaSmtp({
@@ -295,6 +303,7 @@ export async function sendCountryEmail({
       subject,
       html,
       replyTo: finalReplyTo,
+      attachments,
     });
   };
 

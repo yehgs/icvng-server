@@ -641,6 +641,7 @@ Non-exhaustive map of `server/controllers` by domain:
   Shared package bumped to `@yehgs/icvng-core` **0.10.0** (`/campaigns` subpath). Also fixed: admin *Create Product* now
   persists `partnerStock` and `colors`, as Edit always did. Full detail, API contract, permission matrix, rollback and
   limitations: `PRD_ADDENDUM_4_seasonal_campaigns.md`.
+- **Campaign access/theming, Email Marketing, HR module (Addendum 5):** country-scoped Manager/Accountant/Editor access to campaigns (Accountant = Discounts tab only), campaign colours across the whole storefront/app, bulk Email Marketing (IT/Director global; Manager/Sales/Editor country-scoped), and the HR module (staff, attendance with geolocation, leave, appraisals, payroll PDFs; IT/Director/HR only). See `PRD_ADDENDUM_5_hr_marketing_access_theming.md`.
 - **Catalogue PDF, AI chat, i18n audit, menu cue, Tawk.to removal** —
   (1) Admin *Product Catalogue* page + `/api/admin/catalogue` generate a
   printable/downloadable PDF with every filter and per-field toggles (all on,

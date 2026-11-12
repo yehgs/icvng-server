@@ -57,6 +57,8 @@ import productRequestRouter from "./route/productRequest.route.js";
 import wishlistRouter from "./route/wishlist.route.js";
 import compareRouter from "./route/compare.route.js";
 import campaignRouter from "./route/campaign.route.js";
+import hrRouter from "./route/hr.route.js";
+import marketingRouter from "./route/marketing.route.js";
 import campaignPricingResponse from "./middleware/campaignPricingResponse.js";
 import adminAuthRouter from "./route/admin-auth.route.js";
 import adminUserRouter from "./route/admin-user.route.js";
@@ -294,6 +296,8 @@ app.use("/api/product-request", productRequestRouter);
 app.use("/api/wishlist", campaignPricingResponse, wishlistRouter);
 app.use("/api/compare", campaignPricingResponse, compareRouter);
 app.use("/api/campaign", campaignRouter);
+app.use("/api/marketing", marketingRouter);
+app.use("/api/hr", hrRouter);
 app.use("/api/admin/auth", adminAuthRouter);
 app.use("/api/admin/user", adminUserRouter);
 // Was defined (server/route/foreign-admin.route.js) but never mounted —

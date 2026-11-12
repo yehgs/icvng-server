@@ -56,6 +56,7 @@ const isId = (v) => mongoose.Types.ObjectId.isValid(v);
 const actorName = (u) => u?.name || u?.email || "";
 
 const canPublish = (user) => userHasPermission(user, "campaigns.publish");
+const canEditDiscounts = (user) => userHasPermission(user, "campaigns.discounts");
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function scopeOr403(req, res) {
@@ -89,6 +90,19 @@ function blockedByDraftRule(req, res, campaign) {
   if (campaign.publishState === "DRAFT") return false;
   fail(res, 403, "Only DRAFT campaigns can be changed with your role. Ask a manager to change a live, paused or archived campaign.");
   return true;
+}
+
+/**
+ * Discount-rule mutations. Publishers (Manager/IT/Director) and holders of
+ * campaigns.discounts (Accountant) may change rules on LIVE/paused campaigns
+ * too — an accountant adjusts the posted season's discounts. Everyone else with
+ * campaigns.manage (Editor) is limited to DRAFT campaigns. Archived campaigns
+ * stay read-only for all (checked by the callers). Country scope is enforced
+ * by loadCampaign/loadRule before this runs. Returns true when blocked.
+ */
+function blockedForRuleChange(req, res, campaign) {
+  if (canEditDiscounts(req.user)) return false;
+  return blockedByDraftRule(req, res, campaign);
 }
 
 function pushHistory(doc, req, action, note = "", changes) {
@@ -167,6 +181,7 @@ export const getCampaignMeta = async (req, res) => {
       permissions: {
         manage: userHasPermission(req.user, "campaigns.manage"),
         publish: canPublish(req.user),
+        discounts: canEditDiscounts(req.user) || canPublish(req.user),
       },
       serverTime: new Date().toISOString(),
     });
@@ -557,7 +572,7 @@ export const createRule = async (req, res) => {
     const loaded = await loadCampaign(req, res, req.params.id);
     if (!loaded) return;
     const { doc: campaign } = loaded;
-    if (blockedByDraftRule(req, res, campaign)) return;
+    if (blockedForRuleChange(req, res, campaign)) return;
     if (campaign.publishState === "ARCHIVED") return fail(res, 409, "Archived campaigns are read-only.");
 
     const { data, errors } = validateRuleInput(req.body);
@@ -600,7 +615,7 @@ export const updateRule = async (req, res) => {
     const loaded = await loadRule(req, res);
     if (!loaded) return;
     const { rule, campaign } = loaded;
-    if (blockedByDraftRule(req, res, campaign)) return;
+    if (blockedForRuleChange(req, res, campaign)) return;
     if (campaign.publishState === "ARCHIVED") return fail(res, 409, "Archived campaigns are read-only.");
 
     if (req.body.countryCode !== undefined && String(req.body.countryCode).toUpperCase() !== rule.countryCode) {
@@ -633,7 +648,7 @@ export const setRuleStatus = (status) => async (req, res) => {
     const loaded = await loadRule(req, res);
     if (!loaded) return;
     const { rule, campaign } = loaded;
-    if (blockedByDraftRule(req, res, campaign)) return;
+    if (blockedForRuleChange(req, res, campaign)) return;
     rule.status = status;
     rule.updatedBy = req.user._id;
     await rule.save();
@@ -652,7 +667,7 @@ export const deleteRule = async (req, res) => {
     const loaded = await loadRule(req, res);
     if (!loaded) return;
     const { rule, campaign } = loaded;
-    if (blockedByDraftRule(req, res, campaign)) return;
+    if (blockedForRuleChange(req, res, campaign)) return;
     // Orders keep their own immutable snapshot of the rule, so removing it never rewrites history.
     await CampaignDiscountRuleModel.deleteOne({ _id: rule._id });
     pushHistory(campaign, req, "RULE_REMOVED", rule.name);

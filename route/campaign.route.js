@@ -33,6 +33,9 @@ const base = [auth, admin];
 const view = [...base, requirePermission("campaigns.view")];
 const manage = [...base, requirePermission("campaigns.manage")];
 const publish = [...base, requirePermission("campaigns.publish")];
+// Discount rules: campaigns.manage (Editor/Manager) OR campaigns.discounts (Accountant).
+// Whether a LIVE campaign's rules may be touched is decided in the controller.
+const discounts = [...base, requirePermission(["campaigns.manage", "campaigns.discounts"])];
 
 router.get("/admin/meta", ...view, getCampaignMeta);
 router.get("/admin/selector/:kind", ...view, campaignSelector);
@@ -54,12 +57,12 @@ router.post("/admin/:id/archive", ...publish, archiveCampaign);
 router.post("/admin/:id/restore", ...publish, restoreCampaign);
 router.delete("/admin/:id", ...publish, deleteCampaign);
 
-// Discount rules (draft-rule enforced in controller)
-router.post("/admin/:id/rules", ...manage, createRule);
-router.put("/admin/:id/rules/:ruleId", ...manage, updateRule);
-router.post("/admin/:id/rules/:ruleId/activate", ...manage, setRuleStatus("ACTIVE"));
-router.post("/admin/:id/rules/:ruleId/pause", ...manage, setRuleStatus("PAUSED"));
-router.delete("/admin/:id/rules/:ruleId", ...manage, deleteRule);
+// Discount rules (draft-only for Editors, live-capable for Accountant/publishers — enforced in controller)
+router.post("/admin/:id/rules", ...discounts, createRule);
+router.put("/admin/:id/rules/:ruleId", ...discounts, updateRule);
+router.post("/admin/:id/rules/:ruleId/activate", ...discounts, setRuleStatus("ACTIVE"));
+router.post("/admin/:id/rules/:ruleId/pause", ...discounts, setRuleStatus("PAUSED"));
+router.delete("/admin/:id/rules/:ruleId", ...discounts, deleteRule);
 
 // Content blocks
 router.post("/admin/:id/blocks", ...manage, createBlock);

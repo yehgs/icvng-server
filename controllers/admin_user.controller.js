@@ -9,6 +9,9 @@ import passwordRecoveryTemplate from "../utils/passwordRecoveryTemplate.js";
 import generatedOtp from "../utils/generatedOtp.js";
 import { logActivity } from "../utils/activityLogger.js";
 import { HQ_ONLY_SUBROLES, resolveScopeForSubRole } from "../config/roles.js";
+import { userHasPermission } from "../middleware/requirePermission.js";
+import { resolveFeatureScope, resolveCreateCountry } from "../utils/featureScope.js";
+import { validateStaffInput, createStaffRecord, serializeStaff } from "../services/hr/staff.js";
 
 export async function getAllUsersController(request, response) {
   try {
@@ -101,6 +104,7 @@ export async function createUserController(request, response) {
       scope,
       assignedCountry,
       preferredLanguage,
+      staffProfile, // optional HR details captured with the account (HR module)
     } = request.body;
     const adminUser = request.user; // From auth middleware
 
@@ -135,6 +139,21 @@ export async function createUserController(request, response) {
         error: true,
         success: false,
       });
+    }
+
+    // HR details are optional and only accepted from admins who hold hr.manage. They are
+    // validated BEFORE the account exists, so a bad HR payload never leaves a half-created user.
+    if (staffProfile) {
+      if (role !== "ADMIN") {
+        return response.status(400).json({ message: "HR details can only be added for admin staff accounts", error: true, success: false });
+      }
+      if (!userHasPermission(adminUser, "hr.manage")) {
+        return response.status(403).json({ message: "You don't have permission to add HR details", error: true, success: false });
+      }
+      const check = validateStaffInput({ ...staffProfile, fullName: String(staffProfile.fullName || "").trim() || name });
+      if (check.errors.length) {
+        return response.status(400).json({ message: check.errors[0], errors: check.errors, error: true, success: false });
+      }
     }
 
     // Hash password
@@ -206,6 +225,28 @@ export async function createUserController(request, response) {
     const newUser = new UserModel(userPayload);
     const savedUser = await newUser.save();
 
+    // Optional HR record (same country rules as the HR module: own country, or HQ/Nigeria)
+    let staffResult = null;
+    if (staffProfile && role === "ADMIN") {
+      const hrScope = resolveFeatureScope(adminUser);
+      const target = resolvedCountry
+        ? { countryCode: resolvedCountry }
+        : resolveCreateCountry(hrScope, staffProfile.countryCode || (hrScope.isGlobal ? null : undefined));
+      if (target.error) {
+        staffResult = { error: target.error.message };
+      } else {
+        try {
+          const made = await createStaffRecord({ countryCode: target.countryCode, userId: savedUser._id, profile: staffProfile, actorId: adminUser._id, fallbackName: name });
+          staffResult = made.doc ? { staff: serializeStaff(made.doc) } : { error: made.errors?.[0] || "Invalid HR details" };
+          if (made.doc) {
+            logActivity({ userId: adminUser._id, action: "HR_STAFF_CREATE", description: `Added staff ${made.doc.fullName} (${made.doc.employeeId}) with the new account`, resourceType: "Staff", resourceId: made.doc._id, resourceName: made.doc.fullName, req: request });
+          }
+        } catch (e) {
+          staffResult = { error: e.message };
+        }
+      }
+    }
+
     // Send welcome email
     try {
       await sendEmail({
@@ -242,10 +283,13 @@ export async function createUserController(request, response) {
     });
 
     return response.json({
-      message: "User created successfully",
+      message: staffResult?.error
+        ? `User created, but the HR record could not be saved: ${staffResult.error}. Add it from the HR module.`
+        : "User created successfully",
       error: false,
       success: true,
       data: userResponse,
+      ...(staffResult ? { staff: staffResult.staff || null, staffError: staffResult.error || null } : {}),
     });
   } catch (error) {
     console.error("Error in createUserController:", error);

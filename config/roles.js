@@ -91,6 +91,8 @@ export const ROLE_DEFINITIONS = {
       // Seasonal campaigns — full lifecycle, within the manager's own country
       // (enforced by utils/campaignScope.js, not by this grant).
       "campaigns.view", "campaigns.manage", "campaigns.publish",
+      // Email marketing — own country's customers only (utils/featureScope.js).
+      "marketing.view", "marketing.manage", "marketing.send",
     ],
     isSystem: true,
     hqOnly: false,
@@ -145,18 +147,18 @@ export const ROLE_DEFINITIONS = {
       "notifications.view",
       "catalogue.download", "chat.view", "chat.manage",
       "campaigns.view",
+      "marketing.view", "marketing.manage", "marketing.send",
     ],
     isSystem: true,
     hqOnly: false,
   },
 
   // ── Finance ────────────────────────────────────────────────────────────────
-  // Item #9: there is only ever ONE Accountant role, and it's always HQ —
-  // no country/"foreign" Accountant accounts. Every Accountant is managed
-  // from HQ, same as Warehouse. hqOnly: true means the user-creation UI
-  // never offers a "Country Admin" toggle for this subRole, and the backend
-  // forces scope to GLOBAL regardless of what's submitted (see
-  // admin_user.controller.js resolveScopeForSubRole).
+  // ACCOUNTANT is now country-ASSIGNABLE (it used to be hqOnly). A country
+  // Accountant (scope COUNTRY + assignedCountry) manages the DISCOUNT RULES of
+  // that country's seasonal campaigns ("campaigns.discounts") and is blocked
+  // from HQ-only modules like pricing by blockCountryScopedAdmins. Existing
+  // HQ accountants are scope GLOBAL and behave exactly as before.
   ACCOUNTANT: {
     name: "Accountant",
     description: "Finance and pricing — invoices, finance entries, pricing, exchange rates.",
@@ -174,13 +176,16 @@ export const ROLE_DEFINITIONS = {
       "notifications.view",
       "activityLogs.view",
       "campaigns.view",
+      // Discounts tab only: add/edit/pause/remove rules, also on LIVE campaigns, own country.
+      "campaigns.discounts",
     ],
     isSystem: true,
-    hqOnly: true,
+    hqOnly: false,
   },
 
   // ── Content / marketing ────────────────────────────────────────────────────
-  // Item #9: same as Accountant/Warehouse — always HQ, no foreign Editor.
+  // EDITOR is country-ASSIGNABLE (it used to be hqOnly) so a country Editor can
+  // run that country's email marketing. Existing HQ editors stay scope GLOBAL.
   EDITOR: {
     name: "Content Editor",
     description: "Content and catalog — products, catalog, blog, banners, sliders, translations.",
@@ -209,9 +214,10 @@ export const ROLE_DEFINITIONS = {
       "notifications.view",
       // Seasonal campaigns: drafts only (no campaigns.publish) — a manager publishes.
       "campaigns.view", "campaigns.manage",
+      "marketing.view", "marketing.manage", "marketing.send",
     ],
     isSystem: true,
-    hqOnly: true,
+    hqOnly: false,
   },
 
   GRAPHICS: {
@@ -232,7 +238,7 @@ export const ROLE_DEFINITIONS = {
   // ── HR ─────────────────────────────────────────────────────────────────────
   HR: {
     name: "Human Resources",
-    description: "People operations — user management (bounded), stock/warehouse visibility.",
+    description: "People operations — staff records, attendance, leave, appraisals, payroll, user management (bounded).",
     permissions: [
       "dashboard.view",
       "users.view", "users.manage",
@@ -243,6 +249,8 @@ export const ROLE_DEFINITIONS = {
       "reports.view",
       "notifications.view",
       "activityLogs.view",
+      // HR module — own country's staff only (utils/featureScope.js); IT/Director are global.
+      "hr.view", "hr.manage", "hr.payroll",
     ],
     isSystem: true,
     hqOnly: false,
