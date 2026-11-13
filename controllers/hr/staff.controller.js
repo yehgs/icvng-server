@@ -57,22 +57,25 @@ export async function createStaff(req, res) {
   const scope = scopeOr403(req, res); if (!scope) return;
   const target = resolveCreateCountry(scope, req.body.countryCode);
   if (target.error) return fail(res, target.error.status, target.error.message);
-  let userId = null, fallbackName = "";
+  let userId = null, fallbackName = "", fallbackPhoto = "";
   if (req.body.userId) {
     if (!isId(req.body.userId)) return fail(res, 400, "userId is invalid");
-    const u = await User.findOne({ _id: req.body.userId, role: "ADMIN" }).select("name scope assignedCountry subRole");
+    const u = await User.findOne({ _id: req.body.userId, role: "ADMIN" }).select("name scope assignedCountry subRole avatar");
     if (!u) return fail(res, 404, "Admin user not found");
     const uc = u.scope === "COUNTRY" && u.assignedCountry ? u.assignedCountry : target.countryCode;
     if (uc !== target.countryCode && !["IT", "DIRECTOR"].includes(u.subRole)) return fail(res, 400, `This user belongs to ${uc}; create the HR record in that country`);
     if (await HrStaff.exists({ userId: u._id })) return fail(res, 409, "This user already has an HR record");
     userId = u._id; fallbackName = u.name;
+    // The account already has a picture: reuse it unless HR supplied another (https only, like any HR photo).
+    if (/^https:\/\//i.test(u.avatar || "")) fallbackPhoto = u.avatar;
   }
-  const v = validateStaffInput({ ...req.body, fullName: String(req.body.fullName || "").trim() || fallbackName });
+  const profile = { ...req.body, ...(fallbackPhoto && !req.body.photoUrl ? { photoUrl: fallbackPhoto } : {}) };
+  const v = validateStaffInput({ ...profile, fullName: String(req.body.fullName || "").trim() || fallbackName });
   if (v.errors.length) return fail(res, 400, v.errors[0], { errors: v.errors });
   const refErr = await checkRefs(target.countryCode, v.data);
   if (refErr) return fail(res, 400, refErr);
   try {
-    const { doc, errors } = await createStaffRecord({ countryCode: target.countryCode, userId, profile: req.body, actorId: req.user._id, fallbackName });
+    const { doc, errors } = await createStaffRecord({ countryCode: target.countryCode, userId, profile, actorId: req.user._id, fallbackName });
     if (errors) return fail(res, 400, errors[0], { errors });
     await audit(req, "HR_STAFF_CREATE", `Added staff ${doc.fullName} (${doc.employeeId}) in ${doc.countryCode}`, doc);
     return ok(res, serializeStaff(doc));
@@ -120,7 +123,7 @@ export async function staffCandidates(req, res) {
       ? [{ scope: "COUNTRY", assignedCountry: "NG" }, { scope: { $ne: "COUNTRY" } }, { assignedCountry: null }]
       : [{ scope: "COUNTRY", assignedCountry: c.scope.countryCode }];
   }
-  const users = await User.find(where).select("name email subRole scope assignedCountry avatar").sort({ name: 1 }).limit(200).lean();
+  const users = await User.find(where).select("name email subRole scope assignedCountry avatar mobile").sort({ name: 1 }).limit(200).lean();
   return ok(res, users);
 }
 

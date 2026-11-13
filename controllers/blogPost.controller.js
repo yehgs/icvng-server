@@ -3,6 +3,12 @@ import BlogPostModel from "../models/blog-post.model.js";
 import BlogCategoryModel from "../models/blog-category.model.js";
 import BlogTagModel from "../models/blog-tag.model.js";
 import { translateEntity } from "../utils/translationService.js";
+import { pingIndexNow } from "./seo.controller.js";
+
+// Tell IndexNow engines (Bing, Yandex, Seznam, Naver…) about a published post. Fire-and-forget; no-op without INDEXNOW_KEY.
+const notifyIndexNow = (post) => {
+  if (post?.status === "PUBLISHED" && post.slug) pingIndexNow(post.countryCode || "NG", [`/blog/${post.slug}`, "/blogs"]);
+};
 
 // Create blog post
 export async function createBlogPostController(request, response) {
@@ -90,6 +96,8 @@ export async function createBlogPostController(request, response) {
     } catch (err) {
       console.error("[translate] blog post create:", err.message);
     }
+
+    notifyIndexNow(savedPost);
 
     const populatedPost = await BlogPostModel.findById(savedPost._id)
       .populate("category", "name slug")
@@ -316,6 +324,8 @@ export async function updateBlogPostController(request, response) {
         console.error("[translate] blog post update:", err.message);
       }
     }
+
+    notifyIndexNow(updatedPost);
 
     return response.json({
       message: "Blog post updated successfully",

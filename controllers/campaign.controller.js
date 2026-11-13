@@ -798,6 +798,15 @@ export const campaignSelector = async (req, res) => {
     const rx = q ? { $regex: q, $options: "i" } : null;
     const kind = req.params.kind;
 
+    // Resolve ids -> names so the admin can label already-selected targets (chips) instead of showing raw ids.
+    if (req.query.ids) {
+      const ids = String(req.query.ids).split(",").map((x) => x.trim()).filter((x) => /^[a-f\d]{24}$/i.test(x)).slice(0, 100);
+      const model = kind === "products" ? ProductModel : kind === "categories" ? CategoryModel : kind === "brands" ? BrandModel : null;
+      if (!model) return fail(res, 404, "Unknown selector");
+      const rows = await model.find({ _id: { $in: ids } }).select(kind === "products" ? "name sku" : "name").lean();
+      return ok(res, rows.map((r) => ({ _id: r._id, name: r.name, sku: r.sku || "" })));
+    }
+
     if (kind === "products") {
       const filter = {
         publish: { $ne: "ARCHIVED" },

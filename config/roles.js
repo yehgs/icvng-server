@@ -93,6 +93,8 @@ export const ROLE_DEFINITIONS = {
       "campaigns.view", "campaigns.manage", "campaigns.publish",
       // Email marketing — own country's customers only (utils/featureScope.js).
       "marketing.view", "marketing.manage", "marketing.send",
+      // Storefront social-page cards — own country only.
+      "social.view", "social.manage",
     ],
     isSystem: true,
     hqOnly: false,
@@ -215,6 +217,7 @@ export const ROLE_DEFINITIONS = {
       // Seasonal campaigns: drafts only (no campaigns.publish) — a manager publishes.
       "campaigns.view", "campaigns.manage",
       "marketing.view", "marketing.manage", "marketing.send",
+      "social.view", "social.manage",
     ],
     isSystem: true,
     hqOnly: false,

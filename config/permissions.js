@@ -58,6 +58,7 @@ export const MODULES = {
   CHAT: "chat", // AI chatbot + live-agent chat console
   CAMPAIGNS: "campaigns", // seasonal campaigns (Black Friday, Christmas, custom)
   MARKETING: "marketing", // bulk email marketing to customers (country-scoped)
+  SOCIAL: "social", // social-media page cards on the storefront (country-scoped)
   HR: "hr", // staff records, attendance, leave, appraisals, payroll (country-scoped)
 };
 
@@ -241,6 +242,10 @@ export const PERMISSIONS = [
   { key: "marketing.send", module: MODULES.MARKETING, description: "Send email marketing campaigns to customers in your country", hqOnly: false },
 
   // Human resources. Sensitive: personal, health, bank and salary data.
+  // Social pages (Coffee Stories cards). Capability only — country decided by utils/featureScope.js;
+  // only IT/Director may publish an entry for ALL countries.
+  { key: "social.view", module: MODULES.SOCIAL, description: "View social-media page cards shown on the storefront in your country", hqOnly: false },
+  { key: "social.manage", module: MODULES.SOCIAL, description: "Add, edit, reorder and remove social-media page cards for your country", hqOnly: false },
   //   hr.view    → fetch/search staff records, attendance, leave, appraisals, offices
   //   hr.manage  → create/edit staff, offices, holidays, leave decisions, appraisals
   //   hr.payroll → payroll runs, payslips, payroll settings (logo + signature)

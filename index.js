@@ -76,6 +76,7 @@ import emailProviderSettingsRouter from "./route/emailProviderSettings.route.js"
 import warehouseRouter from "./route/warehouse.route.js";
 import shippingRouter from "./route/shipping.route.js";
 import blogRouter from "./route/blog.route.js";
+import socialRouter from "./route/social.route.js";
 import directPricingRouter from "./route/direct-pricing.route.js";
 import customerRouter from "./route/customer.route.js";
 import fomoRouter from "./route/fomo.route.js";
@@ -320,6 +321,7 @@ app.use("/api/email-settings", emailProviderSettingsRouter);
 app.use("/api/warehouse", warehouseRouter);
 app.use("/api/shipping", shippingRouter);
 app.use("/api/blog", blogRouter);
+app.use("/api/social", socialRouter);
 app.use("/api/direct-pricing", directPricingRouter);
 app.use("/api/admin/customers", customerRouter);
 app.use("/api/fomo", campaignPricingResponse, fomoRouter);
