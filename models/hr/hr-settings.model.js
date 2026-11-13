@@ -6,6 +6,9 @@ const settingsSchema = new mongoose.Schema(
     countryCode: { type: String, required: true, unique: true },
     companyName: { type: String, trim: true, maxlength: 120, default: "" },
     companyAddress: { type: String, trim: true, maxlength: 300, default: "" },
+    // Several logos / signatures per country; HR picks one per document. Legacy single fields below mirror the defaults.
+    logos: { type: [{ label: { type: String, trim: true, maxlength: 60 }, url: { type: String, trim: true, maxlength: 500 }, isDefault: { type: Boolean, default: false } }], default: [] },
+    signatures: { type: [{ label: { type: String, trim: true, maxlength: 60 }, url: { type: String, trim: true, maxlength: 500 }, signerName: { type: String, trim: true, maxlength: 100, default: "" }, signerTitle: { type: String, trim: true, maxlength: 100, default: "" }, isDefault: { type: Boolean, default: false } }], default: [] },
     logoUrl: { type: String, trim: true, maxlength: 500, default: "" },
     signatureUrl: { type: String, trim: true, maxlength: 500, default: "" },
     signerName: { type: String, trim: true, maxlength: 100, default: "" },

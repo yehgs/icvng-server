@@ -48,6 +48,8 @@ const payrollSchema = new mongoose.Schema(
     workingDays: { type: Number, default: 22 },
     // Signature + identity captured at approval, so the document always shows who signed
     signedBy: { name: String, title: String, signatureUrl: String, signedAt: Date, userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" } },
+    // Which logo / signature HR chose for this run's documents (ids from HrSettings.logos / .signatures); logoUrl is frozen at approval.
+    branding: { logoId: { type: String, default: "" }, signatureId: { type: String, default: "" }, logoUrl: { type: String, default: "" } },
     approvedAt: { type: Date, default: null },
     paidAt: { type: Date, default: null },
     summarySentAt: { type: Date, default: null },

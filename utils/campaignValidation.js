@@ -186,6 +186,27 @@ export function validateCampaignInput(body = {}, { partial = false } = {}) {
   return { data, errors };
 }
 
+/** Validate one price's discount (type/value/optional cap) into `out`; pushes human-readable errors. */
+function checkSpec(label, input, out, errors) {
+  if (!DISCOUNT_TYPES.includes(input.discountType)) { errors.push(`${label}: discount type must be one of ${DISCOUNT_TYPES.join(", ")}`); return; }
+  const v = Number(input.discountValue);
+  if (!Number.isFinite(v) || v <= 0) { errors.push(`${label}: discount value must be a number greater than 0`); return; }
+  out.discountType = input.discountType;
+  out.discountValue = v;
+  if (input.discountType === "PERCENTAGE") {
+    if (v > MAX_PERCENTAGE) errors.push(`${label}: percentage cannot exceed ${MAX_PERCENTAGE}%`);
+    if (Math.abs(v * 100 - Math.round(v * 100)) > 1e-6) errors.push(`${label}: percentage can have at most 2 decimal places`);
+  } else if (v > MAX_FIXED_AMOUNT) errors.push(`${label}: fixed discount is too large`);
+  if (input.maxDiscountAmount !== undefined && "maxDiscountAmount" in input) {
+    if (input.maxDiscountAmount === null || input.maxDiscountAmount === "") out.maxDiscountAmount = null;
+    else {
+      const m = Number(input.maxDiscountAmount);
+      if (!Number.isFinite(m) || m <= 0) errors.push(`${label}: maximum discount must be greater than 0 (or empty for no cap)`);
+      else out.maxDiscountAmount = m;
+    }
+  }
+}
+
 /** Validate a discount rule. `product prices` are checked by the controller (needs DB). */
 export function validateRuleInput(body = {}, { partial = false } = {}) {
   const errors = [];
@@ -198,23 +219,32 @@ export function validateRuleInput(body = {}, { partial = false } = {}) {
   }
   if (body.label !== undefined) data.label = sanitizeText(body.label, 40);
 
-  if (!partial || body.discountType !== undefined) {
-    if (!DISCOUNT_TYPES.includes(body.discountType)) errors.push(`discountType must be one of ${DISCOUNT_TYPES.join(", ")}`);
-    else data.discountType = body.discountType;
-  }
-  if (!partial || body.discountValue !== undefined) {
-    const v = Number(body.discountValue);
-    if (!Number.isFinite(v) || v <= 0) errors.push("discountValue must be a number greater than 0");
-    else data.discountValue = v;
-  }
-  if (data.discountType === "PERCENTAGE" && data.discountValue !== undefined) {
-    if (data.discountValue > MAX_PERCENTAGE) errors.push(`percentage discounts cannot exceed ${MAX_PERCENTAGE}%`);
-    if (Math.abs(data.discountValue * 100 - Math.round(data.discountValue * 100)) > 1e-6) {
-      errors.push("percentage can have at most 2 decimal places");
+  // Regular (in-stock) price discount — can be switched off for rules that only target delivery prices.
+  if (body.applyToRegular !== undefined) data.applyToRegular = body.applyToRegular !== false;
+  const regularOn = data.applyToRegular !== false;
+  if (regularOn) {
+    if (!partial || body.discountType !== undefined || body.discountValue !== undefined) {
+      checkSpec("regular price", { discountType: body.discountType, discountValue: body.discountValue }, data, errors);
     }
   }
-  if (data.discountType === "FIXED_AMOUNT" && data.discountValue !== undefined && data.discountValue > MAX_FIXED_AMOUNT) {
-    errors.push("fixed discount is too large");
+  if (body.deliveryDiscounts !== undefined) {
+    const dd = body.deliveryDiscounts || {};
+    data.deliveryDiscounts = {};
+    for (const [key, label] of [["threeWeeks", "3-week delivery price"], ["fiveWeeks", "5-week delivery price"]]) {
+      const c = dd[key] || {};
+      const cfg = { enabled: c.enabled === true, discountType: "PERCENTAGE", discountValue: 0, maxDiscountAmount: null };
+      if (cfg.enabled) {
+        const tmp = {};
+        checkSpec(label, { discountType: c.discountType, discountValue: c.discountValue, maxDiscountAmount: c.maxDiscountAmount }, tmp, errors);
+        Object.assign(cfg, tmp);
+      }
+      data.deliveryDiscounts[key] = cfg;
+    }
+    data.includeSpecialOrder = false; // explicit per-price settings replace the legacy switch
+  }
+  if (!partial || body.deliveryDiscounts !== undefined) {
+    const anyDelivery = Object.values(data.deliveryDiscounts || {}).some((c) => c.enabled);
+    if (!regularOn && !anyDelivery) errors.push("Turn on a discount for at least one price (regular, 3-week or 5-week)");
   }
 
   if (!partial || body.scope !== undefined) {
@@ -239,7 +269,7 @@ export function validateRuleInput(body = {}, { partial = false } = {}) {
       else data.maxDiscountAmount = m;
     }
   }
-  if (body.includeSpecialOrder !== undefined) data.includeSpecialOrder = body.includeSpecialOrder === true;
+  if (body.includeSpecialOrder !== undefined && body.deliveryDiscounts === undefined) data.includeSpecialOrder = body.includeSpecialOrder === true;
   if (body.status !== undefined) {
     if (!RULE_STATUSES.includes(body.status)) errors.push(`status must be one of ${RULE_STATUSES.join(", ")}`);
     else data.status = body.status;

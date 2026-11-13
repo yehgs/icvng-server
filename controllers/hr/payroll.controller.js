@@ -7,6 +7,7 @@ import HrSettings from "../../models/hr/hr-settings.model.js";
 import { featureCountryFilter, resolveCreateCountry } from "../../utils/featureScope.js";
 import { buildRun, sumTotals } from "../../services/hr/payroll.js";
 import { buildPayrollRegisterPdf, buildPayslipPdf, fetchImage } from "../../services/hr/pdf.js";
+import { resolveBranding } from "../../services/hr/branding.js";
 import { sendPayslipMail, sendPayrollSummaryMail } from "../../services/hr/mail.js";
 import { isPeriod, localDate, toMinor, maskAccount, fmtMoney } from "../../services/hr/common.js";
 import { sanitizeText } from "../../utils/campaignValidation.js";
@@ -50,10 +51,32 @@ export async function createPayroll(req, res) {
   if (await HrPayroll.exists({ countryCode: t.countryCode, period })) return fail(res, 409, `A payroll run for ${period} already exists in ${t.countryCode}`);
   const built = await buildRun(t.countryCode, period);
   if (!built.lines.length) return fail(res, 422, "No eligible staff with a salary for that month");
-  const run = new HrPayroll({ countryCode: t.countryCode, period, createdBy: req.user._id });
+  const chosen = await chooseBranding(t.countryCode, req.body);
+  if (chosen.error) return fail(res, 400, chosen.error);
+  const run = new HrPayroll({ countryCode: t.countryCode, period, createdBy: req.user._id, branding: chosen.branding });
   applyBuilt(run, built); hist(run, req, "CREATED", `${built.lines.length} staff`);
   try { await run.save(); } catch (e) { if (duplicate(e)) return fail(res, 409, "A payroll run for that month already exists"); throw e; }
   await log(req, "HR_PAYROLL_CHANGE", `Created payroll ${t.countryCode} ${period} (${built.lines.length} staff)`, run);
+  return ok(res, serializeRun(run));
+}
+
+/** Validate the logo/signature HR picked (ids from the country's HR settings). Empty id = "use the default". */
+async function chooseBranding(countryCode, body = {}) {
+  const settings = (await HrSettings.findOne({ countryCode }).lean()) || {};
+  const logoId = body.logoId ? String(body.logoId) : "", signatureId = body.signatureId ? String(body.signatureId) : "";
+  const r = resolveBranding(settings, { logoId, signatureId });
+  if (r.error) return { error: r.error };
+  return { branding: { logoId, signatureId, logoUrl: "" }, resolved: r, settings };
+}
+
+/** PUT /payroll/:id/branding { logoId?, signatureId? } — change the logo/signature of a DRAFT run. */
+export async function setPayrollBranding(req, res) {
+  const run = await loadRun(req, res); if (!run) return;
+  if (run.status !== "DRAFT") return fail(res, 409, "The logo and signature are locked once the payroll is approved");
+  const chosen = await chooseBranding(run.countryCode, req.body);
+  if (chosen.error) return fail(res, 400, chosen.error);
+  run.branding = chosen.branding; hist(run, req, "BRANDING", "logo/signature changed");
+  await run.save();
   return ok(res, serializeRun(run));
 }
 
@@ -101,13 +124,19 @@ export async function approvePayroll(req, res) {
   if (run.status !== "DRAFT") return fail(res, 409, `Payroll is already ${run.status.toLowerCase()}`);
   if (!run.lines.length) return fail(res, 422, "Payroll has no staff");
   const settings = await HrSettings.findOne({ countryCode: run.countryCode }).lean();
-  if (!settings?.signatureUrl || !settings?.signerName) return fail(res, 422, "Upload the authorised signature and signer name in HR settings before approving", { code: "SIGNATURE_REQUIRED" });
+  const sigId = req.body.signatureId ? String(req.body.signatureId) : run.branding?.signatureId || "";
+  const picked = resolveBranding(settings || {}, { logoId: run.branding?.logoId, signatureId: sigId });
+  if (picked.error) return fail(res, 400, picked.error);
+  const sig = picked.signature;
+  const signerName = sig?.signerName || settings?.signerName;
+  if (!sig?.url || !signerName) return fail(res, 422, "Upload the authorised signature and signer name in HR settings before approving", { code: "SIGNATURE_REQUIRED" });
   if (run.lines.some((l) => !l.bank?.accountNumber || !l.bank?.bankName)) {
     if (req.body.allowMissingBank !== true) return fail(res, 422, "Some staff have no bank details", { code: "MISSING_BANK", staff: run.lines.filter((l) => !l.bank?.accountNumber || !l.bank?.bankName).map((l) => l.fullName) });
   }
   run.status = "APPROVED"; run.approvedAt = new Date();
-  run.signedBy = { name: settings.signerName, title: settings.signerTitle, signatureUrl: settings.signatureUrl, signedAt: new Date(), userId: req.user._id };
-  hist(run, req, "APPROVED", `signed by ${settings.signerName}`);
+  run.signedBy = { name: signerName, title: sig.signerTitle || settings.signerTitle, signatureUrl: sig.url, signedAt: new Date(), userId: req.user._id };
+  run.branding = { logoId: run.branding?.logoId || "", signatureId: sigId, logoUrl: picked.logo?.url || "" }; // frozen with the signature
+  hist(run, req, "APPROVED", `signed by ${signerName}`);
   await run.save();
   await log(req, "HR_PAYROLL_CHANGE", `Approved & signed payroll ${run.countryCode} ${run.period}`, run);
   return ok(res, serializeRun(run));
@@ -124,7 +153,8 @@ export async function markPaid(req, res) {
 
 async function pdfAssets(run) {
   const settings = (await HrSettings.findOne({ countryCode: run.countryCode }).lean()) || {};
-  const [logo, signature] = await Promise.all([settings.logoUrl ? fetchImage(settings.logoUrl) : null, run.signedBy?.signatureUrl ? fetchImage(run.signedBy.signatureUrl) : settings.signatureUrl && run.status !== "DRAFT" ? fetchImage(settings.signatureUrl) : null]);
+  const logoUrl = run.branding?.logoUrl || resolveBranding(settings, { logoId: run.branding?.logoId }).logo?.url || settings.logoUrl;
+  const [logo, signature] = await Promise.all([logoUrl ? fetchImage(logoUrl) : null, run.signedBy?.signatureUrl ? fetchImage(run.signedBy.signatureUrl) : settings.signatureUrl && run.status !== "DRAFT" ? fetchImage(settings.signatureUrl) : null]);
   return { settings, logo, signature };
 }
 const plain = (run) => ({ ...run.toObject(), lines: run.lines.map((l) => l.toObject()) });

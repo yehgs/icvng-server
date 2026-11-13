@@ -44,6 +44,7 @@ import {
   getCampaignContext,
   invalidateCampaignCache,
   decorateProductsWithCampaignPricing,
+  discountSpecFor,
 } from "../services/campaignPricing.js";
 import { localizeList, localizeOne, translateEntity } from "../utils/translationService.js";
 import { buildClientVisibilityFilter } from "./product.controller.js";
@@ -551,11 +552,16 @@ async function validateRuleTargets(country, data) {
     const found = await ProductModel.find({
       _id: { $in: data.productIds },
       $or: [{ visibleInCountries: { $size: 0 } }, { visibleInCountries: { $exists: false } }, { visibleInCountries: country }],
-    }).select("btcPrice price").lean();
+    }).select("btcPrice price price3weeksDelivery price5weeksDelivery").lean();
     if (found.length !== data.productIds.length) return "Some selected products do not exist or are not available in this country";
-    if (data.discountType === "FIXED_AMOUNT" && data.discountValue !== undefined) {
-      const tooCheap = found.find((p) => (p.btcPrice || p.price || 0) <= data.discountValue);
-      if (tooCheap) return "A fixed discount cannot be equal to or greater than a selected product's price";
+    // A fixed discount must stay below the price it is applied to (regular / 3-week / 5-week).
+    const checks = [
+      ["regular", data.applyToRegular !== false && data.discountType === "FIXED_AMOUNT" ? data.discountValue : undefined, (p) => p.btcPrice || p.price || 0],
+      ["3-week", data.deliveryDiscounts?.threeWeeks?.enabled && data.deliveryDiscounts.threeWeeks.discountType === "FIXED_AMOUNT" ? data.deliveryDiscounts.threeWeeks.discountValue : undefined, (p) => p.price3weeksDelivery || p.btcPrice || p.price || 0],
+      ["5-week", data.deliveryDiscounts?.fiveWeeks?.enabled && data.deliveryDiscounts.fiveWeeks.discountType === "FIXED_AMOUNT" ? data.deliveryDiscounts.fiveWeeks.discountValue : undefined, (p) => p.price5weeksDelivery || p.btcPrice || p.price || 0],
+    ];
+    for (const [label, amount, priceOf] of checks) {
+      if (amount !== undefined && found.some((p) => priceOf(p) <= amount)) return `A fixed ${label}-price discount cannot be equal to or greater than a selected product's price`;
     }
   }
   if (data.categoryIds?.length && (await CategoryModel.countDocuments({ _id: { $in: data.categoryIds } })) !== data.categoryIds.length) {
@@ -925,7 +931,10 @@ async function buildPublicPayload(campaign, { language = "en", forceLive = false
   const categories = catIds.length ? await CategoryModel.find({ _id: { $in: catIds } }).select("name slug image").lean() : [];
   const catById = new Map(categories.map((c) => [String(c._id), c]));
 
-  const pct = rulesRaw.filter((r) => r.discountType === "PERCENTAGE").map((r) => r.discountValue);
+  // Highest % any rule grants on any price option (drives the "up to N% off" banner).
+  const pct = rulesRaw.flatMap((r) =>
+    ["regular", "3weeks", "5weeks"].map((o) => discountSpecFor(r, o)).filter((sp) => sp && sp.discountType === "PERCENTAGE").map((sp) => sp.discountValue),
+  );
 
   return {
     serverTime: now.toISOString(),
@@ -946,7 +955,10 @@ async function buildPublicPayload(campaign, { language = "en", forceLive = false
       priority: campaign.priority,
       theme: { ...campaign.theme, effect: effectiveEffect(campaign.theme) },
       maxPercentage: pct.length ? Math.max(...pct) : 0,
-      discounts: locRules.map((r) => ({ ruleId: String(r._id), label: r.label || "", discountType: r.discountType, discountValue: r.discountValue, scope: r.scope })),
+      discounts: locRules.map((r) => {
+        const sp = discountSpecFor(r, "regular") || discountSpecFor(r, "3weeks") || discountSpecFor(r, "5weeks") || r;
+        return { ruleId: String(r._id), label: r.label || "", discountType: sp.discountType, discountValue: sp.discountValue, scope: r.scope };
+      }),
       blocks: blocks.map((b) => ({
         id: String(b._id),
         type: b.type,

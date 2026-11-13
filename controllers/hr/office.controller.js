@@ -1,6 +1,7 @@
 // server/controllers/hr/office.controller.js — offices (geofences), public holidays, payroll identity settings.
 import HrOffice from "../../models/hr/hr-office.model.js";
 import HrHoliday from "../../models/hr/hr-holiday.model.js";
+import { listLogos, listSignatures, normaliseBranding } from "../../services/hr/branding.js";
 import HrSettings from "../../models/hr/hr-settings.model.js";
 import HrStaff from "../../models/hr/hr-staff.model.js";
 import { featureCountryFilter, resolveCreateCountry } from "../../utils/featureScope.js";
@@ -105,7 +106,8 @@ export async function getSettings(req, res) {
   const scope = scopeOr403(req, res); if (!scope) return;
   const code = scope.isGlobal ? String(req.query.countryCode || "").toUpperCase() : scope.countryCode;
   if (!code) return fail(res, 400, "countryCode is required");
-  return ok(res, (await HrSettings.findOne({ countryCode: code }).lean()) || { countryCode: code, workingDaysPerMonth: 22, payrollNotifyEmails: [] });
+  const doc = (await HrSettings.findOne({ countryCode: code }).lean()) || { countryCode: code, workingDaysPerMonth: 22, payrollNotifyEmails: [] };
+  return ok(res, { ...doc, logos: listLogos(doc), signatures: listSignatures(doc) }); // legacy single logo/signature appear as one default entry
 }
 export async function saveSettings(req, res) {
   const scope = scopeOr403(req, res); if (!scope) return;
@@ -114,6 +116,12 @@ export async function saveSettings(req, res) {
   const b = req.body, d = {}, errors = [];
   for (const [k, max] of [["companyName", 120], ["companyAddress", 300], ["signerName", 100], ["signerTitle", 100], ["payslipFooter", 300]]) if (b[k] !== undefined) d[k] = sanitizeText(b[k], max);
   for (const k of ["logoUrl", "signatureUrl"]) if (b[k] !== undefined) httpsUrl(b[k]) ? (d[k] = b[k]) : errors.push(`${k} must be an https URL`);
+  if (b.logos !== undefined || b.signatures !== undefined) {
+    const br = normaliseBranding(b);
+    errors.push(...br.errors);
+    delete br.errors;
+    Object.assign(d, br);
+  }
   if (b.workingDaysPerMonth !== undefined) { const n = Number(b.workingDaysPerMonth); (n >= 15 && n <= 31) ? (d.workingDaysPerMonth = n) : errors.push("Working days must be 15–31"); }
   if (b.payrollNotifyEmails !== undefined) {
     const list = (Array.isArray(b.payrollNotifyEmails) ? b.payrollNotifyEmails : String(b.payrollNotifyEmails).split(/[,;\s]+/)).map((e) => String(e).trim().toLowerCase()).filter(Boolean);
@@ -122,5 +130,6 @@ export async function saveSettings(req, res) {
   if (errors.length) return fail(res, 400, errors[0], { errors });
   const doc = await HrSettings.findOneAndUpdate({ countryCode: t.countryCode }, { $set: { ...d, updatedBy: req.user._id } }, { new: true, upsert: true });
   await log(req, "HR_SETTINGS_CHANGE", `Updated HR/payroll settings (${t.countryCode})`, doc, t.countryCode);
-  return ok(res, doc);
+  const o = doc.toObject();
+  return ok(res, { ...o, logos: listLogos(o), signatures: listSignatures(o) });
 }

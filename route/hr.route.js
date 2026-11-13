@@ -13,6 +13,7 @@ import * as office from "../controllers/hr/office.controller.js";
 import * as att from "../controllers/hr/attendance.controller.js";
 import * as ppl from "../controllers/hr/people.controller.js";
 import * as pay from "../controllers/hr/payroll.controller.js";
+import * as docs from "../controllers/hr/documents.controller.js";
 
 const router = Router();
 const base = [auth, admin];
@@ -42,8 +43,13 @@ router.get("/staff-candidates", ...manage, wrap(staff.staffCandidates));
 router.post("/staff", ...manage, wrap(staff.createStaff));
 router.get("/staff/:id", ...view, wrap(staff.getStaff));
 router.get("/staff/:id/sensitive", ...manage, wrap(staff.getStaffSensitive));
+router.post("/staff/:id/export", ...manage, wrap(docs.exportStaffDetails)); // re-asks the caller's password
 router.put("/staff/:id", ...manage, wrap(staff.updateStaff));
 router.delete("/staff/:id", ...manage, wrap(staff.terminateStaff));
+
+// ── printable forms ──
+router.get("/forms/staff-form", ...view, wrap(docs.downloadBlankForm));
+router.post("/forms/staff-form/send", ...manage, wrap(docs.emailBlankForm));
 
 // ── offices / holidays / settings ──
 router.get("/offices", ...view, wrap(office.listOffices));
@@ -82,6 +88,7 @@ router.post("/payroll/:id/recalculate", ...payroll, wrap(pay.recalcPayroll));
 router.put("/payroll/:id/lines/:staffId", ...payroll, wrap(pay.updatePayrollLine));
 router.get("/payroll/:id/preview", ...payroll, wrap(pay.previewPayroll));
 router.get("/payroll/:id/download", ...payroll, wrap(pay.downloadPayroll));
+router.put("/payroll/:id/branding", ...payroll, wrap(pay.setPayrollBranding));
 router.post("/payroll/:id/approve", ...payroll, wrap(pay.approvePayroll));
 router.post("/payroll/:id/send", ...payroll, wrap(pay.sendPayroll));
 router.post("/payroll/:id/mark-paid", ...payroll, wrap(pay.markPaid));

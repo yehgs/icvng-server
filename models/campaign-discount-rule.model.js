@@ -34,8 +34,11 @@ const campaignDiscountRuleSchema = new mongoose.Schema(
     // renders a localized "{n}% OFF" itself. Translatable (entityType "campaignRule").
     label: { type: String, default: "", trim: true, maxlength: 40 },
 
-    discountType: { type: String, enum: DISCOUNT_TYPES, required: true },
-    discountValue: { type: Number, required: true, min: 0 },
+    // ── REGULAR (in-stock) price discount ──────────────────────────────────────
+    // `applyToRegular:false` makes a rule that only discounts the 3/5-week delivery prices.
+    applyToRegular: { type: Boolean, default: true },
+    discountType: { type: String, enum: DISCOUNT_TYPES, default: "PERCENTAGE" },
+    discountValue: { type: Number, default: 0, min: 0 },
 
     scope: { type: String, enum: RULE_SCOPES, default: "ALL" },
     productIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }],
@@ -46,8 +49,27 @@ const campaignDiscountRuleSchema = new mongoose.Schema(
     // Cap on the discount per unit, in base currency. null = uncapped.
     maxDiscountAmount: { type: Number, default: null, min: 0 },
 
-    // Special-order products (price shown is the 2/5-week delivery price, not
-    // the in-stock regular price) are NOT discounted unless this is enabled.
+    // ── SPECIAL-ORDER (3-week / 5-week delivery) price discounts ──────────────
+    // Products with no stock are sold at a separate delivery price. Each delivery price
+    // has its OWN discount (type/value/cap), independent of the regular-price discount.
+    // Disabled (default) = that delivery price is not discounted.
+    deliveryDiscounts: {
+      threeWeeks: {
+        enabled: { type: Boolean, default: false },
+        discountType: { type: String, enum: DISCOUNT_TYPES, default: "PERCENTAGE" },
+        discountValue: { type: Number, default: 0, min: 0 },
+        maxDiscountAmount: { type: Number, default: null, min: 0 },
+      },
+      fiveWeeks: {
+        enabled: { type: Boolean, default: false },
+        discountType: { type: String, enum: DISCOUNT_TYPES, default: "PERCENTAGE" },
+        discountValue: { type: Number, default: 0, min: 0 },
+        maxDiscountAmount: { type: Number, default: null, min: 0 },
+      },
+    },
+    // LEGACY (rules saved before per-price discounts): true = reuse the regular discount for the
+    // delivery prices. Honoured by the engine only while deliveryDiscounts.* has no explicit setting;
+    // the admin form converts it to explicit per-price settings on the next save.
     includeSpecialOrder: { type: Boolean, default: false },
 
     // Optional own window inside the campaign window; null = inherit.

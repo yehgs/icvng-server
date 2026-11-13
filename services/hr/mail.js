@@ -31,3 +31,13 @@ export async function sendLeaveDecisionMail({ countryCode, to, name, from, toDat
   const s = t(countryCode);
   try { await sendCountryEmail({ countryCode, sendTo: to, subject: s.leave(status), html: wrapEmailTemplate(countryCode, `<p>${s.leaveBody(esc(name), esc(from), esc(toDate), esc(status), esc(note))}</p>`) }); } catch (e) { console.error("[hr] leave mail failed:", e.message); }
 }
+
+const FORM_L = {
+  en: { subject: "Staff information form", body: (c) => `Hello,<br/><br/>Please find attached the <strong>Staff Information Form</strong> from ${c}. Print it, complete it in block letters, sign it and return it to HR.` },
+  fr: { subject: "Fiche de renseignements du personnel", body: (c) => `Bonjour,<br/><br/>Veuillez trouver ci-joint la <strong>fiche de renseignements du personnel</strong> de ${c}. Imprimez-la, remplissez-la en lettres capitales, signez-la et retournez-la aux RH.` },
+  it: { subject: "Modulo dati del personale", body: (c) => `Ciao,<br/><br/>In allegato il <strong>modulo dati del personale</strong> di ${c}. Stampalo, compilalo in stampatello, firmalo e restituiscilo alle HR.` },
+};
+export async function sendStaffFormMail({ countryCode, to, company, pdf }) {
+  const s = FORM_L[lang(countryCode)];
+  return sendCountryEmail({ countryCode, sendTo: to, subject: s.subject, html: wrapEmailTemplate(countryCode, `<p>${s.body(esc(company || "the company"))}</p>`), attachments: [{ filename: "staff-information-form.pdf", content: pdf, contentType: "application/pdf" }] });
+}

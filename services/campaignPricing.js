@@ -11,7 +11,7 @@
 //    visible in that country and available, the scope matches, min quantity is
 //    met, and the price being charged is one the rule covers (the in-stock
 //    "regular" price by default — special-order 2/5-week delivery prices are
-//    excluded unless rule.includeSpecialOrder).
+//    discounted only if the rule configures a discount for that delivery price — see discountSpecFor).
 // 2. NO STACKING. The single best eligible rule wins (largest discount; ties →
 //    higher rule.priority → higher campaign.priority → oldest rule → lowest id).
 // 3. The product's own standing `discount` % (pre-existing feature) is treated
@@ -83,6 +83,22 @@ export const hasRegularStock = (product) => {
   return online > 0 || partner;
 };
 
+/**
+ * The discount (type/value/cap) a rule grants for ONE price option, or null when the rule does not
+ * discount that price. Regular and each delivery price are configured independently.
+ */
+export function discountSpecFor(rule, priceOption = "regular") {
+  const regular = { discountType: rule.discountType, discountValue: rule.discountValue, maxDiscountAmount: rule.maxDiscountAmount ?? null };
+  if (priceOption === "regular") return rule.applyToRegular === false ? null : regular;
+  const key = priceOption === "3weeks" ? "threeWeeks" : priceOption === "5weeks" ? "fiveWeeks" : null;
+  if (!key) return null;
+  const cfg = rule.deliveryDiscounts?.[key];
+  if (cfg?.enabled === true) return { discountType: cfg.discountType, discountValue: cfg.discountValue, maxDiscountAmount: cfg.maxDiscountAmount ?? null };
+  // Legacy rules: "also discount special-order prices" reused the regular discount.
+  if (cfg?.enabled === undefined && rule.includeSpecialOrder === true) return regular;
+  return null;
+}
+
 const idStr = (v) => (v && v._id ? String(v._id) : v ? String(v) : "");
 const inList = (list, v) => Array.isArray(list) && list.some((x) => idStr(x) === idStr(v));
 
@@ -129,9 +145,10 @@ export function isRuleEligible({ rule, campaign, product, priceOption = "regular
   const base = Number(getBasePrice(product, priceOption));
   if (!(base > 0)) return false;
 
-  // Which price is the customer actually being charged for?
-  const regularOk = priceOption === "regular" && hasRegularStock(product);
-  if (!regularOk && !rule.includeSpecialOrder) return false;
+  // Does this rule discount the price being charged? (regular and 3/5-week prices are configured separately)
+  if (!discountSpecFor(rule, priceOption)) return false;
+  // The in-stock regular price is only charged when stock exists (legacy special-order rules excepted).
+  if (priceOption === "regular" && !hasRegularStock(product) && rule.includeSpecialOrder !== true) return false;
   return true;
 }
 
@@ -169,14 +186,10 @@ export function priceLine({ product, priceOption = "regular", quantity = 1, rule
     const campaign = campaigns.get(idStr(rule.campaignId));
     const assumeLive = !!previewIds && previewIds.has(idStr(rule.campaignId));
     if (!isRuleEligible({ rule, campaign, product, priceOption, quantity, countryCode, now, assumeLive })) continue;
-    const discountMinor = calcDiscountMinor({
-      priceMinor,
-      discountType: rule.discountType,
-      discountValue: rule.discountValue,
-      maxDiscountAmount: rule.maxDiscountAmount,
-    });
+    const spec = discountSpecFor(rule, priceOption);
+    const discountMinor = calcDiscountMinor({ priceMinor, ...spec });
     if (discountMinor <= 0) continue;
-    const cand = { rule, campaign, discountMinor };
+    const cand = { rule, campaign, discountMinor, spec };
     if (!best || compareCandidates(cand, best) < 0) best = cand;
   }
 
@@ -186,7 +199,7 @@ export function priceLine({ product, priceOption = "regular", quantity = 1, rule
   if (best && priceMinor - best.discountMinor < legacyFinalMinor) {
     const finalMinor = priceMinor - best.discountMinor;
     const pct = Math.round((best.discountMinor / priceMinor) * 10000) / 100;
-    const { rule, campaign } = best;
+    const { rule, campaign, spec } = best;
     const labelCustom = rule.label && rule.label.trim();
     return {
       ...base_,
@@ -198,7 +211,7 @@ export function priceLine({ product, priceOption = "regular", quantity = 1, rule
       source: "CAMPAIGN",
       // Plain-text fallback only; storefronts render a localized label from
       // discountPercentage / discountType and use `rule.label` when set.
-      discountLabel: labelCustom || (rule.discountType === "PERCENTAGE" ? `${pct}% OFF` : `${fromMinor(best.discountMinor)} OFF`),
+      discountLabel: labelCustom || (spec.discountType === "PERCENTAGE" ? `${pct}% OFF` : `${fromMinor(best.discountMinor)} OFF`),
       campaign: {
         id: String(campaign._id),
         name: campaign.name,
@@ -210,8 +223,8 @@ export function priceLine({ product, priceOption = "regular", quantity = 1, rule
         id: String(rule._id),
         name: rule.name,
         label: labelCustom || "",
-        discountType: rule.discountType,
-        discountValue: rule.discountValue,
+        discountType: spec.discountType,
+        discountValue: spec.discountValue,
       },
     };
   }

@@ -55,6 +55,38 @@ t("3-week price not discounted by default, discounted when the rule opts in", ()
 });
 t("enabled partner stock with quantity counts as in stock", () => { const c = campaign(); assert.equal(price(product({ warehouseStock: { onlineStock: 0 }, partnerStock: { enabled: true, quantity: 4 } }), c, rule(c)).source, "CAMPAIGN"); });
 
+console.log("separate discounts per price (regular / 3-week / 5-week)");
+t("regular and 3-week discounts are independent (20% regular, 10% 3-week, fixed 5,000 5-week)", () => {
+  const c = campaign(); const p = product({ price3weeksDelivery: 45000, price5weeksDelivery: 60000 });
+  const r = rule(c, { discountValue: 20, deliveryDiscounts: { threeWeeks: { enabled: true, discountType: "PERCENTAGE", discountValue: 10 }, fiveWeeks: { enabled: true, discountType: "FIXED_AMOUNT", discountValue: 5000 } } });
+  const reg = price(p, c, r); assert.equal(reg.finalPrice, 40000);
+  const w3 = price(p, c, r, { priceOption: "3weeks" }); assert.equal(w3.finalPrice, 40500); assert.equal(w3.rule.discountValue, 10); assert.equal(w3.discountLabel, "10% OFF");
+  const w5 = price(p, c, r, { priceOption: "5weeks" }); assert.equal(w5.finalPrice, 55000); assert.equal(w5.rule.discountType, "FIXED_AMOUNT");
+});
+t("a delivery price with no explicit discount is left alone", () => {
+  const c = campaign(); const p = product({ price3weeksDelivery: 45000, price5weeksDelivery: 60000 });
+  const r = rule(c, { deliveryDiscounts: { threeWeeks: { enabled: true, discountType: "PERCENTAGE", discountValue: 10 }, fiveWeeks: { enabled: false } } });
+  assert.equal(price(p, c, r, { priceOption: "3weeks" }).source, "CAMPAIGN");
+  assert.equal(price(p, c, r, { priceOption: "5weeks" }).source, "NONE");
+});
+t("rule can target ONLY delivery prices (applyToRegular:false)", () => {
+  const c = campaign(); const p = product({ price3weeksDelivery: 45000 });
+  const r = rule(c, { applyToRegular: false, discountValue: 0, deliveryDiscounts: { threeWeeks: { enabled: true, discountType: "PERCENTAGE", discountValue: 15 } } });
+  assert.equal(price(p, c, r).source, "NONE");
+  assert.equal(price(p, c, r, { priceOption: "3weeks" }).finalPrice, 38250);
+});
+t("per-price cap applies to that price only", () => {
+  const c = campaign(); const p = product({ price3weeksDelivery: 100000 });
+  const r = rule(c, { discountValue: 50, maxDiscountAmount: 1000, deliveryDiscounts: { threeWeeks: { enabled: true, discountType: "PERCENTAGE", discountValue: 50, maxDiscountAmount: 20000 } } });
+  assert.equal(price(p, c, r).discountAmount, 1000);
+  assert.equal(price(p, c, r, { priceOption: "3weeks" }).discountAmount, 20000);
+});
+t("legacy includeSpecialOrder still reuses the regular discount; explicit settings override it", () => {
+  const c = campaign(); const p = product({ price5weeksDelivery: 60000 });
+  assert.equal(price(p, c, rule(c, { includeSpecialOrder: true }), { priceOption: "5weeks" }).finalPrice, 48000);
+  assert.equal(price(p, c, rule(c, { includeSpecialOrder: false, deliveryDiscounts: { fiveWeeks: { enabled: false } } }), { priceOption: "5weeks" }).source, "NONE");
+});
+
 console.log("selection policy (no stacking)");
 t("best single rule wins, never stacked", () => { const c = campaign(); const r = price(product(), c, [rule(c, { discountValue: 10 }), rule(c, { discountValue: 30 }), rule(c, { discountValue: 20 })]); assert.equal(r.finalPrice, 35000); assert.equal(r.discountPercentage, 30); });
 t("equal discounts: higher rule priority wins deterministically", () => { const c = campaign(); const a = rule(c, { name: "A", priority: 1 }); const b = rule(c, { name: "B", priority: 5 }); assert.equal(price(product(), c, [a, b]).rule.name, "B"); assert.equal(price(product(), c, [b, a]).rule.name, "B"); });
