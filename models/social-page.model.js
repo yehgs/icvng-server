@@ -17,6 +17,16 @@ const socialPageSchema = new mongoose.Schema(
     followersLabel: { type: String, trim: true, maxlength: 30, default: "" },
     // Facebook only: also render the official Page Plugin (live feed) inside the card.
     showFeed: { type: Boolean, default: false },
+    // Latest-posts cards. FACEBOOK: Page ID + Page access token; INSTAGRAM: Business account ID + token;
+    // YOUTUBE: channel ID (public RSS, no token). The token is stored encrypted and never returned by any API.
+    externalId: { type: String, trim: true, maxlength: 80, default: "" },
+    accessTokenEnc: { type: String, default: "", select: false },
+    // Hand-picked posts: shown when no live feed is configured or the live feed is unavailable.
+    manualPosts: {
+      type: [{ _id: false, imageUrl: { type: String, trim: true, maxlength: 500, default: "" }, caption: { type: String, trim: true, maxlength: 300, default: "" }, videoUrl: { type: String, trim: true, maxlength: 500, default: "" }, url: { type: String, trim: true, maxlength: 500, required: true }, postedAt: { type: Date } }],
+      default: [],
+      validate: [(v) => v.length <= 12, "At most 12 manual posts"],
+    },
     sortOrder: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },

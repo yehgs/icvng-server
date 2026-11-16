@@ -11,6 +11,8 @@ import { COUNTRY_CONFIG, ALL_COUNTRY_CODES } from "../config/countries/index.js"
 import { resolveFeatureScope, normalizeCountry } from "../utils/featureScope.js";
 import { sanitizeText } from "../utils/campaignValidation.js";
 import { logActivity } from "../utils/activityLogger.js";
+import { encryptSecret } from "../utils/encryption.js";
+import { postsFor } from "../services/socialFeed.js";
 
 const ok = (res, data, extra = {}) => res.json({ success: true, error: false, data, ...extra });
 const fail = (res, status, message, extra = {}) => res.status(status).json({ success: false, error: true, message, ...extra });
@@ -62,6 +64,24 @@ function validate(body, { partial = false, existing = null } = {}) {
   if (has("followersLabel")) data.followersLabel = sanitizeText(body.followersLabel, 30);
   if (has("imageUrl")) { const v = String(body.imageUrl || "").trim(); if (v && !validImage(v)) errors.push("Image must be an https URL"); else data.imageUrl = v; }
   if (has("showFeed")) data.showFeed = !!body.showFeed;
+  if (has("externalId")) { const v = String(body.externalId || "").trim(); if (v && !/^[A-Za-z0-9_.-]{3,80}$/.test(v)) errors.push("Page / account ID may only contain letters, digits, . _ -"); else data.externalId = v; }
+  if (has("accessToken")) { const v = String(body.accessToken || "").trim(); if (v.length > 600 || /\s/.test(v)) errors.push("Access token looks invalid"); else data.accessTokenEnc = v ? encryptSecret(v) : ""; }
+  if (has("manualPosts")) {
+    if (!Array.isArray(body.manualPosts) || body.manualPosts.length > 12) errors.push("At most 12 manual posts");
+    else {
+      const posts = [];
+      for (const p of body.manualPosts) {
+        if (!validSocialUrl(p?.url, platform)) { errors.push("Each post link must be an https link on the chosen platform"); break; }
+        const img = String(p.imageUrl || "").trim();
+        if (img && !validImage(img)) { errors.push("Post image must be an https URL"); break; }
+        const vid = String(p.videoUrl || "").trim();
+        if (vid && (!validImage(vid) || !/\.(mp4|webm|mov)(\?|$)/i.test(vid))) { errors.push("Video file must be an https link to an .mp4, .webm or .mov file"); break; }
+        const at = p.postedAt ? new Date(p.postedAt) : null;
+        posts.push({ url: String(p.url).trim(), imageUrl: img, videoUrl: vid, caption: sanitizeText(p.caption, 300), postedAt: at && !isNaN(at) ? at : undefined });
+      }
+      data.manualPosts = posts;
+    }
+  }
   if (has("isActive")) data.isActive = !!body.isActive;
   if (has("sortOrder")) { const n = Number(body.sortOrder); if (!Number.isInteger(n) || n < 0 || n > 9999) errors.push("Order must be a whole number between 0 and 9999"); else data.sortOrder = n; }
   if (data.showFeed && (data.platform || platform) !== "FACEBOOK") data.showFeed = false; // live feed is Facebook-only
@@ -78,6 +98,8 @@ function targetCountry(scope, requested) {
   if (c && c !== scope.countryCode) return { error: { status: 403, message: `Access denied: you can only manage ${scope.countryCode} data` } };
   return { countryCode: scope.countryCode };
 }
+/** Admin response for one card: the token never leaves the server, only whether one is set. */
+const adminView = (doc) => { const { accessTokenEnc, ...o } = doc.toObject(); return { ...o, hasToken: !!(accessTokenEnc ?? doc.accessTokenEnc), editable: true }; };
 const canEdit = (scope, doc) => scope.isGlobal || doc.countryCode === scope.countryCode;
 
 export const socialMeta = (req, res) => {
@@ -95,8 +117,8 @@ export const listSocial = async (req, res) => {
       if (q === ALL) where = { countryCode: ALL };
       else if (normalizeCountry(q)) where = { countryCode: q };
     } else where = { countryCode: { $in: [scope.countryCode, ALL] } };
-    const rows = await SocialPage.find(where).sort({ countryCode: 1, sortOrder: 1, createdAt: 1 }).lean();
-    return ok(res, rows.map((r) => ({ ...r, editable: canEdit(scope, r) })));
+    const rows = await SocialPage.find(where).select("+accessTokenEnc").sort({ countryCode: 1, sortOrder: 1, createdAt: 1 }).lean();
+    return ok(res, rows.map(({ accessTokenEnc, ...r }) => ({ ...r, hasToken: !!accessTokenEnc, editable: canEdit(scope, r) })));
   } catch (e) { return fail(res, 500, e.message); }
 };
 
@@ -110,13 +132,13 @@ export const createSocial = async (req, res) => {
     const last = await SocialPage.findOne({ countryCode: t.countryCode }).sort({ sortOrder: -1 }).select("sortOrder").lean();
     const doc = await SocialPage.create({ ...v.data, countryCode: t.countryCode, sortOrder: v.data.sortOrder ?? (last ? last.sortOrder + 1 : 0), createdBy: req.user._id, updatedBy: req.user._id });
     audit(req, "SOCIAL_CREATE", `Added ${doc.platform} page "${doc.name}" (${doc.countryCode})`, doc);
-    return ok(res, { ...doc.toObject(), editable: true });
+    return ok(res, adminView(doc));
   } catch (e) { return fail(res, 500, e.message); }
 };
 
 async function loadEditable(req, res, scope) {
   if (!isId(req.params.id)) { fail(res, 404, "Not found"); return null; }
-  const doc = await SocialPage.findById(req.params.id);
+  const doc = await SocialPage.findById(req.params.id).select("+accessTokenEnc");
   // Out of territory (another country's card) is indistinguishable from missing.
   if (!doc || (!scope.isGlobal && ![scope.countryCode, ALL].includes(doc.countryCode))) { fail(res, 404, "Not found"); return null; }
   if (!canEdit(scope, doc)) { fail(res, 403, "This card is managed by IT/Director for all countries"); return null; }
@@ -138,7 +160,7 @@ export const updateSocial = async (req, res) => {
     if (doc.platform !== "FACEBOOK") doc.showFeed = false;
     await doc.save();
     audit(req, "SOCIAL_UPDATE", `Updated ${doc.platform} page "${doc.name}" (${doc.countryCode})`, doc);
-    return ok(res, { ...doc.toObject(), editable: true });
+    return ok(res, adminView(doc));
   } catch (e) { return fail(res, 500, e.message); }
 };
 
@@ -171,11 +193,17 @@ export const publicSocial = async (req, res) => {
   try {
     const code = ALL_COUNTRY_CODES.includes(req.countryCode) ? req.countryCode : "NG";
     const rows = await SocialPage.find({ countryCode: { $in: [code, ALL] }, isActive: true })
-      .select("platform name handle url description imageUrl followersLabel showFeed sortOrder countryCode").lean();
+      .select("platform name handle url description imageUrl followersLabel showFeed sortOrder countryCode externalId accessTokenEnc manualPosts updatedAt").lean();
     // A country's own cards come before the global ones, each group by its order.
     rows.sort((a, b) => (a.countryCode === ALL) - (b.countryCode === ALL) || a.sortOrder - b.sortOrder);
-    res.set("Cache-Control", "public, max-age=60");
+    const limit = Math.min(12, Math.max(4, parseInt(req.query.posts) || 8));
+    const out = await Promise.all(rows.map(async (r) => {
+      const posts = await postsFor(r, { limit });
+      const { countryCode, sortOrder, externalId, accessTokenEnc, manualPosts, updatedAt, ...pub } = r;
+      return { ...pub, posts };
+    }));
+    res.set("Cache-Control", "public, max-age=300");
     res.set("Vary", "Host, X-Country-Code");
-    return ok(res, rows.map(({ countryCode, sortOrder, ...r }) => r));
+    return ok(res, out);
   } catch (e) { return fail(res, 500, e.message); }
 };
