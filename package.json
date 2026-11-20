@@ -43,7 +43,8 @@
     "recharts": "^3.8.1",
     "resend": "^3.5.0",
     "serpapi": "^2.2.1",
-    "stripe": "^16.12.0"
+    "stripe": "^16.12.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "mongodb-memory-server": "^11.2.0",

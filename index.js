@@ -101,6 +101,7 @@ import crmRouter from "./route/crm.route.js";
 import homeContentBlockRouter from "./route/homeContentBlock.route.js";
 import scraperRouter from "./route/scraper.route.js";
 import profileRouter from "./route/profile.route.js";
+import { attachRemoteSignaling } from "./services/remote/remoteSignaling.js";
 
 const app = express();
 
@@ -152,6 +153,7 @@ app.use(
         process.env.ADMIN_FRONTEND_URL2,
         // Client side — i-coffee.ng (the site the server also serves)
         "https://i-coffee.ng",
+        "https://remote.calstins.com",
         "https://www.i-coffee.ng",
         // New country domains
         "https://i-coffee.tg",
@@ -170,6 +172,8 @@ app.use(
         "https://www.app.i-coffee.tg",
         "https://www.app.i-coffee.bj",
         "https://www.app.i-coffee.it",
+        "https://www.remote.calstins.com",
+
         // Vercel deployment URLs
         // "https://icvng-client.vercel.app",
         // "https://icvng-admin.vercel.app",
@@ -382,8 +386,16 @@ connectDB().then(() => {
       e.message,
     ),
   );
-  app.listen(PORT, () => {
+  const httpServer = app.listen(PORT, () => {
     console.log("✅ Server is running on port:", PORT);
     console.log("✅ Database connected");
   });
+
+  // Remote-desktop signaling (WebSocket). Adds no Express routes; set
+  // REMOTE_DESKTOP_ENABLED=false to turn it off. See REMOTE_DESKTOP.md.
+  if (process.env.REMOTE_DESKTOP_ENABLED !== "false") {
+    attachRemoteSignaling(httpServer, {
+      path: process.env.REMOTE_WS_PATH || "/remote-ws",
+    });
+  }
 });
